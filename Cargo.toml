@@ -39,6 +39,7 @@ toml = "0.8"
 # File system
 walkdir = "2.4"
 glob = "0.3"
+regex = "1.10"
 
 # LLM integration
 rig-core = "0.33"

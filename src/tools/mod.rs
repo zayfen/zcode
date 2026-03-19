@@ -25,7 +25,9 @@ pub trait Tool: Send + Sync {
 }
 
 pub mod file_ops;
+pub mod search;
 pub use file_ops::{FileReadTool, FileWriteTool, ShellExecTool, FileEditTool};
+pub use search::{SearchTool, GlobTool};
 
 /// Registry for managing and executing tools
 pub struct ToolRegistry {
@@ -66,6 +68,8 @@ impl ToolRegistry {
         self.register(file_ops::FileWriteTool);
         self.register(file_ops::ShellExecTool);
         self.register(file_ops::FileEditTool);
+        self.register(search::SearchTool);
+        self.register(search::GlobTool);
     }
 
     /// List all registered tools
@@ -146,6 +150,6 @@ mod tests {
         assert!(tools.contains(&"file_read"));
         assert!(tools.contains(&"file_write"));
         assert!(tools.contains(&"shell_exec"));
-        assert_eq!(tools.len(), 4);
+        assert_eq!(tools.len(), 6);
     }
 }

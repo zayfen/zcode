@@ -98,6 +98,21 @@ impl Agent {
         Ok("Maximum tool call iterations reached. Please try a simpler request.".to_string())
     }
 
+    /// Process a user message with streaming response
+    pub async fn run_streaming(
+        &mut self,
+        user_input: &str,
+    ) -> Result<crate::llm::streaming::StreamingResponse> {
+        self.conversation.push(Message::user(user_input));
+
+        let mut messages = vec![Message::system(&self.system_prompt)];
+        messages.extend(self.conversation.iter().cloned());
+
+        // For streaming, we just return the stream directly
+        // Tool calls are NOT supported during streaming (they require round-trips)
+        self.llm.stream_chat(&messages).await
+    }
+
     /// Parse a tool call from LLM response.
     ///
     /// Looks for ```json blocks containing {"tool": "...", "input": {...}}.
@@ -140,6 +155,23 @@ mod tests {
         let response = agent.run("Hello").await.unwrap();
         assert_eq!(response, "I can help with that!");
         assert_eq!(agent.conversation_len(), 2); // user + assistant
+    }
+
+    #[tokio::test]
+    async fn test_agent_streaming() {
+        use futures::StreamExt;
+
+        let llm = Arc::new(MockLlmProvider::new("Streamed response"));
+        let tools = Arc::new(ToolRegistry::new());
+        let mut agent = Agent::new("zcode", llm, tools, "You are a helpful assistant.");
+
+        let mut stream = agent.run_streaming("Hello").await.unwrap();
+        let mut collected = String::new();
+        while let Some(chunk) = stream.next().await {
+            collected.push_str(&chunk.unwrap());
+        }
+        assert_eq!(collected, "Streamed response");
+        assert_eq!(agent.conversation_len(), 1); // only user message added, not assistant
     }
 
     #[test]

@@ -5,6 +5,8 @@
 use std::future::Future;
 use std::pin::Pin;
 
+use futures::StreamExt;
+
 use crate::error::{Result, ZcodeError};
 use crate::llm::{LlmConfig, LlmResponse, Message, MessageRole};
 use crate::llm::streaming::StreamingResponse;
@@ -150,15 +152,70 @@ impl LlmProvider for RigProvider {
         &self,
         messages: &[Message],
     ) -> Pin<Box<dyn Future<Output = Result<StreamingResponse>> + Send + '_>> {
-        // Delegate to chat and wrap the single response as a stream
         let config = self.config.clone();
         let messages = messages.to_vec();
+        let api_key = match self.get_api_key() {
+            Ok(k) => k,
+            Err(e) => return Box::pin(async move { Err(e) }),
+        };
         Box::pin(async move {
-            let provider = RigProvider { config };
-            let response = provider.chat(&messages).await?;
-            let content = response.content;
-            let chunks = vec![Ok(content)];
-            Ok(Box::pin(futures::stream::iter(chunks)) as StreamingResponse)
+            use rig::client::CompletionClient;
+            use rig::streaming::StreamingPrompt;
+
+            let client = rig::providers::anthropic::Client::new(&api_key)
+                .map_err(|e| ZcodeError::LlmApiError(format!("Failed to create client: {}", e)))?;
+
+            let mut builder = client.agent(&config.model);
+
+            // Add system message as preamble if present
+            for msg in &messages {
+                if msg.role == MessageRole::System {
+                    builder = builder.preamble(&msg.content);
+                    break;
+                }
+            }
+
+            let agent = builder.build();
+
+            // Build conversation prompt from non-system messages
+            let prompt = messages
+                .iter()
+                .filter(|m| m.role != MessageRole::System)
+                .map(|m| match m.role {
+                    MessageRole::User => format!("User: {}", m.content),
+                    MessageRole::Assistant => format!("Assistant: {}", m.content),
+                    _ => m.content.clone(),
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            let mut stream = agent.stream_prompt(&prompt).await;
+
+            // Collect all text chunks into a stream of Result<String>
+            let mut text_chunks: Vec<Result<String>> = Vec::new();
+
+            while let Some(item) = stream.next().await {
+                match item {
+                    Ok(rig::agent::MultiTurnStreamItem::StreamAssistantItem(content)) => {
+                        if let rig::streaming::StreamedAssistantContent::Text(text) = content {
+                            if !text.text.is_empty() {
+                                text_chunks.push(Ok(text.text));
+                            }
+                        }
+                        // Skip tool calls, reasoning, final, and other assistant content
+                    }
+                    // Skip user items, final responses, and any other stream items
+                    Ok(_) => {}
+                    Err(e) => {
+                        text_chunks.push(Err(ZcodeError::LlmApiError(format!(
+                            "Streaming error: {}",
+                            e
+                        ))));
+                    }
+                }
+            }
+
+            Ok(Box::pin(futures::stream::iter(text_chunks)) as StreamingResponse)
         })
     }
 }

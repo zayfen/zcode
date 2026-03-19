@@ -32,6 +32,7 @@ pub mod tools;
 pub mod llm;
 pub mod agent;
 pub mod tui;
+pub mod cli;
 
 // Re-exports for convenience
 pub use error::{ZcodeError, Result};

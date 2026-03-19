@@ -4,19 +4,8 @@
 
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
-
-/// Zcode programming agent
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    /// Path to the project directory
-    #[arg(short, long, default_value = ".")]
-    path: String,
-
-    /// Enable verbose output
-    #[arg(short, long)]
-    verbose: bool,
-}
+use zcode::cli::args::Args;
+use zcode::cli::commands::{execute_command, execute_default};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -30,17 +19,15 @@ async fn main() -> anyhow::Result<()> {
     };
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
-    tracing::info!("Starting zcode in directory: {}", args.path);
+    tracing::info!("Starting zcode");
 
-    // Load settings
-    let settings = zcode::Settings::load().unwrap_or_default();
-    tracing::debug!("Loaded settings: {:?}", settings);
+    // Execute command or default to interactive chat
+    if let Some(command) = &args.command {
+        execute_command(command, &args).await?;
+    } else {
+        execute_default(&args).await?;
+    }
 
-    // Initialize tool registry
-    let registry = zcode::ToolRegistry::new();
-    tracing::debug!("Initialized tool registry with {} tools", registry.list().len());
-
-    tracing::info!("Zcode initialized successfully");
-
+    tracing::info!("Zcode finished");
     Ok(())
 }

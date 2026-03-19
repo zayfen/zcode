@@ -4,6 +4,8 @@
 
 use serde_json::Value;
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use crate::error::{ZcodeError, Result};
 
@@ -19,7 +21,7 @@ pub trait Tool: Send + Sync {
     fn description(&self) -> &str;
 
     /// Execute the tool with the given input
-    fn execute(&self, input: Value) -> ToolResult<Value>;
+    fn execute(&self, input: Value) -> Pin<Box<dyn Future<Output = ToolResult<Value>> + Send + '_>>;
 }
 
 /// Registry for managing and executing tools
@@ -47,12 +49,12 @@ impl ToolRegistry {
     }
 
     /// Execute a tool by name
-    pub fn execute(&self, name: &str, input: Value) -> ToolResult<Value> {
+    pub async fn execute(&self, name: &str, input: Value) -> ToolResult<Value> {
         let tool = self.tools.get(name).ok_or_else(|| ZcodeError::ToolNotFound {
             name: name.to_string(),
         })?;
 
-        tool.execute(input)
+        tool.execute(input).await
     }
 
     /// List all registered tools
@@ -82,8 +84,8 @@ mod tests {
             "A test tool"
         }
 
-        fn execute(&self, _input: Value) -> ToolResult<Value> {
-            Ok(Value::String("test result".to_string()))
+        fn execute(&self, _input: Value) -> Pin<Box<dyn Future<Output = ToolResult<Value>> + Send + '_>> {
+            Box::pin(async { Ok(Value::String("test result".to_string())) })
         }
     }
 
@@ -96,21 +98,31 @@ mod tests {
         assert!(registry.get("nonexistent").is_none());
     }
 
-    #[test]
-    fn test_registry_execute() {
+    #[tokio::test]
+    async fn test_registry_execute() {
         let mut registry = ToolRegistry::new();
         registry.register(TestTool);
 
-        let result = registry.execute("test", Value::Null);
+        let result = registry.execute("test", Value::Null).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Value::String("test result".to_string()));
     }
 
-    #[test]
-    fn test_registry_unknown_tool() {
+    #[tokio::test]
+    async fn test_registry_unknown_tool() {
         let registry = ToolRegistry::new();
 
-        let result = registry.execute("unknown", Value::Null);
+        let result = registry.execute("unknown", Value::Null).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_registry_execute_async() {
+        let mut registry = ToolRegistry::new();
+        registry.register(TestTool);
+
+        let result = registry.execute("test", Value::Null).await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Value::String("test result".to_string()));
     }
 }

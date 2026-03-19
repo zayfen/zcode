@@ -1,3 +1,5 @@
+use std::future::Future;
+use std::pin::Pin;
 use zcode::tools::{Tool, ToolRegistry, ToolResult};
 
 // Mock tool for testing
@@ -22,13 +24,13 @@ impl Tool for MockTool {
         "A mock tool for testing"
     }
 
-    fn execute(&self, _input: serde_json::Value) -> ToolResult<serde_json::Value> {
-        Ok(serde_json::json!({ "result": "mock executed" }))
+    fn execute(&self, _input: serde_json::Value) -> Pin<Box<dyn Future<Output = ToolResult<serde_json::Value>> + Send + '_>> {
+        Box::pin(async { Ok(serde_json::json!({ "result": "mock executed" })) })
     }
 }
 
-#[test]
-fn test_registry_registers_tool() {
+#[tokio::test]
+async fn test_registry_registers_tool() {
     let mut registry = ToolRegistry::new();
     let tool = MockTool::new("test_tool");
 
@@ -37,25 +39,25 @@ fn test_registry_registers_tool() {
     assert!(registry.get("test_tool").is_some());
 }
 
-#[test]
-fn test_registry_executes_tool() {
+#[tokio::test]
+async fn test_registry_executes_tool() {
     let mut registry = ToolRegistry::new();
     let tool = MockTool::new("execute_tool");
     registry.register(tool);
 
     let input = serde_json::json!({ "param": "value" });
-    let result = registry.execute("execute_tool", input);
+    let result = registry.execute("execute_tool", input).await;
 
     assert!(result.is_ok());
     let output = result.unwrap();
     assert_eq!(output["result"], "mock executed");
 }
 
-#[test]
-fn test_registry_unknown_tool() {
+#[tokio::test]
+async fn test_registry_unknown_tool() {
     let registry = ToolRegistry::new();
 
-    let result = registry.execute("unknown_tool", serde_json::json!({}));
+    let result = registry.execute("unknown_tool", serde_json::json!({})).await;
 
     assert!(result.is_err());
     let error = result.unwrap_err();

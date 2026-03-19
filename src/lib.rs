@@ -37,7 +37,8 @@ pub mod tui;
 pub use error::{ZcodeError, Result};
 pub use config::{Settings, ProjectConfig};
 pub use tools::{ToolRegistry, Tool, ToolResult, FileReadTool, FileWriteTool, ShellExecTool};
-pub use llm::{LlmProvider, LlmConfig, Message, LlmResponse};
+pub use llm::{LlmProvider, LlmConfig, Message, LlmResponse, RigProvider};
+pub use agent::Agent;
 pub use tui::{TuiApp, ChatInterface};
 
 #[cfg(test)]

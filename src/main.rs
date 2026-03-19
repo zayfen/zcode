@@ -67,19 +67,50 @@ async fn main() -> anyhow::Result<()> {
             ))
         };
 
-    let _registry = Arc::new(registry);
-    let _llm = llm;
+    // Build system prompt with available tools
+    let tools_desc = registry
+        .list()
+        .iter()
+        .filter_map(|name| {
+            registry.get(name).map(|tool| {
+                format!("- {}: {}", tool.name(), tool.description())
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let system_prompt = format!(
+        r#"You are zcode, a programming assistant. You can help with:
+- Reading and writing files
+- Executing shell commands
+- Answering programming questions
+
+Available tools:
+{}
+
+When you need to use a tool, respond with a JSON block like:
+{{"tool": "tool_name", "input": {{"arg": "value"}}}}
+
+Otherwise, respond with helpful text."#,
+        tools_desc
+    );
+
+    let registry = Arc::new(registry);
+
+    // Create the agent
+    let agent = zcode::agent::Agent::new("zcode", llm, registry, system_prompt);
 
     // Initialize and run TUI
     let mut terminal = zcode::tui::init_terminal()?;
     let mut app = zcode::TuiApp::new();
+    app.set_agent(agent);
 
     // Add welcome message
     app.chat.add_message(zcode::tui::chat::ChatMessage::system(
         "Welcome to zcode! Type a message and press Enter to chat. Esc to quit.",
     ));
 
-    let result = app.run(&mut terminal);
+    let result = app.run_async(&mut terminal).await;
 
     // Always restore terminal
     zcode::tui::restore_terminal(&mut terminal)?;

@@ -5,7 +5,9 @@
 pub mod chat;
 
 pub use chat::ChatInterface;
+use chat::ChatMessage;
 
+use crate::agent::Agent;
 use crate::error::ZcodeError;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
@@ -60,6 +62,8 @@ pub struct TuiApp {
     pub should_quit: bool,
     /// Chat interface
     pub chat: ChatInterface,
+    /// Agent for processing messages
+    agent: Option<Agent>,
 }
 
 impl TuiApp {
@@ -68,7 +72,13 @@ impl TuiApp {
         Self {
             should_quit: false,
             chat: ChatInterface::new(),
+            agent: None,
         }
+    }
+
+    /// Set the agent for the TUI
+    pub fn set_agent(&mut self, agent: Agent) {
+        self.agent = Some(agent);
     }
 
     /// Handle a terminal event
@@ -96,12 +106,53 @@ impl TuiApp {
         Ok(())
     }
 
-    /// Run the main event loop
+    /// Run the main event loop (synchronous, without agent support)
     pub fn run(&mut self, terminal: &mut TuiTerminal) -> crate::error::Result<()> {
         while !self.should_quit {
             terminal
                 .draw(|f| self.chat.render(f))
                 .map_err(|e| ZcodeError::InternalError(format!("Failed to draw: {}", e)))?;
+
+            if event::poll(std::time::Duration::from_millis(100))
+                .map_err(|e| ZcodeError::InternalError(format!("Poll error: {}", e)))?
+            {
+                let event = event::read()
+                    .map_err(|e| ZcodeError::InternalError(format!("Read error: {}", e)))?;
+                self.handle_event(event)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Run the main event loop with async agent support
+    pub async fn run_async(&mut self, terminal: &mut TuiTerminal) -> crate::error::Result<()> {
+        while !self.should_quit {
+            terminal
+                .draw(|f| self.chat.render(f))
+                .map_err(|e| ZcodeError::InternalError(format!("Failed to draw: {}", e)))?;
+
+            // Process pending agent message
+            if self.chat.send_to_agent {
+                self.chat.send_to_agent = false;
+                let user_input = self.chat.pending_input.take().unwrap_or_default();
+                self.chat.add_message(ChatMessage::user(&user_input));
+
+                if let Some(ref mut agent) = self.agent {
+                    match agent.run(&user_input).await {
+                        Ok(response) => {
+                            self.chat.add_assistant_response(&response);
+                        }
+                        Err(e) => {
+                            self.chat
+                                .add_message(ChatMessage::system(format!("Error: {}", e)));
+                        }
+                    }
+                } else {
+                    self.chat.add_assistant_response(
+                        "Agent not configured. Please set ANTHROPIC_API_KEY.",
+                    );
+                }
+            }
 
             if event::poll(std::time::Duration::from_millis(100))
                 .map_err(|e| ZcodeError::InternalError(format!("Poll error: {}", e)))?

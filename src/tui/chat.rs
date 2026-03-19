@@ -54,6 +54,10 @@ pub struct ChatInterface {
     pub messages: Vec<ChatMessage>,
     /// Scroll position
     pub scroll: u16,
+    /// Whether input should be sent to the agent
+    pub send_to_agent: bool,
+    /// Pending input text for the agent
+    pub pending_input: Option<String>,
 }
 
 impl ChatInterface {
@@ -63,6 +67,8 @@ impl ChatInterface {
             input: String::new(),
             messages: Vec::new(),
             scroll: 0,
+            send_to_agent: false,
+            pending_input: None,
         }
     }
 
@@ -79,14 +85,15 @@ impl ChatInterface {
     /// Send the current input as a message
     pub fn send_current_input(&mut self) {
         if !self.input.is_empty() {
-            let message = ChatMessage::user(self.input.clone());
-            self.messages.push(message);
+            self.pending_input = Some(self.input.clone());
+            self.send_to_agent = true;
             self.input.clear();
-
-            // Add a placeholder assistant response
-            let response = ChatMessage::assistant("Response received. (Full LLM integration coming in Task 3)");
-            self.messages.push(response);
         }
+    }
+
+    /// Add an assistant response to the chat
+    pub fn add_assistant_response(&mut self, content: &str) {
+        self.messages.push(ChatMessage::assistant(content));
     }
 
     /// Add a message to the chat
@@ -114,7 +121,7 @@ impl ChatInterface {
     }
 
     /// Render the messages area
-    fn render_messages(&self, area: Rect) -> Paragraph {
+    fn render_messages(&self, area: Rect) -> Paragraph<'_> {
         let mut lines = Vec::new();
 
         for message in &self.messages {
@@ -153,7 +160,7 @@ impl ChatInterface {
     }
 
     /// Render the input area
-    fn render_input(&self, _area: Rect) -> Paragraph {
+    fn render_input(&self, _area: Rect) -> Paragraph<'_> {
         let input_text = if self.input.is_empty() {
             Text::from(Span::styled(
                 "Type a message... (Enter to send, Esc to quit)",
@@ -207,9 +214,8 @@ mod tests {
         chat.send_current_input();
 
         assert!(chat.input.is_empty());
-        assert_eq!(chat.messages.len(), 2); // user message + assistant placeholder
-        assert_eq!(chat.messages[0].role, "user");
-        assert_eq!(chat.messages[0].content, "Hello");
+        assert!(chat.send_to_agent);
+        assert_eq!(chat.pending_input, Some("Hello".to_string()));
     }
 
     #[test]

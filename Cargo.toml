@@ -41,7 +41,7 @@ walkdir = "2.4"
 glob = "0.3"
 
 # LLM integration
-# rig-core = "0.5"  # Temporarily disabled due to edition 2024 issues
+rig-core = "0.33"
 
 # TUI
 ratatui = "0.27"

@@ -24,6 +24,9 @@ pub trait Tool: Send + Sync {
     fn execute(&self, input: Value) -> Pin<Box<dyn Future<Output = ToolResult<Value>> + Send + '_>>;
 }
 
+pub mod file_ops;
+pub use file_ops::FileReadTool;
+
 /// Registry for managing and executing tools
 pub struct ToolRegistry {
     tools: HashMap<String, Arc<dyn Tool>>,

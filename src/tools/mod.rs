@@ -25,7 +25,7 @@ pub trait Tool: Send + Sync {
 }
 
 pub mod file_ops;
-pub use file_ops::{FileReadTool, FileWriteTool};
+pub use file_ops::{FileReadTool, FileWriteTool, ShellExecTool};
 
 /// Registry for managing and executing tools
 pub struct ToolRegistry {

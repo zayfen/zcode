@@ -90,6 +90,65 @@ impl Tool for FileWriteTool {
     }
 }
 
+/// Tool for executing shell commands
+pub struct ShellExecTool;
+
+impl Tool for ShellExecTool {
+    fn name(&self) -> &str {
+        "shell_exec"
+    }
+
+    fn description(&self) -> &str {
+        "Execute a shell command. Input: {\"command\": \"<cmd>\", \"cwd\": \"<dir>\" (optional)}"
+    }
+
+    fn execute(&self, input: Value) -> Pin<Box<dyn Future<Output = ToolResult<Value>> + Send + '_>> {
+        Box::pin(async move {
+            let command = input
+                .get("command")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    ZcodeError::InvalidToolInput("Missing 'command' field".to_string())
+                })?;
+
+            let cwd = input.get("cwd").and_then(|v| v.as_str());
+
+            let mut cmd = if cfg!(target_os = "windows") {
+                let mut c = tokio::process::Command::new("cmd");
+                c.args(["/C", command]);
+                c
+            } else {
+                let mut c = tokio::process::Command::new("sh");
+                c.args(["-c", command]);
+                c
+            };
+
+            if let Some(dir) = cwd {
+                cmd.current_dir(dir);
+            }
+
+            let output = cmd.output().await.map_err(|e| {
+                ZcodeError::ToolExecutionFailed {
+                    name: self.name().to_string(),
+                    message: e.to_string(),
+                }
+            })?;
+
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let exit_code = output.status.code().unwrap_or(-1);
+            let success = output.status.success();
+
+            Ok(serde_json::json!({
+                "stdout": stdout,
+                "stderr": stderr,
+                "exit_code": exit_code,
+                "success": success
+            }))
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,5 +209,39 @@ mod tests {
         assert!(result.is_err());
         let result = tool.execute(serde_json::json!({"path": "/tmp/test"})).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_shell_exec_echo() {
+        let tool = ShellExecTool;
+        let input = serde_json::json!({"command": "echo hello"});
+        let result = tool.execute(input).await;
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(output["stdout"].as_str().unwrap().trim(), "hello");
+        assert_eq!(output["exit_code"].as_i64().unwrap(), 0);
+        assert!(output["success"].as_bool().unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_shell_exec_failing_command() {
+        let tool = ShellExecTool;
+        let input = serde_json::json!({"command": "exit 1"});
+        let result = tool.execute(input).await;
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(output["exit_code"].as_i64().unwrap(), 1);
+        assert!(!output["success"].as_bool().unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_shell_exec_with_cwd() {
+        let tool = ShellExecTool;
+        let tmp = tempfile::tempdir().unwrap();
+        let input = serde_json::json!({"command": "pwd", "cwd": tmp.path().to_str().unwrap()});
+        let result = tool.execute(input).await;
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output["stdout"].as_str().unwrap().contains(tmp.path().to_str().unwrap()));
     }
 }

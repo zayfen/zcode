@@ -101,15 +101,29 @@ mod tests {
     use super::*;
     use crate::cli::args::Args;
 
+    // ============================================================
+    // execute_version tests
+    // ============================================================
+
     #[test]
-    fn test_version_output() {
-        // This test verifies that execute_version doesn't error
+    fn test_execute_version_success() {
         let result = execute_version();
         assert!(result.is_ok());
     }
 
+    #[test]
+    fn test_execute_version_returns_unit() {
+        let result: Result<()> = execute_version();
+        assert!(result.is_ok());
+        assert!(matches!(result, Ok(())));
+    }
+
+    // ============================================================
+    // execute_run tests
+    // ============================================================
+
     #[tokio::test]
-    async fn test_run_command_basic() {
+    async fn test_execute_run_basic() {
         let args = Args {
             command: Some(Command::Run {
                 task: "test task".to_string(),
@@ -128,7 +142,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_run_command_with_model() {
+    async fn test_execute_run_with_model() {
         let args = Args {
             command: Some(Command::Run {
                 task: "test task".to_string(),
@@ -144,5 +158,312 @@ mod tests {
         } else {
             panic!("Expected Run command");
         }
+    }
+
+    #[tokio::test]
+    async fn test_execute_run_empty_task() {
+        let args = Args {
+            command: Some(Command::Run {
+                task: "".to_string(),
+            }),
+            model: None,
+            mcp: vec![],
+            verbose: false,
+        };
+
+        if let Some(Command::Run { task }) = &args.command {
+            let result = execute_run(task, &args).await;
+            assert!(result.is_ok());
+        } else {
+            panic!("Expected Run command");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_run_long_task() {
+        let long_task = "x".repeat(1000);
+        let args = Args {
+            command: Some(Command::Run {
+                task: long_task.clone(),
+            }),
+            model: None,
+            mcp: vec![],
+            verbose: false,
+        };
+
+        if let Some(Command::Run { task }) = &args.command {
+            let result = execute_run(task, &args).await;
+            assert!(result.is_ok());
+        } else {
+            panic!("Expected Run command");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_run_with_mcp_servers() {
+        let args = Args {
+            command: Some(Command::Run {
+                task: "test".to_string(),
+            }),
+            model: None,
+            mcp: vec!["server1".to_string(), "server2".to_string()],
+            verbose: false,
+        };
+
+        if let Some(Command::Run { task }) = &args.command {
+            let result = execute_run(task, &args).await;
+            assert!(result.is_ok());
+        } else {
+            panic!("Expected Run command");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_run_verbose() {
+        let args = Args {
+            command: Some(Command::Run {
+                task: "test".to_string(),
+            }),
+            model: None,
+            mcp: vec![],
+            verbose: true,
+        };
+
+        if let Some(Command::Run { task }) = &args.command {
+            let result = execute_run(task, &args).await;
+            assert!(result.is_ok());
+        } else {
+            panic!("Expected Run command");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_run_special_characters() {
+        let args = Args {
+            command: Some(Command::Run {
+                task: "Fix \"bug\" #123 @user".to_string(),
+            }),
+            model: None,
+            mcp: vec![],
+            verbose: false,
+        };
+
+        if let Some(Command::Run { task }) = &args.command {
+            let result = execute_run(task, &args).await;
+            assert!(result.is_ok());
+        } else {
+            panic!("Expected Run command");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_run_unicode() {
+        let args = Args {
+            command: Some(Command::Run {
+                task: "你好世界 🎉".to_string(),
+            }),
+            model: None,
+            mcp: vec![],
+            verbose: false,
+        };
+
+        if let Some(Command::Run { task }) = &args.command {
+            let result = execute_run(task, &args).await;
+            assert!(result.is_ok());
+        } else {
+            panic!("Expected Run command");
+        }
+    }
+
+    // ============================================================
+    // execute_command tests
+    // ============================================================
+
+    #[tokio::test]
+    async fn test_execute_command_run() {
+        let args = Args {
+            command: Some(Command::Run {
+                task: "test".to_string(),
+            }),
+            model: None,
+            mcp: vec![],
+            verbose: false,
+        };
+
+        if let Some(ref cmd) = args.command {
+            let result = execute_command(cmd, &args).await;
+            assert!(result.is_ok());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_command_version() {
+        let args = Args {
+            command: Some(Command::Version),
+            model: None,
+            mcp: vec![],
+            verbose: false,
+        };
+
+        if let Some(ref cmd) = args.command {
+            let result = execute_command(cmd, &args).await;
+            assert!(result.is_ok());
+        }
+    }
+
+    // ============================================================
+    // execute_default tests
+    // ============================================================
+
+    #[test]
+    fn test_execute_default_exists() {
+        // Verify the function exists - we can't test execution without TUI
+        // Just check that the function is accessible by referencing it
+        let _ = || execute_default;
+    }
+
+    // ============================================================
+    // Command enum tests
+    // ============================================================
+
+    #[test]
+    fn test_command_run_clone() {
+        let cmd = Command::Run {
+            task: "test".to_string(),
+        };
+        let cloned = cmd.clone();
+        if let Command::Run { task } = cloned {
+            assert_eq!(task, "test");
+        } else {
+            panic!("Expected Run command");
+        }
+    }
+
+    #[test]
+    fn test_command_chat_clone() {
+        let cmd = Command::Chat;
+        let cloned = cmd.clone();
+        assert!(matches!(cloned, Command::Chat));
+    }
+
+    #[test]
+    fn test_command_version_clone() {
+        let cmd = Command::Version;
+        let cloned = cmd.clone();
+        assert!(matches!(cloned, Command::Version));
+    }
+
+    #[test]
+    fn test_command_debug() {
+        let cmd = Command::Chat;
+        let debug_str = format!("{:?}", cmd);
+        assert!(debug_str.contains("Chat"));
+    }
+
+    // ============================================================
+    // Args struct tests
+    // ============================================================
+
+    #[test]
+    fn test_args_construction() {
+        let args = Args {
+            command: Some(Command::Version),
+            model: Some("gpt-4".to_string()),
+            mcp: vec!["server1".to_string()],
+            verbose: true,
+        };
+
+        assert!(matches!(args.command, Some(Command::Version)));
+        assert_eq!(args.model, Some("gpt-4".to_string()));
+        assert_eq!(args.mcp, vec!["server1"]);
+        assert!(args.verbose);
+    }
+
+    #[test]
+    fn test_args_clone() {
+        let args = Args {
+            command: Some(Command::Chat),
+            model: Some("claude".to_string()),
+            mcp: vec![],
+            verbose: false,
+        };
+        let cloned = args.clone();
+        assert!(matches!(cloned.command, Some(Command::Chat)));
+        assert_eq!(cloned.model, Some("claude".to_string()));
+    }
+
+    #[test]
+    fn test_args_debug() {
+        let args = Args {
+            command: Some(Command::Version),
+            model: None,
+            mcp: vec![],
+            verbose: false,
+        };
+        let debug_str = format!("{:?}", args);
+        assert!(debug_str.contains("Args"));
+        assert!(debug_str.contains("Version"));
+    }
+
+    // ============================================================
+    // Edge cases
+    // ============================================================
+
+    #[tokio::test]
+    async fn test_execute_run_multiple_mcp_servers() {
+        let args = Args {
+            command: Some(Command::Run {
+                task: "test".to_string(),
+            }),
+            model: None,
+            mcp: vec![
+                "server1".to_string(),
+                "server2".to_string(),
+                "server3".to_string(),
+            ],
+            verbose: false,
+        };
+
+        if let Some(Command::Run { task }) = &args.command {
+            let result = execute_run(task, &args).await;
+            assert!(result.is_ok());
+        } else {
+            panic!("Expected Run command");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_run_all_options() {
+        let args = Args {
+            command: Some(Command::Run {
+                task: "complex task".to_string(),
+            }),
+            model: Some("claude-3-opus".to_string()),
+            mcp: vec!["mcp-server".to_string()],
+            verbose: true,
+        };
+
+        if let Some(Command::Run { task }) = &args.command {
+            let result = execute_run(task, &args).await;
+            assert!(result.is_ok());
+        } else {
+            panic!("Expected Run command");
+        }
+    }
+
+    // ============================================================
+    // Result type tests
+    // ============================================================
+
+    #[test]
+    fn test_result_ok() {
+        let result: Result<()> = Ok(());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_result_err() {
+        let result: Result<()> = Err(crate::error::ZcodeError::Cancelled);
+        assert!(result.is_err());
     }
 }

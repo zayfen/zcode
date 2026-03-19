@@ -84,7 +84,8 @@ impl TuiApp {
                 (KeyModifiers::NONE, KeyCode::Enter) => {
                     self.chat.send_current_input();
                 }
-                (KeyModifiers::NONE, KeyCode::Char(c)) => {
+                (KeyModifiers::NONE, KeyCode::Char(c))
+                | (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
                     self.chat.input_char(c);
                 }
                 (KeyModifiers::NONE, KeyCode::Backspace) => {
@@ -124,17 +125,264 @@ impl Default for TuiApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+
+    // ============================================================
+    // TuiApp creation tests
+    // ============================================================
 
     #[test]
-    fn test_tui_app_creation() {
+    fn test_tui_app_new() {
         let app = TuiApp::new();
         assert!(!app.should_quit);
     }
 
     #[test]
-    fn test_chat_interface_creation() {
-        let chat = ChatInterface::new();
-        assert!(chat.input.is_empty());
-        assert!(chat.messages.is_empty());
+    fn test_tui_app_default() {
+        let app = TuiApp::default();
+        assert!(!app.should_quit);
+    }
+
+    // ============================================================
+    // TuiApp should_quit tests
+    // ============================================================
+
+    #[test]
+    fn test_tui_app_should_quit_initially_false() {
+        let app = TuiApp::new();
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn test_tui_app_should_quit_can_be_set() {
+        let mut app = TuiApp::new();
+        app.should_quit = true;
+        assert!(app.should_quit);
+    }
+
+    // ============================================================
+    // TuiApp handle_event tests
+    // ============================================================
+
+    #[test]
+    fn test_tui_app_handle_event_ctrl_c() {
+        let mut app = TuiApp::new();
+        let event = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        app.handle_event(event).unwrap();
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn test_tui_app_handle_event_escape() {
+        let mut app = TuiApp::new();
+        let event = Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        app.handle_event(event).unwrap();
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn test_tui_app_handle_event_enter() {
+        let mut app = TuiApp::new();
+        app.chat.input = "Test".to_string();
+
+        let event = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_event(event).unwrap();
+
+        assert!(app.chat.input.is_empty());
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn test_tui_app_handle_event_character() {
+        let mut app = TuiApp::new();
+
+        let event = Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        app.handle_event(event).unwrap();
+
+        assert_eq!(app.chat.input, "a");
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn test_tui_app_handle_event_backspace() {
+        let mut app = TuiApp::new();
+        app.chat.input = "Hello".to_string();
+
+        let event = Event::Key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        app.handle_event(event).unwrap();
+
+        assert_eq!(app.chat.input, "Hell");
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn test_tui_app_handle_event_other_key() {
+        let mut app = TuiApp::new();
+
+        // Test that other key combinations don't cause issues
+        let event = Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        app.handle_event(event).unwrap();
+
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn test_tui_app_handle_event_multiple_characters() {
+        let mut app = TuiApp::new();
+
+        for c in "Hello".chars() {
+            let event = Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+            app.handle_event(event).unwrap();
+        }
+
+        assert_eq!(app.chat.input, "Hello");
+    }
+
+    #[test]
+    fn test_tui_app_handle_event_non_key_event() {
+        let mut app = TuiApp::new();
+
+        // Mouse event should be ignored
+        let event = Event::Mouse(crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        app.handle_event(event).unwrap();
+
+        assert!(!app.should_quit);
+    }
+
+    // ============================================================
+    // TuiApp chat integration tests
+    // ============================================================
+
+    #[test]
+    fn test_tui_app_chat_initially_empty() {
+        let app = TuiApp::new();
+        assert!(app.chat.input.is_empty());
+        assert!(app.chat.messages.is_empty());
+    }
+
+    #[test]
+    fn test_tui_app_chat_can_add_messages() {
+        let mut app = TuiApp::new();
+        app.chat.add_message(chat::ChatMessage::system("Welcome"));
+        assert_eq!(app.chat.messages.len(), 1);
+    }
+
+    // ============================================================
+    // TuiApp type alias tests
+    // ============================================================
+
+    #[test]
+    fn test_tui_backend_type() {
+        // Verify type alias compiles
+        fn _check_type(_: TuiBackend) {}
+        // This function is just for compile-time checking
+    }
+
+    #[test]
+    fn test_tui_terminal_type() {
+        // Verify type alias compiles
+        fn _check_type(_: TuiTerminal) {}
+        // This function is just for compile-time checking
+    }
+
+    // ============================================================
+    // TuiApp edge cases
+    // ============================================================
+
+    #[test]
+    fn test_tui_app_handle_event_empty_input_enter() {
+        let mut app = TuiApp::new();
+
+        // Enter with empty input should not add messages
+        let event = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_event(event).unwrap();
+
+        assert!(app.chat.messages.is_empty());
+    }
+
+    #[test]
+    fn test_tui_app_handle_event_backspace_empty() {
+        let mut app = TuiApp::new();
+
+        // Backspace on empty input should not panic
+        let event = Event::Key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        app.handle_event(event).unwrap();
+
+        assert!(app.chat.input.is_empty());
+    }
+
+    #[test]
+    fn test_tui_app_handle_event_unicode_character() {
+        let mut app = TuiApp::new();
+
+        let event = Event::Key(KeyEvent::new(KeyCode::Char('你'), KeyModifiers::NONE));
+        app.handle_event(event).unwrap();
+
+        assert_eq!(app.chat.input, "你");
+    }
+
+    #[test]
+    fn test_tui_app_full_typing_sequence() {
+        let mut app = TuiApp::new();
+
+        // Type "Hi"
+        let event = Event::Key(KeyEvent::new(KeyCode::Char('H'), KeyModifiers::NONE));
+        app.handle_event(event).unwrap();
+        let event = Event::Key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
+        app.handle_event(event).unwrap();
+
+        // Send
+        let event = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_event(event).unwrap();
+
+        // Should have user message and assistant response
+        assert_eq!(app.chat.messages.len(), 2);
+    }
+
+    // ============================================================
+    // Event handling edge cases
+    // ============================================================
+
+    #[test]
+    fn test_tui_app_ctrl_other_keys() {
+        let mut app = TuiApp::new();
+
+        // Ctrl+A should not quit
+        let event = Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
+        app.handle_event(event).unwrap();
+        assert!(!app.should_quit);
+
+        // Ctrl+D should not quit
+        let event = Event::Key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+        app.handle_event(event).unwrap();
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn test_tui_app_shift_modifiers() {
+        let mut app = TuiApp::new();
+
+        // Shift+Char should be handled as character
+        let event = Event::Key(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT));
+        app.handle_event(event).unwrap();
+
+        assert_eq!(app.chat.input, "A");
+    }
+
+    #[test]
+    fn test_tui_app_alt_modifiers() {
+        let mut app = TuiApp::new();
+
+        // Alt+Char should be ignored (no handler)
+        let event = Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::ALT));
+        app.handle_event(event).unwrap();
+
+        assert!(!app.should_quit);
+        assert!(app.chat.input.is_empty());
     }
 }

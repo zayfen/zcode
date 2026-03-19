@@ -36,7 +36,7 @@ pub mod tui;
 // Re-exports for convenience
 pub use error::{ZcodeError, Result};
 pub use config::{Settings, ProjectConfig};
-pub use tools::{ToolRegistry, Tool, ToolResult};
+pub use tools::{ToolRegistry, Tool, ToolResult, FileReadTool, FileWriteTool, ShellExecTool};
 pub use llm::{LlmProvider, LlmConfig, Message, LlmResponse};
 pub use tui::{TuiApp, ChatInterface};
 

@@ -60,6 +60,13 @@ impl ToolRegistry {
         tool.execute(input).await
     }
 
+    /// Register all built-in tools
+    pub fn register_built_in_tools(&mut self) {
+        self.register(file_ops::FileReadTool);
+        self.register(file_ops::FileWriteTool);
+        self.register(file_ops::ShellExecTool);
+    }
+
     /// List all registered tools
     pub fn list(&self) -> Vec<&str> {
         self.tools.keys().map(|s| s.as_str()).collect()
@@ -127,5 +134,17 @@ mod tests {
         let result = registry.execute("test", Value::Null).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), Value::String("test result".to_string()));
+    }
+
+    #[test]
+    fn test_register_built_in_tools() {
+        let mut registry = ToolRegistry::new();
+        registry.register_built_in_tools();
+
+        let tools = registry.list();
+        assert!(tools.contains(&"file_read"));
+        assert!(tools.contains(&"file_write"));
+        assert!(tools.contains(&"shell_exec"));
+        assert_eq!(tools.len(), 3);
     }
 }

@@ -2,24 +2,62 @@
 name = "zcode"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.75"
+authors = ["zcode contributors"]
+description = "A programming agent CLI tool"
+license = "MIT"
 
 [dependencies]
+# Async runtime
 tokio = { version = "1.35", features = ["full"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-anyhow = "1.0"
-thiserror = "1.0"
-clap = { version = "4.4", features = ["derive"] }
-tracing = "0.1"
-tracing-subscriber = "0.3"
-regex = "1.10"
-walkdir = "2.4"
+tokio-stream = "0.1"
 futures = "0.3"
 
-[dev-dependencies]
-tempfile = "3.9"
-tokio-test = "0.4"
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
-[profile.release]
-opt-level = 3
-lto = true
+# Schema generation
+schemars = "0.8"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# CLI
+clap = { version = "=4.4.6", features = ["derive", "env"] }
+
+# Configuration
+directories = "5.0"
+config = "0.14"
+toml = "0.8"
+
+# File system
+walkdir = "2.4"
+glob = "0.3"
+
+# LLM integration
+# rig-core = "0.5"  # Temporarily disabled due to edition 2024 issues
+
+# TUI
+ratatui = "0.27"
+crossterm = "0.27"
+textwrap = "0.16"
+# ignore = "0.4.22"  # Temporarily disabled due to edition2024 issue
+
+[dev-dependencies]
+# Testing
+tokio-test = "0.4"
+tempfile = "3.9"
+
+[lib]
+name = "zcode"
+path = "src/lib.rs"
+
+[[bin]]
+name = "zcode"
+path = "src/main.rs"

@@ -100,6 +100,18 @@ impl TuiApp {
                 (KeyModifiers::NONE, KeyCode::Backspace) => {
                     self.chat.backspace();
                 }
+                (KeyModifiers::NONE, KeyCode::PageUp) => {
+                    self.chat.scroll_up(10);
+                }
+                (KeyModifiers::NONE, KeyCode::PageDown) => {
+                    self.chat.scroll_down(10);
+                }
+                (KeyModifiers::CONTROL, KeyCode::Char('u')) => {
+                    self.chat.scroll_up(5);
+                }
+                (KeyModifiers::CONTROL, KeyCode::Char('d')) => {
+                    self.chat.scroll_down(5);
+                }
                 _ => {}
             }
         }

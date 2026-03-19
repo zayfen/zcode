@@ -100,11 +100,28 @@ impl ChatInterface {
     /// Add an assistant response to the chat
     pub fn add_assistant_response(&mut self, content: &str) {
         self.messages.push(ChatMessage::assistant(content));
+        self.scroll_to_bottom();
     }
 
     /// Add a message to the chat
     pub fn add_message(&mut self, message: ChatMessage) {
         self.messages.push(message);
+        self.scroll_to_bottom();
+    }
+
+    /// Scroll up by N lines
+    pub fn scroll_up(&mut self, lines: u16) {
+        self.scroll = self.scroll.saturating_sub(lines);
+    }
+
+    /// Scroll down by N lines
+    pub fn scroll_down(&mut self, lines: u16) {
+        self.scroll = self.scroll.saturating_add(lines);
+    }
+
+    /// Auto-scroll to bottom (called after new messages)
+    pub fn scroll_to_bottom(&mut self) {
+        self.scroll = u16::MAX;
     }
 
     /// Render the chat interface
@@ -185,7 +202,17 @@ impl ChatInterface {
             )));
         }
 
+        let total_lines = lines.len() as u16;
+        let view_height = area.height.saturating_sub(2);
+        let max_scroll = total_lines.saturating_sub(view_height);
+        let scroll = if self.scroll == u16::MAX {
+            max_scroll
+        } else {
+            self.scroll.min(max_scroll)
+        };
+
         Paragraph::new(Text::from(lines))
+            .scroll((scroll, 0))
             .block(Block::default().borders(Borders::ALL).title("Chat"))
     }
 
@@ -255,5 +282,23 @@ mod tests {
 
         assert_eq!(chat.messages.len(), 1);
         assert_eq!(chat.messages[0].role, "system");
+    }
+
+    #[test]
+    fn test_scroll_up_down() {
+        let mut chat = ChatInterface::new();
+        chat.scroll_down(10);
+        assert_eq!(chat.scroll, 10);
+        chat.scroll_up(5);
+        assert_eq!(chat.scroll, 5);
+        chat.scroll_up(10); // saturating
+        assert_eq!(chat.scroll, 0);
+    }
+
+    #[test]
+    fn test_scroll_to_bottom() {
+        let mut chat = ChatInterface::new();
+        chat.scroll_to_bottom();
+        assert_eq!(chat.scroll, u16::MAX);
     }
 }

@@ -62,6 +62,8 @@ pub struct ChatInterface {
     pub is_streaming: bool,
     /// Accumulated streaming text
     pub streaming_text: String,
+    /// Status bar text
+    pub status: String,
 }
 
 impl ChatInterface {
@@ -75,6 +77,7 @@ impl ChatInterface {
             pending_input: None,
             is_streaming: false,
             streaming_text: String::new(),
+            status: "Ready".to_string(),
         }
     }
 
@@ -109,6 +112,11 @@ impl ChatInterface {
         self.scroll_to_bottom();
     }
 
+    /// Set the status bar text
+    pub fn set_status(&mut self, status: impl Into<String>) {
+        self.status = status.into();
+    }
+
     /// Scroll up by N lines
     pub fn scroll_up(&mut self, lines: u16) {
         self.scroll = self.scroll.saturating_sub(lines);
@@ -131,7 +139,7 @@ impl ChatInterface {
         // Create layout: messages on top, input at bottom
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(3), Constraint::Length(3)])
+            .constraints([Constraint::Min(3), Constraint::Length(3), Constraint::Length(1)])
             .split(area);
 
         // Render messages area
@@ -141,6 +149,10 @@ impl ChatInterface {
         // Render input area
         let input_widget = self.render_input(chunks[1]);
         frame.render_widget(input_widget, chunks[1]);
+
+        // Render status bar
+        let status_widget = self.render_status(chunks[2]);
+        frame.render_widget(status_widget, chunks[2]);
     }
 
     /// Render the messages area
@@ -234,6 +246,23 @@ impl ChatInterface {
                 .style(Style::default()),
         )
     }
+
+    /// Render the status bar
+    fn render_status(&self, _area: Rect) -> Paragraph<'_> {
+        let scroll_info = if self.scroll > 0 {
+            format!(" | Scroll: {}", self.scroll)
+        } else {
+            String::new()
+        };
+        let msg_count = format!("Messages: {}", self.messages.len());
+        let status_text = format!("{}{} | {}", self.status, scroll_info, msg_count);
+
+        Paragraph::new(status_text).style(
+            Style::default()
+                .fg(Color::White)
+                .bg(Color::DarkGray),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -300,5 +329,13 @@ mod tests {
         let mut chat = ChatInterface::new();
         chat.scroll_to_bottom();
         assert_eq!(chat.scroll, u16::MAX);
+    }
+
+    #[test]
+    fn test_set_status() {
+        let mut chat = ChatInterface::new();
+        assert_eq!(chat.status, "Ready");
+        chat.set_status("Thinking...");
+        assert_eq!(chat.status, "Thinking...");
     }
 }

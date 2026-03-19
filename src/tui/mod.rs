@@ -153,6 +153,7 @@ impl TuiApp {
                     // Use streaming
                     self.chat.is_streaming = true;
                     self.chat.streaming_text.clear();
+                    self.chat.set_status("Thinking...");
 
                     match agent.run_streaming(&user_input).await {
                         Ok(stream) => {
@@ -162,6 +163,7 @@ impl TuiApp {
                                 match chunk_result {
                                     Ok(chunk) => {
                                         self.chat.streaming_text.push_str(&chunk);
+                                        self.chat.set_status("Streaming...");
                                         // Re-render after each chunk
                                         terminal
                                             .draw(|f| self.chat.render(f))
@@ -179,18 +181,21 @@ impl TuiApp {
                             self.chat.is_streaming = false;
                             self.chat.streaming_text.clear();
                             self.chat.add_assistant_response(&final_text);
+                            self.chat.set_status("Ready");
                         }
                         Err(e) => {
                             self.chat.is_streaming = false;
                             self.chat.streaming_text.clear();
                             self.chat
                                 .add_message(ChatMessage::system(format!("Error: {}", e)));
+                            self.chat.set_status("Ready");
                         }
                     }
                 } else {
                     self.chat.add_assistant_response(
                         "Agent not configured. Please set ANTHROPIC_API_KEY.",
                     );
+                    self.chat.set_status("Ready");
                 }
             }
 

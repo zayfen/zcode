@@ -58,6 +58,10 @@ pub struct ChatInterface {
     pub send_to_agent: bool,
     /// Pending input text for the agent
     pub pending_input: Option<String>,
+    /// Whether a streaming response is active
+    pub is_streaming: bool,
+    /// Accumulated streaming text
+    pub streaming_text: String,
 }
 
 impl ChatInterface {
@@ -69,6 +73,8 @@ impl ChatInterface {
             scroll: 0,
             send_to_agent: false,
             pending_input: None,
+            is_streaming: false,
+            streaming_text: String::new(),
         }
     }
 
@@ -146,6 +152,30 @@ impl ChatInterface {
                     lines.push(Line::from(Span::styled(line.to_string(), style)));
                 }
             }
+        }
+
+        // Show streaming text if active
+        if self.is_streaming && !self.streaming_text.is_empty() {
+            let style = Style::default().fg(Color::Green);
+            let prefix = "Assistant: ";
+            let max_width = area.width.saturating_sub(2) as usize;
+            let wrapped = textwrap::wrap(&self.streaming_text, max_width);
+
+            for (i, line) in wrapped.iter().enumerate() {
+                if i == 0 {
+                    lines.push(Line::from(vec![
+                        Span::styled(prefix, style.add_modifier(Modifier::BOLD)),
+                        Span::styled(line.to_string(), style),
+                    ]));
+                } else {
+                    lines.push(Line::from(Span::styled(line.to_string(), style)));
+                }
+            }
+            // Blinking cursor indicator
+            lines.push(Line::from(Span::styled(
+                "\u{258A}",
+                Style::default().fg(Color::Green).add_modifier(Modifier::SLOW_BLINK),
+            )));
         }
 
         if lines.is_empty() {

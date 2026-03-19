@@ -138,11 +138,39 @@ impl TuiApp {
                 self.chat.add_message(ChatMessage::user(&user_input));
 
                 if let Some(ref mut agent) = self.agent {
-                    match agent.run(&user_input).await {
-                        Ok(response) => {
-                            self.chat.add_assistant_response(&response);
+                    // Use streaming
+                    self.chat.is_streaming = true;
+                    self.chat.streaming_text.clear();
+
+                    match agent.run_streaming(&user_input).await {
+                        Ok(stream) => {
+                            use futures::StreamExt;
+                            let mut stream = stream;
+                            while let Some(chunk_result) = stream.next().await {
+                                match chunk_result {
+                                    Ok(chunk) => {
+                                        self.chat.streaming_text.push_str(&chunk);
+                                        // Re-render after each chunk
+                                        terminal
+                                            .draw(|f| self.chat.render(f))
+                                            .map_err(|e| ZcodeError::InternalError(format!("Failed to draw: {}", e)))?;
+                                    }
+                                    Err(e) => {
+                                        self.chat
+                                            .add_message(ChatMessage::system(format!("Stream error: {}", e)));
+                                        break;
+                                    }
+                                }
+                            }
+                            // Finalize streaming
+                            let final_text = self.chat.streaming_text.clone();
+                            self.chat.is_streaming = false;
+                            self.chat.streaming_text.clear();
+                            self.chat.add_assistant_response(&final_text);
                         }
                         Err(e) => {
+                            self.chat.is_streaming = false;
+                            self.chat.streaming_text.clear();
                             self.chat
                                 .add_message(ChatMessage::system(format!("Error: {}", e)));
                         }

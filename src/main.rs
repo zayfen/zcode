@@ -67,17 +67,18 @@ async fn main() -> anyhow::Result<()> {
             ))
         };
 
-    // Build system prompt with available tools
+    // Build system prompt with available tools and their schemas
     let tools_desc = registry
-        .list()
-        .iter()
-        .filter_map(|name| {
-            registry.get(name).map(|tool| {
-                format!("- {}: {}", tool.name(), tool.description())
-            })
+        .tool_definitions()
+        .into_iter()
+        .map(|def| {
+            let name = def["name"].as_str().unwrap_or("unknown");
+            let desc = def["description"].as_str().unwrap_or("");
+            let schema = serde_json::to_string_pretty(&def["parameters"]).unwrap_or_default();
+            format!("- {}\n  Description: {}\n  Input Schema:\n{}", name, desc, schema)
         })
         .collect::<Vec<_>>()
-        .join("\n");
+        .join("\n\n");
 
     let system_prompt = format!(
         r#"You are zcode, a programming assistant. You can help with:
@@ -89,7 +90,9 @@ Available tools:
 {}
 
 When you need to use a tool, respond with a JSON block like:
+```json
 {{"tool": "tool_name", "input": {{"arg": "value"}}}}
+```
 
 Otherwise, respond with helpful text."#,
         tools_desc

@@ -115,14 +115,37 @@ impl Agent {
 
     /// Parse a tool call from LLM response.
     ///
-    /// Looks for ```json blocks containing {"tool": "...", "input": {...}}.
+    /// Tries fenced JSON block first, then falls back to bare JSON.
     pub fn parse_tool_call(response: &str) -> Option<(String, Value)> {
+        if let Some((tool, input)) = Self::parse_json_block(response) {
+            return Some((tool, input));
+        }
+        Self::parse_bare_json(response)
+    }
+
+    /// Parse a tool call from a ```json fenced block.
+    fn parse_json_block(response: &str) -> Option<(String, Value)> {
         let json_start = response.find("```json")?;
         let json_content_start = json_start + 7; // len("```json")
         let json_end = response[json_content_start..].find("```")?;
         let json_str = response[json_content_start..json_content_start + json_end].trim();
 
         let parsed: Value = serde_json::from_str(json_str).ok()?;
+
+        let tool = parsed.get("tool")?.as_str()?.to_string();
+        let input = parsed.get("input")?.clone();
+
+        Some((tool, input))
+    }
+
+    /// Parse a bare JSON tool call from the response.
+    fn parse_bare_json(response: &str) -> Option<(String, Value)> {
+        let trimmed = response.trim();
+        if !trimmed.starts_with('{') || !trimmed.ends_with('}') {
+            return None;
+        }
+
+        let parsed: Value = serde_json::from_str(trimmed).ok()?;
 
         let tool = parsed.get("tool")?.as_str()?.to_string();
         let input = parsed.get("input")?.clone();
@@ -202,6 +225,14 @@ mod tests {
     fn test_parse_tool_call_missing_fields() {
         let response = "```json\n{\"tool\": \"file_read\"}\n```";
         assert!(Agent::parse_tool_call(response).is_none());
+    }
+
+    #[test]
+    fn test_parse_tool_call_bare_json() {
+        let response = r#"{"tool": "file_read", "input": {"path": "test.rs"}}"#;
+        let (tool, input) = Agent::parse_tool_call(response).unwrap();
+        assert_eq!(tool, "file_read");
+        assert_eq!(input["path"], "test.rs");
     }
 
     #[tokio::test]

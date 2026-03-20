@@ -22,6 +22,18 @@ impl Tool for SearchTool {
          Input: {\"pattern\": \"<regex>\", \"path\": \"<dir>\" (default: \".\"), \"glob\": \"<file_pattern>\" (optional)}"
     }
 
+    fn input_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Regex pattern to search for"},
+                "path": {"type": "string", "description": "Directory to search in (default: current directory)"},
+                "glob": {"type": "string", "description": "Optional file glob filter (e.g. \"*.rs\")"}
+            },
+            "required": ["pattern"]
+        })
+    }
+
     fn execute(&self, input: Value) -> Pin<Box<dyn Future<Output = ToolResult<Value>> + Send + '_>> {
         Box::pin(async move {
             let pattern = input
@@ -116,6 +128,17 @@ impl Tool for GlobTool {
     fn description(&self) -> &str {
         "Find files matching a glob pattern. \
          Input: {\"pattern\": \"<glob>\", \"path\": \"<dir>\" (default: \".\")}"
+    }
+
+    fn input_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Glob pattern to match files (e.g. \"**/*.rs\")"},
+                "path": {"type": "string", "description": "Directory to search in (default: current directory)"}
+            },
+            "required": ["pattern"]
+        })
     }
 
     fn execute(&self, input: Value) -> Pin<Box<dyn Future<Output = ToolResult<Value>> + Send + '_>> {

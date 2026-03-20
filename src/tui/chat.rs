@@ -64,6 +64,8 @@ pub struct ChatInterface {
     pub streaming_text: String,
     /// Status bar text
     pub status: String,
+    /// Cursor position in input (byte offset)
+    pub cursor_pos: usize,
 }
 
 impl ChatInterface {
@@ -78,6 +80,7 @@ impl ChatInterface {
             is_streaming: false,
             streaming_text: String::new(),
             status: "Ready".to_string(),
+            cursor_pos: 0,
         }
     }
 
@@ -139,7 +142,7 @@ impl ChatInterface {
         // Create layout: messages on top, input at bottom
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(3), Constraint::Length(3), Constraint::Length(1)])
+            .constraints([Constraint::Min(3), Constraint::Length(5), Constraint::Length(1)])
             .split(area);
 
         // Render messages area
@@ -232,7 +235,7 @@ impl ChatInterface {
     fn render_input(&self, _area: Rect) -> Paragraph<'_> {
         let input_text = if self.input.is_empty() {
             Text::from(Span::styled(
-                "Type a message... (Enter to send, Esc to quit)",
+                "Type a message... (Enter to send, Shift+Enter for newline, Esc to quit)",
                 Style::default().fg(Color::DarkGray),
             ))
         } else {
@@ -337,5 +340,19 @@ mod tests {
         assert_eq!(chat.status, "Ready");
         chat.set_status("Thinking...");
         assert_eq!(chat.status, "Thinking...");
+    }
+
+    #[test]
+    fn test_multiline_input() {
+        let mut chat = ChatInterface::new();
+        chat.input_char('H');
+        chat.input_char('i');
+        chat.input_char('\n');
+        chat.input_char('T');
+        chat.input_char('h');
+        chat.input_char('e');
+        chat.input_char('r');
+        chat.input_char('e');
+        assert_eq!(chat.input, "Hi\nThere");
     }
 }

@@ -94,6 +94,9 @@ impl TuiApp {
                 (KeyModifiers::NONE, KeyCode::Enter) => {
                     self.chat.send_current_input();
                 }
+                (KeyModifiers::SHIFT, KeyCode::Enter) => {
+                    self.chat.input_char('\n');
+                }
                 (KeyModifiers::NONE, KeyCode::Char(c)) => {
                     self.chat.input_char(c);
                 }

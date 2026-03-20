@@ -19,6 +19,16 @@ impl Tool for FileReadTool {
         "Read the contents of a file. Input: {\"path\": \"<file_path>\"}"
     }
 
+    fn input_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to the file to read"}
+            },
+            "required": ["path"]
+        })
+    }
+
     fn execute(&self, input: Value) -> Pin<Box<dyn Future<Output = ToolResult<Value>> + Send + '_>> {
         Box::pin(async move {
             let path = input
@@ -50,6 +60,17 @@ impl Tool for FileWriteTool {
 
     fn description(&self) -> &str {
         "Write content to a file. Input: {\"path\": \"<file_path>\", \"content\": \"<text>\"}"
+    }
+
+    fn input_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to the file to write"},
+                "content": {"type": "string", "description": "Content to write to the file"}
+            },
+            "required": ["path", "content"]
+        })
     }
 
     fn execute(&self, input: Value) -> Pin<Box<dyn Future<Output = ToolResult<Value>> + Send + '_>> {
@@ -100,6 +121,17 @@ impl Tool for ShellExecTool {
 
     fn description(&self) -> &str {
         "Execute a shell command. Input: {\"command\": \"<cmd>\", \"cwd\": \"<dir>\" (optional)}"
+    }
+
+    fn input_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "Shell command to execute"},
+                "cwd": {"type": "string", "description": "Working directory (optional)"}
+            },
+            "required": ["command"]
+        })
     }
 
     fn execute(&self, input: Value) -> Pin<Box<dyn Future<Output = ToolResult<Value>> + Send + '_>> {
@@ -160,6 +192,19 @@ impl Tool for FileEditTool {
     fn description(&self) -> &str {
         "Edit specific lines in a file by line number range (1-indexed, inclusive). \
          Input: {\"path\": \"<file>\", \"start_line\": <n>, \"end_line\": <n>, \"content\": \"<replacement text>\"}"
+    }
+
+    fn input_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to the file to edit"},
+                "start_line": {"type": "integer", "description": "Start line number (1-indexed, inclusive)"},
+                "end_line": {"type": "integer", "description": "End line number (1-indexed, inclusive)"},
+                "content": {"type": "string", "description": "Replacement text for the specified line range"}
+            },
+            "required": ["path", "start_line", "end_line", "content"]
+        })
     }
 
     fn execute(&self, input: Value) -> Pin<Box<dyn Future<Output = ToolResult<Value>> + Send + '_>> {

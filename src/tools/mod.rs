@@ -20,6 +20,15 @@ pub trait Tool: Send + Sync {
     /// Get the tool description
     fn description(&self) -> &str;
 
+    /// Get the tool's JSON schema for input parameters
+    fn input_schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {},
+            "required": []
+        })
+    }
+
     /// Execute the tool with the given input
     fn execute(&self, input: Value) -> Pin<Box<dyn Future<Output = ToolResult<Value>> + Send + '_>>;
 }
@@ -75,6 +84,20 @@ impl ToolRegistry {
     /// List all registered tools
     pub fn list(&self) -> Vec<&str> {
         self.tools.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Get all tool definitions as JSON (name, description, schema)
+    pub fn tool_definitions(&self) -> Vec<Value> {
+        self.tools
+            .values()
+            .map(|tool| {
+                serde_json::json!({
+                    "name": tool.name(),
+                    "description": tool.description(),
+                    "parameters": tool.input_schema(),
+                })
+            })
+            .collect()
     }
 }
 

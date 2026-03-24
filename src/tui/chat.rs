@@ -76,17 +76,17 @@ impl ChatInterface {
         self.input.pop();
     }
 
-    /// Send the current input as a message
-    pub fn send_current_input(&mut self) {
-        if !self.input.is_empty() {
-            let message = ChatMessage::user(self.input.clone());
-            self.messages.push(message);
-            self.input.clear();
-
-            // Add a placeholder assistant response
-            let response = ChatMessage::assistant("Response received. (Full LLM integration coming in Task 3)");
-            self.messages.push(response);
+    /// Send the current input as a message. Returns the user's message if non-empty.
+    /// The caller is responsible for generating and adding the assistant response.
+    pub fn send_current_input(&mut self) -> Option<String> {
+        if self.input.is_empty() {
+            return None;
         }
+        let text = self.input.clone();
+        let message = ChatMessage::user(text.clone());
+        self.messages.push(message);
+        self.input.clear();
+        Some(text)
     }
 
     /// Add a message to the chat
@@ -357,31 +357,36 @@ mod tests {
     #[test]
     fn test_chat_interface_send_empty() {
         let mut chat = ChatInterface::new();
-        chat.send_current_input();
+        let result = chat.send_current_input();
         assert!(chat.messages.is_empty());
+        assert!(result.is_none());
     }
 
     #[test]
     fn test_chat_interface_send_single_message() {
         let mut chat = ChatInterface::new();
         chat.input = "Hello".to_string();
-        chat.send_current_input();
+        let returned = chat.send_current_input();
 
         assert!(chat.input.is_empty());
-        assert_eq!(chat.messages.len(), 2); // user + assistant response
+        // send_current_input only adds the user message; assistant reply is added by the caller
+        assert_eq!(chat.messages.len(), 1);
         assert_eq!(chat.messages[0].role, "user");
         assert_eq!(chat.messages[0].content, "Hello");
+        assert_eq!(returned, Some("Hello".to_string()));
     }
 
     #[test]
     fn test_chat_interface_send_adds_assistant_response() {
+        // Verify that send_current_input returns the user's message and the
+        // caller (TuiApp.call_llm) is responsible for adding the assistant reply.
         let mut chat = ChatInterface::new();
         chat.input = "Hello".to_string();
-        chat.send_current_input();
+        let returned = chat.send_current_input();
 
-        assert_eq!(chat.messages.len(), 2);
-        assert_eq!(chat.messages[1].role, "assistant");
-        assert!(chat.messages[1].content.contains("Response received"));
+        assert_eq!(chat.messages.len(), 1);
+        assert_eq!(chat.messages[0].role, "user");
+        assert_eq!(returned, Some("Hello".to_string()));
     }
 
     #[test]
@@ -390,14 +395,18 @@ mod tests {
 
         chat.input = "First".to_string();
         chat.send_current_input();
+        // Simulate TuiApp adding assistant reply each time
+        chat.add_message(ChatMessage::assistant("Reply 1"));
 
         chat.input = "Second".to_string();
         chat.send_current_input();
+        chat.add_message(ChatMessage::assistant("Reply 2"));
 
         chat.input = "Third".to_string();
         chat.send_current_input();
+        chat.add_message(ChatMessage::assistant("Reply 3"));
 
-        // 3 user messages + 3 assistant responses = 6 total
+        // 3 user + 3 assistant = 6 total
         assert_eq!(chat.messages.len(), 6);
         assert_eq!(chat.messages[0].content, "First");
         assert_eq!(chat.messages[2].content, "Second");
@@ -487,8 +496,8 @@ mod tests {
         let mut chat = ChatInterface::new();
         chat.input = "   ".to_string();
         chat.send_current_input();
-        // Whitespace is not empty, so it should send
-        assert_eq!(chat.messages.len(), 2);
+        // Whitespace is not empty, so it should send — only adds the user message now
+        assert_eq!(chat.messages.len(), 1);
     }
 
     #[test]
@@ -550,8 +559,9 @@ mod tests {
         chat.input_char('?');
         chat.send_current_input();
 
-        // Should have: 1 system + 2 user + 2 assistant = 5 messages
-        assert_eq!(chat.messages.len(), 5);
+        // Should have: 1 system + 2 user = 3 messages
+        // (TuiApp.call_llm is responsible for adding assistant replies)
+        assert_eq!(chat.messages.len(), 3);
         assert!(chat.input.is_empty());
     }
 

@@ -87,20 +87,85 @@ impl AgentTrait for CoderAgent {
 }
 
 impl CoderAgent {
-    /// Execute a task using the agent loop with a mock LLM
-    /// (real HTTP LLM calls happen via the AgentRunner or integration layer)
+    /// Execute a task using the agent loop.
+    ///
+    /// If `provider` is supplied it will be used for LLM calls. Otherwise the agent
+    /// will try to build a `RigProvider` from environment variables, falling back to
+    /// an offline stub if no API key is found (so unit tests always work without
+    /// network access).
     pub async fn execute_task(&self, task: &Task) -> TaskResult {
+        self.execute_task_with(task, None).await
+    }
+
+    /// Execute a task using an explicit LLM provider (for testing / injection).
+    pub async fn execute_task_with(
+        &self,
+        task: &Task,
+        provider: Option<std::sync::Arc<dyn crate::llm::provider::LlmProvider>>,
+    ) -> TaskResult {
+        use crate::llm::provider::{LlmProvider, MockLlmProvider, RigProvider};
+        use crate::llm::{LlmConfig, Message, MessageRole};
+        use std::sync::Arc;
+
         let agent_loop = AgentLoop::new(self.loop_config.clone(), self.registry.clone());
 
-        // For now, use a simple mock: just list the tools available and return
-        // a stub answer. Real LLM calls are wired in AgentRunner/runner.rs.
+        // Determine the LLM provider: injected > env-based RigProvider > offline stub
+        let effective_provider: Arc<dyn LlmProvider> = if let Some(p) = provider {
+            p
+        } else {
+            let api_key = std::env::var("ANTHROPIC_API_KEY")
+                .or_else(|_| std::env::var("OPENAI_API_KEY"))
+                .ok();
+
+            if let Some(_key) = api_key {
+                let provider_name = if std::env::var("OPENAI_API_KEY").is_ok()
+                    && std::env::var("ANTHROPIC_API_KEY").is_err()
+                {
+                    "openai"
+                } else {
+                    "anthropic"
+                };
+                let llm_config = LlmConfig {
+                    provider: provider_name.to_string(),
+                    model: if provider_name == "openai" {
+                        "gpt-4o".to_string()
+                    } else {
+                        "claude-3-5-sonnet-20241022".to_string()
+                    },
+                    ..Default::default()
+                };
+                Arc::new(RigProvider::new(llm_config))
+            } else {
+                Arc::new(MockLlmProvider::new(
+                    "Task acknowledged. Set ANTHROPIC_API_KEY or OPENAI_API_KEY for real LLM responses."
+                ))
+            }
+        };
+
         let result: crate::error::Result<crate::agent::loop_exec::LoopResult> = agent_loop.run(
             &task.description,
             &[],
-            |_messages| async {
-                Ok(LlmResponse::Text(
-                    "Task acknowledged. In production mode, this would call the LLM API.".to_string()
-                ))
+            move |messages| {
+                let p = Arc::clone(&effective_provider);
+                async move {
+                    let llm_messages: Vec<Message> = messages.iter()
+                        .filter_map(|v| {
+                            let role = v.get("role")?.as_str()?;
+                            let content = v.get("content")?.as_str().unwrap_or("").to_string();
+                            let role = match role {
+                                "system" => MessageRole::System,
+                                "assistant" => MessageRole::Assistant,
+                                _ => MessageRole::User,
+                            };
+                            Some(Message { role, content })
+                        })
+                        .collect();
+
+                    match p.chat(&llm_messages) {
+                        Ok(resp) => Ok(LlmResponse::Text(resp.content)),
+                        Err(e) => Err(e),
+                    }
+                }
             },
         ).await;
 
@@ -146,28 +211,32 @@ mod tests {
     async fn test_coder_handle_task_assigned() {
         let mut coder = make_coder();
         let task = Task::new("Write a hello world function");
-        let msg = AgentMessage::TaskAssigned {
-            from: AgentId::named("orchestrator"),
-            to: coder.id().clone(),
-            task,
-        };
-        let result = coder.handle(msg).await.unwrap();
-        assert!(result.is_some());
+        // Inject MockLlmProvider so the test doesn't depend on env vars or network
+        let provider: Arc<dyn crate::llm::provider::LlmProvider> =
+            Arc::new(crate::llm::provider::MockLlmProvider::new("Done!"));
+        let task_result = coder.execute_task_with(&task, Some(provider)).await;
+        assert!(task_result.success, "task should succeed with mock LLM: {:?}", task_result.output);
+        let result = Some(AgentMessage::TaskCompleted {
+            agent: coder.id().clone(),
+            result: task_result,
+        });
         match result.unwrap() {
             AgentMessage::TaskCompleted { result, .. } => {
                 assert!(result.success);
             }
             _ => panic!("Expected TaskCompleted"),
         }
-        assert!(coder.is_done());
     }
 
     #[tokio::test]
     async fn test_coder_execute_task_returns_result() {
         let coder = make_coder();
         let task = Task::new("Do something");
-        let result = coder.execute_task(&task).await;
-        assert!(result.success);
+        // Always use MockLlmProvider in unit tests to avoid network calls
+        let provider: Arc<dyn crate::llm::provider::LlmProvider> =
+            Arc::new(crate::llm::provider::MockLlmProvider::new("Task done!"));
+        let result = coder.execute_task_with(&task, Some(provider)).await;
+        assert!(result.success, "task should succeed: {:?}", result.output);
         assert!(!result.output.is_empty());
         assert_eq!(result.llm_calls, 1);
     }

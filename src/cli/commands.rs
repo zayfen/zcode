@@ -2,10 +2,15 @@
 //!
 //! This module implements the handlers for each CLI command.
 
+use crate::agent::loop_exec::{AgentLoop, LoopConfig, LlmResponse};
 use crate::cli::args::Command;
 use crate::error::Result;
+use crate::llm::provider::{LlmProvider, RigProvider};
+use crate::llm::{LlmConfig, Message, MessageRole};
+use crate::tools::{register_default_tools, ToolRegistry};
 use crate::tui::{init_terminal, restore_terminal, TuiApp};
 use crate::Settings;
+use std::sync::Arc;
 use tracing::info;
 
 /// Execute a CLI command
@@ -22,7 +27,7 @@ pub async fn execute_default(args: &crate::cli::args::Args) -> Result<()> {
     execute_chat(args).await
 }
 
-/// Run a single task in non-interactive mode
+/// Run a single task in non-interactive mode using AgentLoop + LLM
 async fn execute_run(task: &str, args: &crate::cli::args::Args) -> Result<()> {
     info!("Running task: {}", task);
 
@@ -35,11 +40,83 @@ async fn execute_run(task: &str, args: &crate::cli::args::Args) -> Result<()> {
         settings.llm.model = model.clone();
     }
 
-    // TODO: Integrate with agent module for actual task execution
-    // For now, we just print the task
-    println!("Task: {}", task);
-    println!("Model: {}", settings.llm.model);
-    println!("(Full agent integration coming soon)");
+    // Build LLM config from settings
+    let llm_config = LlmConfig {
+        provider: settings.llm.provider.clone(),
+        model: settings.llm.model.clone(),
+        api_key: settings.llm.api_key.clone(),
+        temperature: settings.llm.temperature,
+        max_tokens: settings.llm.max_tokens,
+    };
+
+    let provider: Arc<dyn LlmProvider> = Arc::new(RigProvider::new(llm_config.clone()));
+
+    // Build tool registry
+    let mut registry = ToolRegistry::new();
+    register_default_tools(&mut registry);
+    let registry = Arc::new(registry);
+
+    // Build agent loop config
+    let loop_config = LoopConfig {
+        max_iterations: 20,
+        system_prompt: format!(
+            "You are zcode, a senior AI coding agent using model {}. \
+             You have access to tools for reading/writing files, running shell commands, \
+             and searching code. Execute the user's task completely and report results.",
+            llm_config.model
+        ),
+    };
+
+    let agent_loop = AgentLoop::new(loop_config, registry);
+
+    println!("🤖 zcode agent starting...");
+    println!("📋 Task: {}", task);
+    println!("🧠 Model: {}", llm_config.model);
+    println!();
+
+    let provider_clone = Arc::clone(&provider);
+    let result = agent_loop.run(
+        task,
+        &[],
+        move |messages| {
+            let p = Arc::clone(&provider_clone);
+            async move {
+                // Convert serde_json messages to llm::Message
+                let llm_messages: Vec<Message> = messages.iter()
+                    .filter_map(|v| {
+                        let role = v.get("role")?.as_str()?;
+                        let content = v.get("content")?.as_str().unwrap_or("").to_string();
+                        let role = match role {
+                            "system" => MessageRole::System,
+                            "assistant" => MessageRole::Assistant,
+                            _ => MessageRole::User,
+                        };
+                        Some(Message { role, content })
+                    })
+                    .collect();
+
+                match p.chat(&llm_messages) {
+                    Ok(resp) => Ok(LlmResponse::Text(resp.content)),
+                    // Graceful offline fallback: if no API key configured, return a stub reply.
+                    Err(crate::error::ZcodeError::MissingApiKey(provider)) => {
+                        Ok(LlmResponse::Text(format!(
+                            "Task acknowledged. No API key found for provider '{}'. \
+                             Set the corresponding API key env variable to enable real LLM responses.",
+                            provider
+                        )))
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+        },
+    ).await?;
+
+    println!("✅ Task completed in {} LLM call(s), {} tool call(s).", result.llm_calls, result.tool_calls_executed);
+    if result.hit_max_iterations {
+        println!("⚠ Warning: max iterations reached.");
+    }
+    println!();
+    println!("📤 Result:\n{}", result.answer);
 
     Ok(())
 }
@@ -62,17 +139,26 @@ async fn execute_chat(args: &crate::cli::args::Args) -> Result<()> {
         info!("MCP servers: {:?}", args.mcp);
     }
 
+    // Build LLM provider from settings
+    let llm_config = LlmConfig {
+        provider: settings.llm.provider.clone(),
+        model: settings.llm.model.clone(),
+        api_key: settings.llm.api_key.clone(),
+        temperature: settings.llm.temperature,
+        max_tokens: settings.llm.max_tokens,
+    };
+
+    let provider: Arc<dyn LlmProvider> = Arc::new(RigProvider::new(llm_config.clone()));
+
     // Initialize terminal
     let mut terminal = init_terminal()?;
 
-    // Create and run TUI application
-    let mut app = TuiApp::new();
-
-    // Add welcome message
+    // Create TUI application with real LLM provider
+    let mut app = TuiApp::with_provider(provider);
     app.chat.add_message(crate::tui::chat::ChatMessage::system(
         format!(
-            "Welcome to zcode! Using model: {}. Type a message and press Enter to send.",
-            settings.llm.model
+            "Model: {} | Press Esc or Ctrl+C to quit",
+            llm_config.model
         )
     ));
 

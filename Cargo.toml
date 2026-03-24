@@ -50,7 +50,7 @@ similar = { version = "2.4", features = ["text"] }
 libloading = "0.8"
 
 # Agent & LLM integration
-reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest = { version = "0.12", features = ["json", "stream", "blocking"] }
 async-trait = "0.1"
 uuid = { version = "=1.6.1", features = ["v4"] }
 

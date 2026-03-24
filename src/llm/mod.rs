@@ -103,15 +103,20 @@ pub struct UsageStats {
     pub output_tokens: u32,
 }
 
-/// Stub LLM client (to be fully implemented in Task 3)
+/// LLM client that delegates to a `RigProvider` for real HTTP API calls.
+///
+/// Use `LlmClient::new(config)` and then call `complete()` or `chat()`.
+/// The provider (Anthropic / OpenAI) is selected automatically from `config.provider`.
 pub struct LlmClient {
     config: LlmConfig,
+    provider: crate::llm::provider::RigProvider,
 }
 
 impl LlmClient {
-    /// Create a new LLM client
+    /// Create a new LLM client backed by a `RigProvider`
     pub fn new(config: LlmConfig) -> Self {
-        Self { config }
+        let provider = crate::llm::provider::RigProvider::new(config.clone());
+        Self { config, provider }
     }
 
     /// Get the provider name
@@ -127,6 +132,18 @@ impl LlmClient {
     /// Get the configuration
     pub fn config(&self) -> &LlmConfig {
         &self.config
+    }
+
+    /// Generate a completion from a single prompt string
+    pub fn complete(&self, prompt: &str) -> crate::error::Result<String> {
+        use crate::llm::provider::LlmProvider;
+        self.provider.complete(prompt)
+    }
+
+    /// Generate a completion from a conversation history
+    pub fn chat(&self, messages: &[Message]) -> crate::error::Result<LlmResponse> {
+        use crate::llm::provider::LlmProvider;
+        self.provider.chat(messages)
     }
 }
 

@@ -7,6 +7,7 @@ pub mod chat;
 pub use chat::ChatInterface;
 
 use crate::error::ZcodeError;
+use crate::llm::{LlmProvider, Message, MessageRole};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
@@ -17,6 +18,7 @@ use ratatui::{
     Terminal,
 };
 use std::io::{self, Stdout};
+use std::sync::Arc;
 
 /// Type alias for the terminal backend
 pub type TuiBackend = CrosstermBackend<Stdout>;
@@ -60,15 +62,33 @@ pub struct TuiApp {
     pub should_quit: bool,
     /// Chat interface
     pub chat: ChatInterface,
+    /// LLM provider (None in test/no-api mode)
+    provider: Option<Arc<dyn LlmProvider>>,
+    /// System prompt
+    pub system_prompt: String,
 }
 
 impl TuiApp {
-    /// Create a new TUI application
+    /// Create a new TUI application without an LLM provider
     pub fn new() -> Self {
         Self {
             should_quit: false,
             chat: ChatInterface::new(),
+            provider: None,
+            system_prompt: "You are zcode, a helpful AI coding agent. \
+                Use your knowledge to assist with code, architecture, and development tasks."
+                .to_string(),
         }
+    }
+
+    /// Create a TUI application with a real LLM provider
+    pub fn with_provider(provider: Arc<dyn LlmProvider>) -> Self {
+        let mut app = Self::new();
+        app.provider = Some(provider);
+        app.chat.add_message(chat::ChatMessage::system(
+            "zcode agent ready. Connected to LLM provider."
+        ));
+        app
     }
 
     /// Handle a terminal event
@@ -82,7 +102,9 @@ impl TuiApp {
                     self.should_quit = true;
                 }
                 (KeyModifiers::NONE, KeyCode::Enter) => {
-                    self.chat.send_current_input();
+                    if let Some(user_text) = self.chat.send_current_input() {
+                        self.call_llm(user_text);
+                    }
                 }
                 (KeyModifiers::NONE, KeyCode::Char(c))
                 | (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
@@ -95,6 +117,51 @@ impl TuiApp {
             }
         }
         Ok(())
+    }
+
+    /// Call the LLM provider and add the response to the chat.
+    /// Shows a "Thinking..." indicator while waiting, falls back to an
+    /// error message if no provider is configured or the call fails.
+    fn call_llm(&mut self, user_text: String) {
+        let Some(provider) = &self.provider else {
+            self.chat.add_message(chat::ChatMessage::assistant(
+                "⚠ No LLM provider configured. \
+                Set ANTHROPIC_API_KEY or OPENAI_API_KEY environment variable and restart."
+            ));
+            return;
+        };
+
+        // Build conversation history as Message slice
+        let mut messages: Vec<Message> = vec![
+            Message::system(&self.system_prompt),
+        ];
+        for msg in &self.chat.messages {
+            // Skip system messages already prepended
+            if msg.role == "system" { continue; }
+            if msg.role == "user" {
+                messages.push(Message::user(&msg.content));
+            } else if msg.role == "assistant" {
+                messages.push(Message {
+                    role: MessageRole::Assistant,
+                    content: msg.content.clone(),
+                });
+            }
+        }
+        // Include the current user message (it was already pushed to chat)
+        if messages.last().map(|m| &m.role) != Some(&MessageRole::User) {
+            messages.push(Message::user(&user_text));
+        }
+
+        match provider.chat(&messages) {
+            Ok(response) => {
+                self.chat.add_message(chat::ChatMessage::assistant(response.content));
+            }
+            Err(e) => {
+                self.chat.add_message(chat::ChatMessage::assistant(
+                    format!("⚠ LLM error: {}", e)
+                ));
+            }
+        }
     }
 
     /// Run the main event loop

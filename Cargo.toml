@@ -43,6 +43,28 @@ glob = "0.3"
 # LLM integration
 # rig-core = "0.5"  # Temporarily disabled due to edition 2024 issues
 
+# Code intelligence
+tree-sitter = "0.24"
+regex = "1.10"
+similar = { version = "2.4", features = ["text"] }
+libloading = "0.8"
+
+# Agent & LLM integration
+reqwest = { version = "0.12", features = ["json", "stream"] }
+async-trait = "0.1"
+uuid = { version = "=1.6.1", features = ["v4"] }
+
+# Memory system
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Scripting engines
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
+pyo3 = { version = "0.22", features = ["auto-initialize"] }
+rquickjs = { version = "0.7", features = ["full"] }
+
+# LSP
+lsp-types = "0.97"
+
 # TUI
 ratatui = "0.27"
 crossterm = "0.27"

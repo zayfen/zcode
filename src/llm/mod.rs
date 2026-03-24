@@ -4,9 +4,11 @@
 
 pub mod provider;
 pub mod streaming;
+pub mod tool_call;
 
 pub use provider::{LlmProvider, RigProvider};
 pub use streaming::{StreamHandler, StreamingResponse};
+pub use tool_call::{ToolSchema, ToolCallRequest, ToolCallResponse, generate_tool_schemas};
 
 /// LLM client configuration
 #[derive(Debug, Clone)]

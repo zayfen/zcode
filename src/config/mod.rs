@@ -36,6 +36,26 @@ pub struct ProjectConfig {
     /// LLM provider configuration overrides
     #[serde(default)]
     pub llm: Option<LlmConfigOverride>,
+
+    /// MCP server configurations
+    #[serde(default)]
+    pub mcp_servers: Vec<McpServerConfig>,
+
+    /// LSP server configurations
+    #[serde(default)]
+    pub lsp_servers: Vec<LspServerConfig>,
+
+    /// Scripting configuration
+    #[serde(default)]
+    pub scripts: ScriptConfig,
+
+    /// Session snapshot configuration
+    #[serde(default)]
+    pub snapshots: SnapshotConfig,
+
+    /// Custom Tree-sitter grammars
+    #[serde(default)]
+    pub grammars: Vec<GrammarConfig>,
 }
 
 /// Tool-specific configurations
@@ -49,6 +69,100 @@ pub struct ToolConfigs {
     #[serde(default)]
     pub disabled: Vec<String>,
 }
+
+/// MCP server configuration
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct McpServerConfig {
+    /// Server name
+    pub name: String,
+    /// Command to launch the server
+    pub command: String,
+    /// Arguments
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Auto-start on project open
+    #[serde(default = "bool_true")]
+    pub auto_start: bool,
+}
+
+/// LSP server configuration  
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LspServerConfig {
+    /// Language this server handles (e.g. "rust", "python")
+    pub language: String,
+    /// Command to launch the LSP server
+    pub command: String,
+    /// Additional arguments
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
+/// Scripting configuration
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct ScriptConfig {
+    /// Directories to load scripts from
+    #[serde(default)]
+    pub script_dirs: Vec<String>,
+    /// Individual script files to load
+    #[serde(default)]
+    pub scripts: Vec<String>,
+    /// Hook scripts
+    #[serde(default)]
+    pub hooks: HookConfig,
+}
+
+/// Hook scripts
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct HookConfig {
+    /// Script to run before each tool call
+    pub before_tool: Option<String>,
+    /// Script to run after each tool call
+    pub after_tool: Option<String>,
+    /// Script to run when a task starts
+    pub on_task_start: Option<String>,
+    /// Script to run when a task completes
+    pub on_task_complete: Option<String>,
+}
+
+/// Session snapshot configuration
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SnapshotConfig {
+    /// Directory to store snapshot database
+    #[serde(default = "default_snapshot_dir")]
+    pub db_path: String,
+    /// Max number of snapshots to keep
+    #[serde(default = "default_max_snapshots")]
+    pub max_snapshots: usize,
+    /// Auto-snapshot before major operations
+    #[serde(default = "bool_true")]
+    pub auto_snapshot: bool,
+}
+
+impl Default for SnapshotConfig {
+    fn default() -> Self {
+        Self {
+            db_path: default_snapshot_dir(),
+            max_snapshots: default_max_snapshots(),
+            auto_snapshot: true,
+        }
+    }
+}
+
+/// Custom Tree-sitter grammar configuration
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GrammarConfig {
+    /// Language name (e.g. "zig", "gleam")
+    pub language: String,
+    /// Path to the compiled shared library (.so/.dylib/.dll)
+    pub library_path: String,
+    /// File extensions to associate with this grammar
+    #[serde(default)]
+    pub extensions: Vec<String>,
+}
+
+fn bool_true() -> bool { true }
+fn default_snapshot_dir() -> String { ".zcode/snapshots.db".to_string() }
+fn default_max_snapshots() -> usize { 50 }
 
 /// LLM configuration overrides for the project
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
@@ -78,6 +192,11 @@ impl ProjectConfig {
             frameworks: Vec::new(),
             tools: ToolConfigs::default(),
             llm: None,
+            mcp_servers: Vec::new(),
+            lsp_servers: Vec::new(),
+            scripts: ScriptConfig::default(),
+            snapshots: SnapshotConfig::default(),
+            grammars: Vec::new(),
         }
     }
 

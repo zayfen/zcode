@@ -2,6 +2,17 @@
 //!
 //! This module defines the tool trait and registry for managing and executing tools.
 
+pub mod file;
+pub mod glob;
+pub mod search;
+pub mod shell;
+pub mod ast_tools;
+
+pub use file::{FileEditTool, FileReadTool, FileWriteTool};
+pub use glob::GlobTool;
+pub use search::SearchTool;
+pub use shell::ShellTool;
+
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -66,6 +77,24 @@ impl Default for ToolRegistry {
         Self::new()
     }
 }
+
+/// Register all built-in Phase 2 tools into a registry.
+///
+/// This populates the registry with: `file_read`, `file_write`, `file_edit`,
+/// `search`, `shell`, `glob`.
+///
+/// AST tools (`ast_search`, `ast_edit`) require a `LanguageRegistry` and must be
+/// registered separately via `AstSearchTool::new(registry)`.
+pub fn register_default_tools(registry: &mut ToolRegistry) {
+    registry.register(FileReadTool);
+    registry.register(FileWriteTool);
+    registry.register(FileEditTool);
+    registry.register(SearchTool);
+    registry.register(ShellTool);
+    registry.register(GlobTool);
+}
+
+
 
 #[cfg(test)]
 mod tests {

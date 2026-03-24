@@ -53,7 +53,7 @@ pub struct AstTree {
 
 impl AstTree {
     /// Get the root node of the tree
-    pub fn root_node(&self) -> Node {
+    pub fn root_node(&self) -> Node<'_> {
         self.tree.root_node()
     }
 
@@ -76,7 +76,7 @@ impl AstTree {
     {
         self.find_nodes_by_type(node_type)
             .into_iter()
-            .filter(|n| n.text.as_deref().map_or(false, |t| predicate(t)))
+            .filter(|n| n.text.as_deref().is_some_and(&predicate))
             .collect()
     }
 

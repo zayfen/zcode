@@ -9,7 +9,7 @@ use crate::memory::{ProjectMemory, SemanticIndex, WorkingMemory};
 
 /// Estimate token count from a string (1 token ≈ 4 chars is a common heuristic)
 pub fn estimate_tokens(text: &str) -> usize {
-    (text.len() + 3) / 4
+    text.len().div_ceil(4)
 }
 
 // ─── TokenBudget ───────────────────────────────────────────────────────────────

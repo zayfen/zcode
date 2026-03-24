@@ -25,7 +25,7 @@ impl LuaEngine {
         // zcode.read_file(path) -> string
         let read_file = lua.create_function(|_, path: String| {
             std::fs::read_to_string(&path)
-                .map_err(|e| LuaError::external(e))
+                .map_err(LuaError::external)
         })?;
 
         // zcode.write_file(path, content) -> bool
@@ -35,7 +35,7 @@ impl LuaEngine {
             }
             std::fs::write(&path, &content)
                 .map(|_| true)
-                .map_err(|e| LuaError::external(e))
+                .map_err(LuaError::external)
         })?;
 
         // zcode.shell(cmd) -> { stdout, stderr, code }
@@ -44,7 +44,7 @@ impl LuaEngine {
                 .arg("-c")
                 .arg(&cmd)
                 .output()
-                .map_err(|e| LuaError::external(e))?;
+                .map_err(LuaError::external)?;
 
             let t = lua_ctx.create_table()?;
             t.set("stdout", String::from_utf8_lossy(&output.stdout).to_string())?;
@@ -91,24 +91,20 @@ impl LuaEngine {
                 let mut arr = Vec::new();
                 let mut is_array = true;
                 let mut i = 1i64;
-                for pair in t.clone().pairs::<LuaValue, LuaValue>() {
-                    if let Ok((k, v)) = pair {
-                        if let LuaValue::Integer(ki) = k {
-                            if ki == i { arr.push(Self::lua_to_json(v)); i += 1; continue; }
-                        }
-                        is_array = false;
-                        break;
+                for (k, v) in t.clone().pairs::<LuaValue, LuaValue>().flatten() {
+                    if let LuaValue::Integer(ki) = k {
+                        if ki == i { arr.push(Self::lua_to_json(v)); i += 1; continue; }
                     }
+                    is_array = false;
+                    break;
                 }
                 if is_array && !arr.is_empty() {
                     return Value::Array(arr);
                 }
                 // Fall back to object
                 let mut map = serde_json::Map::new();
-                for pair in t.pairs::<String, LuaValue>() {
-                    if let Ok((k, v)) = pair {
-                        map.insert(k, Self::lua_to_json(v));
-                    }
+                for (k, v) in t.pairs::<String, LuaValue>().flatten() {
+                    map.insert(k, Self::lua_to_json(v));
                 }
                 Value::Object(map)
             }
@@ -140,7 +136,7 @@ impl ScriptEngine for LuaEngine {
         ctx: &ScriptContext,
     ) -> Result<ScriptOutput> {
         let code = std::fs::read_to_string(script_path)
-            .map_err(|e| ZcodeError::IoError(e))?;
+            .map_err(ZcodeError::IoError)?;
         let lua = self.make_lua(ctx)?;
 
         // Load the script
@@ -153,8 +149,8 @@ impl ScriptEngine for LuaEngine {
 
         // Convert args to Lua table
         let args_str = serde_json::to_string(&args).unwrap_or("{}".to_string());
-        let lua_args: LuaValue = lua.load(
-            &format!("return (require('json') or {{}}).decode and require('json').decode([=[{}]=]) or load('return {}')() ", args_str, args_str)
+        let _lua_args: LuaValue = lua.load(
+            format!("return (require('json') or {{}}).decode and require('json').decode([=[{}]=]) or load('return {}')() ", args_str, args_str)
         ).eval().unwrap_or(LuaValue::Nil);
 
         // For simplicity, pass args as a JSON string the function can parse

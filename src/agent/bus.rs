@@ -150,6 +150,12 @@ impl BusDispatcher {
     }
 }
 
+impl Default for BusDispatcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // ─── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

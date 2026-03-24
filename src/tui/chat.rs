@@ -114,7 +114,7 @@ impl ChatInterface {
     }
 
     /// Render the messages area
-    fn render_messages(&self, area: Rect) -> Paragraph {
+    fn render_messages(&self, area: Rect) -> Paragraph<'_> {
         let mut lines = Vec::new();
 
         for message in &self.messages {
@@ -153,7 +153,7 @@ impl ChatInterface {
     }
 
     /// Render the input area
-    fn render_input(&self, _area: Rect) -> Paragraph {
+    fn render_input(&self, _area: Rect) -> Paragraph<'_> {
         let input_text = if self.input.is_empty() {
             Text::from(Span::styled(
                 "Type a message... (Enter to send, Esc to quit)",

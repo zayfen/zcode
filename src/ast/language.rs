@@ -210,10 +210,16 @@ impl LanguageProvider for DynamicLanguageProvider {
     }
 
     fn extensions(&self) -> &[&str] {
-        // Return empty slice — extensions are stored as owned Strings so we
-        // can't return &[&str] directly from a dynamic provider without
-        // additional lifetime juggling. Use `language_name_for_extension` instead.
-        &[]
+        // We need to return &[&'static str], but our extensions are owned Strings.
+        // Leak each String to get a 'static &str — this is intentional:
+        // dynamic grammars live for the program lifetime once loaded.
+        // This is called at most once per provider (during register()).
+        let leaked: Vec<&'static str> = self.extensions
+            .iter()
+            .map(|s| Box::leak(s.clone().into_boxed_str()) as &str)
+            .collect();
+        let leaked_slice = Box::leak(leaked.into_boxed_slice());
+        leaked_slice
     }
 
     fn language(&self) -> Language {

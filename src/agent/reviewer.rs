@@ -2,7 +2,7 @@
 //!
 //! Analyzes code diffs and produces review results with issues and suggestions.
 
-use crate::error::{Result, ZcodeError};
+use crate::error::Result;
 use serde::{Deserialize, Serialize};
 
 // ─── Review Types ─────────────────────────────────────────────────────────────

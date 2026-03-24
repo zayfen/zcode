@@ -142,7 +142,7 @@ impl AgentLoop {
     pub async fn run<F, Fut>(
         &self,
         user_message: &str,
-        tool_schemas: &[Value],
+        _tool_schemas: &[Value],
         mut llm_call: F,
     ) -> Result<LoopResult>
     where
@@ -156,7 +156,6 @@ impl AgentLoop {
 
         let mut llm_calls = 0usize;
         let mut tool_calls_executed = 0usize;
-        let mut hit_max = false;
 
         for _ in 0..self.config.max_iterations {
             // Build messages array for LLM
@@ -203,7 +202,6 @@ impl AgentLoop {
         }
 
         // Hit max iterations — return partial result
-        hit_max = true;
         Ok(LoopResult {
             answer: "Maximum iterations reached without a final answer.".to_string(),
             history,

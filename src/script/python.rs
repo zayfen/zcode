@@ -3,7 +3,7 @@
 use crate::error::{Result, ZcodeError};
 use crate::script::engine::{ScriptContext, ScriptEngine, ScriptOutput};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyModule};
+use pyo3::types::PyDict;
 use serde_json::Value;
 use std::path::Path;
 
@@ -106,7 +106,7 @@ impl ScriptEngine for PythonEngine {
         _ctx: &ScriptContext,
     ) -> Result<ScriptOutput> {
         let script_code = std::fs::read_to_string(script_path)
-            .map_err(|e| ZcodeError::IoError(e))?;
+            .map_err(ZcodeError::IoError)?;
 
         Python::with_gil(|py| {
             let globals = PyDict::new_bound(py);

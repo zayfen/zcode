@@ -26,22 +26,9 @@ pub trait AgentTrait: Send + Sync {
     /// Reset agent to idle state (for reuse)
     async fn reset(&mut self) -> Result<()>;
 
-    /// Generate a simple plan string based on the task and explored files
-    // NOTE: The provided implementation for `generate_plan` was syntactically incorrect
-    // and referenced undefined variables/methods (`id_str`, `self.transition_to`, `self.explore_project`).
-    // To make the code compile and adhere to the instruction of making the change faithfully,
-    // a placeholder implementation is provided.
-    // The original instruction "修复两个测试失败" (Fix two failing tests) implies
-    // that this method might be part of a larger solution, but its current form
-    // would introduce compilation errors.
-    // A `Task` type is also not defined in this file, so it's commented out for now.
-    // pub fn generate_plan(&self, task: &Task) -> String {
-    //     self.transition_to(AgentState::Executing);
-    //     let files = self.explore_project(task.cwd.as_deref());
-    //     let id_str = &self.id().0; // id_str needs to be defined
-    //     let short = if id_str.len() > 8 { &id_str[..8] } else { id_str.as_str() };
-    //     format!("{}-{}", self.agent_type(), short)
-    // }
+    // NOTE: generate_plan is not implemented here because it requires
+    // concrete implementations of transition_to and explore_project
+    // which are agent-specific. Implement it in each concrete agent.
 
     /// Human-readable name for display
     fn display_name(&self) -> String {

@@ -209,6 +209,11 @@ impl LspClient {
         Ok(())
     }
 
+    /// Get the workspace root URI used during initialization
+    pub fn root_uri(&self) -> &str {
+        &self.root_uri
+    }
+
     /// Open a document in the LSP server
     pub fn open_document(&self, file_path: &Path, content: &str) -> Result<()> {
         let uri = path_to_uri(file_path)?;

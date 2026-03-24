@@ -5,11 +5,10 @@
 
 use crate::config::ProjectConfig;
 use crate::error::{Result, ZcodeError};
-use crate::git::{DiffContext, GitDiff};
+use crate::git::GitDiff;
 use crate::session::SnapshotManager;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 // ─── WorkspaceInfo ─────────────────────────────────────────────────────────────
 

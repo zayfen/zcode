@@ -71,7 +71,7 @@ impl ScriptEngine for ShellEngine {
         ctx: &ScriptContext,
     ) -> Result<ScriptOutput> {
         let script_code = std::fs::read_to_string(script_path)
-            .map_err(|e| ZcodeError::IoError(e))?;
+            .map_err(ZcodeError::IoError)?;
 
         let args_str = serde_json::to_string(&args).unwrap_or("{}".to_string());
 

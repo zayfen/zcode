@@ -2,7 +2,7 @@
 //!
 //! Supports Lua, Python, JavaScript, and Shell.
 
-use crate::error::{Result, ZcodeError};
+use crate::error::Result;
 use serde_json::Value;
 use std::path::Path;
 

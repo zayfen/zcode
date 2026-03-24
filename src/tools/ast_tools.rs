@@ -77,7 +77,7 @@ impl Tool for AstSearchTool {
 
         // Apply optional text filter
         if let Some(ref filter) = params.text_contains {
-            nodes.retain(|n| n.text.as_deref().map_or(false, |t| t.contains(filter.as_str())));
+            nodes.retain(|n| n.text.as_deref().is_some_and(|t| t.contains(filter.as_str())));
         }
 
         let count = nodes.len();

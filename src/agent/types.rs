@@ -123,18 +123,15 @@ impl AgentState {
 
 /// Task priority level
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum TaskPriority {
     Low = 0,
+    #[default]
     Normal = 1,
     High = 2,
     Critical = 3,
 }
 
-impl Default for TaskPriority {
-    fn default() -> Self {
-        TaskPriority::Normal
-    }
-}
 
 /// A unit of work assigned to an agent
 #[derive(Debug, Clone, Serialize, Deserialize)]

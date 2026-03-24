@@ -46,7 +46,7 @@ impl JsEngine {
             Type::Bool => val.as_bool().map(Value::Bool).unwrap_or(Value::Null),
             Type::Int => val.as_int().map(|i| Value::Number(i.into())).unwrap_or(Value::Null),
             Type::Float => val.as_float()
-                .and_then(|f| serde_json::Number::from_f64(f))
+                .and_then(serde_json::Number::from_f64)
                 .map(Value::Number)
                 .unwrap_or(Value::Null),
             Type::String => val.as_string()

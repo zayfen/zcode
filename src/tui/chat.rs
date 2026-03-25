@@ -71,9 +71,22 @@ impl ChatInterface {
         self.input.push(c);
     }
 
-    /// Remove the last character from input
+    /// Insert a newline at the end of input (Shift+Enter)
+    pub fn input_newline(&mut self) {
+        self.input.push('\n');
+    }
+
+    /// Remove the last character from input (handles multi-byte chars and \n)
     pub fn backspace(&mut self) {
         self.input.pop();
+    }
+
+    /// Number of lines in the current input (min 1)
+    pub fn input_line_count(&self) -> u16 {
+        let count = self.input.lines().count().max(1);
+        // If input ends with '\n' there's an extra blank line
+        let trailing = if self.input.ends_with('\n') { 1 } else { 0 };
+        (count + trailing) as u16
     }
 
     /// Send the current input as a message. Returns the user's message if non-empty.
@@ -98,10 +111,14 @@ impl ChatInterface {
     pub fn render(&self, frame: &mut Frame) {
         let area = frame.size();
 
+        // Dynamic input height: 2 border + lines (capped at 8)
+        let input_lines = self.input_line_count().min(8);
+        let input_height = input_lines + 2; // +2 for borders
+
         // Create layout: messages on top, input at bottom
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(3), Constraint::Length(3)])
+            .constraints([Constraint::Min(3), Constraint::Length(input_height)])
             .split(area);
 
         // Render messages area
@@ -152,21 +169,27 @@ impl ChatInterface {
             .block(Block::default().borders(Borders::ALL).title("Chat"))
     }
 
-    /// Render the input area
+    /// Render the input area — supports multi-line (\n in input)
     fn render_input(&self, _area: Rect) -> Paragraph<'_> {
         let input_text = if self.input.is_empty() {
             Text::from(Span::styled(
-                "Type a message... (Enter to send, Esc to quit)",
+                "Type a message... (Enter to send, Shift+Enter for newline, Esc to quit)",
                 Style::default().fg(Color::DarkGray),
             ))
         } else {
-            Text::from(self.input.as_str())
+            // Render each line of the input separately
+            let lines: Vec<Line<'_>> = self
+                .input
+                .split('\n')
+                .map(|l| Line::from(l.to_string()))
+                .collect();
+            Text::from(lines)
         };
 
         Paragraph::new(input_text).block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("Input")
+                .title("Input (Shift+Enter: newline | Enter: send)")
                 .style(Style::default()),
         )
     }

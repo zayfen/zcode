@@ -101,6 +101,11 @@ impl TuiApp {
                 (KeyModifiers::NONE, KeyCode::Esc) => {
                     self.should_quit = true;
                 }
+                // Shift+Enter: insert newline into input
+                (KeyModifiers::SHIFT, KeyCode::Enter) => {
+                    self.chat.input_newline();
+                }
+                // Enter alone: send message
                 (KeyModifiers::NONE, KeyCode::Enter) => {
                     if let Some(user_text) = self.chat.send_current_input() {
                         self.call_llm(user_text);

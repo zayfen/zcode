@@ -50,6 +50,8 @@ impl ChatMessage {
 pub struct ChatInterface {
     /// Current input text
     pub input: String,
+    /// Cursor byte position within input
+    pub cursor_pos: usize,
     /// Chat messages
     pub messages: Vec<ChatMessage>,
     /// Scroll position
@@ -61,32 +63,77 @@ impl ChatInterface {
     pub fn new() -> Self {
         Self {
             input: String::new(),
+            cursor_pos: 0,
             messages: Vec::new(),
             scroll: 0,
         }
     }
 
-    /// Add a character to the input
+    /// Insert a character at the current cursor position
     pub fn input_char(&mut self, c: char) {
-        self.input.push(c);
+        self.input.insert(self.cursor_pos, c);
+        self.cursor_pos += c.len_utf8();
     }
 
-    /// Insert a newline at the end of input (Shift+Enter)
+    /// Insert a newline at the current cursor position (Alt+Enter / Shift+Enter)
     pub fn input_newline(&mut self) {
-        self.input.push('\n');
+        self.input.insert(self.cursor_pos, '\n');
+        self.cursor_pos += 1;
     }
 
-    /// Remove the last character from input (handles multi-byte chars and \n)
+    /// Delete the character before the cursor (backspace)
     pub fn backspace(&mut self) {
-        self.input.pop();
+        if self.cursor_pos == 0 {
+            return;
+        }
+        // Walk back to the start of the previous codepoint
+        let mut pos = self.cursor_pos;
+        loop {
+            pos -= 1;
+            if self.input.is_char_boundary(pos) {
+                break;
+            }
+        }
+        self.input.remove(pos);
+        self.cursor_pos = pos;
+    }
+
+    /// Move cursor left by one codepoint
+    pub fn cursor_left(&mut self) {
+        if self.cursor_pos == 0 {
+            return;
+        }
+        let mut pos = self.cursor_pos;
+        loop {
+            pos -= 1;
+            if self.input.is_char_boundary(pos) {
+                break;
+            }
+        }
+        self.cursor_pos = pos;
+    }
+
+    /// Move cursor right by one codepoint
+    pub fn cursor_right(&mut self) {
+        if self.cursor_pos >= self.input.len() {
+            return;
+        }
+        let c = self.input[self.cursor_pos..].chars().next().unwrap();
+        self.cursor_pos += c.len_utf8();
     }
 
     /// Number of lines in the current input (min 1)
     pub fn input_line_count(&self) -> u16 {
-        let count = self.input.lines().count().max(1);
-        // If input ends with '\n' there's an extra blank line
-        let trailing = if self.input.ends_with('\n') { 1 } else { 0 };
-        (count + trailing) as u16
+        let count = self.input.split('\n').count().max(1);
+        count as u16
+    }
+
+    /// Compute the (row, col) of cursor_pos within the input text (0-indexed)
+    pub fn cursor_row_col(&self) -> (u16, u16) {
+        let before = &self.input[..self.cursor_pos];
+        let row = before.chars().filter(|&c| c == '\n').count() as u16;
+        let col = before.split('\n').last().map(|s| s.chars().count()).unwrap_or(0) as u16;
+        (row, col)
     }
 
     /// Send the current input as a message. Returns the user's message if non-empty.
@@ -99,6 +146,7 @@ impl ChatInterface {
         let message = ChatMessage::user(text.clone());
         self.messages.push(message);
         self.input.clear();
+        self.cursor_pos = 0;
         Some(text)
     }
 
@@ -107,7 +155,7 @@ impl ChatInterface {
         self.messages.push(message);
     }
 
-    /// Render the chat interface
+    /// Render the chat interface and position the cursor in the input area
     pub fn render(&self, frame: &mut Frame) {
         let area = frame.size();
 
@@ -128,6 +176,17 @@ impl ChatInterface {
         // Render input area
         let input_widget = self.render_input(chunks[1]);
         frame.render_widget(input_widget, chunks[1]);
+
+        // Position the cursor inside the input box
+        // chunks[1]: x=left border, y=top border; inner starts at +1
+        let (cur_row, cur_col) = self.cursor_row_col();
+        // Clamp to visible area
+        let max_visible_row = input_height.saturating_sub(3); // -2 border -1 for 0-index
+        let visible_row = cur_row.min(max_visible_row);
+        frame.set_cursor(
+            chunks[1].x + 1 + cur_col,   // +1 for left border
+            chunks[1].y + 1 + visible_row, // +1 for top border
+        );
     }
 
     /// Render the messages area
@@ -156,6 +215,8 @@ impl ChatInterface {
                     lines.push(Line::from(Span::styled(line.to_string(), style)));
                 }
             }
+            // Add a blank line between messages for readability
+            lines.push(Line::from(""));
         }
 
         if lines.is_empty() {
@@ -167,13 +228,14 @@ impl ChatInterface {
 
         Paragraph::new(Text::from(lines))
             .block(Block::default().borders(Borders::ALL).title("Chat"))
+            .scroll((self.scroll, 0))
     }
 
     /// Render the input area — supports multi-line (\n in input)
     fn render_input(&self, _area: Rect) -> Paragraph<'_> {
         let input_text = if self.input.is_empty() {
             Text::from(Span::styled(
-                "Type a message... (Enter to send, Shift+Enter for newline, Esc to quit)",
+                "Type a message... (Enter: send, Alt+Enter: newline, ←→: move cursor)",
                 Style::default().fg(Color::DarkGray),
             ))
         } else {
@@ -189,7 +251,7 @@ impl ChatInterface {
         Paragraph::new(input_text).block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("Input (Shift+Enter: newline | Enter: send)")
+                .title("Input  [Enter: send | Alt+Enter / Ctrl+J: newline | ←→: cursor]")
                 .style(Style::default()),
         )
     }

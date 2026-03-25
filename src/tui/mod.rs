@@ -34,6 +34,16 @@ pub fn init_terminal() -> crate::error::Result<TuiTerminal> {
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)
         .map_err(|e| ZcodeError::InternalError(format!("Failed to enter alternate screen: {}", e)))?;
 
+    // Try to enable keyboard enhancement protocol (kitty protocol).
+    // This lets terminals like iTerm2/Ghostty send Shift+Enter as a distinct event.
+    // If unsupported, silently skip — Alt+Enter / Ctrl+J are always available.
+    let _ = execute!(
+        stdout,
+        crossterm::event::PushKeyboardEnhancementFlags(
+            crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+        )
+    );
+
     let backend = CrosstermBackend::new(io::stdout());
     Terminal::new(backend)
         .map_err(|e| ZcodeError::InternalError(format!("Failed to create terminal: {}", e)))
@@ -43,6 +53,12 @@ pub fn init_terminal() -> crate::error::Result<TuiTerminal> {
 pub fn restore_terminal(terminal: &mut TuiTerminal) -> crate::error::Result<()> {
     disable_raw_mode()
         .map_err(|e| ZcodeError::InternalError(format!("Failed to disable raw mode: {}", e)))?;
+
+    // Pop keyboard enhancement flags if we pushed them
+    let _ = execute!(
+        terminal.backend_mut(),
+        crossterm::event::PopKeyboardEnhancementFlags
+    );
 
     execute!(
         terminal.backend_mut(),
@@ -95,27 +111,50 @@ impl TuiApp {
     pub fn handle_event(&mut self, event: Event) -> crate::error::Result<()> {
         if let Event::Key(key) = event {
             match (key.modifiers, key.code) {
+                // Quit
                 (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                     self.should_quit = true;
                 }
                 (KeyModifiers::NONE, KeyCode::Esc) => {
                     self.should_quit = true;
                 }
-                // Shift+Enter: insert newline into input
+                // --- Newline insertion ---
+                // Shift+Enter (requires keyboard enhancement / kitty protocol)
                 (KeyModifiers::SHIFT, KeyCode::Enter) => {
                     self.chat.input_newline();
                 }
-                // Enter alone: send message
+                // Alt+Enter — works in most terminals without keyboard enhancement
+                (KeyModifiers::ALT, KeyCode::Enter) => {
+                    self.chat.input_newline();
+                }
+                // Ctrl+J — fallback for terminals that map Ctrl+J to \n
+                (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
+                    self.chat.input_newline();
+                }
+                // Ctrl+Enter is sometimes sent as Ctrl+M
+                (KeyModifiers::CONTROL, KeyCode::Enter) => {
+                    self.chat.input_newline();
+                }
+                // Plain Enter: send message
                 (KeyModifiers::NONE, KeyCode::Enter) => {
                     if let Some(user_text) = self.chat.send_current_input() {
                         self.call_llm(user_text);
                     }
                 }
+                // --- Cursor movement ---
+                (KeyModifiers::NONE, KeyCode::Left) => {
+                    self.chat.cursor_left();
+                }
+                (KeyModifiers::NONE, KeyCode::Right) => {
+                    self.chat.cursor_right();
+                }
+                // --- Typing ---
                 (KeyModifiers::NONE, KeyCode::Char(c))
                 | (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
                     self.chat.input_char(c);
                 }
-                (KeyModifiers::NONE, KeyCode::Backspace) => {
+                (KeyModifiers::NONE, KeyCode::Backspace)
+                | (KeyModifiers::SHIFT, KeyCode::Backspace) => {
                     self.chat.backspace();
                 }
                 _ => {}
@@ -279,6 +318,7 @@ mod tests {
     fn test_tui_app_handle_event_backspace() {
         let mut app = TuiApp::new();
         app.chat.input = "Hello".to_string();
+        app.chat.cursor_pos = app.chat.input.len(); // cursor at end
 
         let event = Event::Key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
         app.handle_event(event).unwrap();

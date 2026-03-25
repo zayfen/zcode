@@ -41,6 +41,41 @@ impl Tool for ShellTool {
         "Execute a shell command with optional working directory, environment variables, and timeout"
     }
 
+    fn anthropic_schema(&self) -> Value {
+        serde_json::json!({
+            "name": self.name(),
+            "description": self.description(),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The command executable to run (e.g., 'python3', 'ls')"
+                    },
+                    "args": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of arguments to pass to the command"
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": "Optional working directory to execute the command in"
+                    },
+                    "env": {
+                        "type": "object",
+                        "additionalProperties": {"type": "string"},
+                        "description": "Optional environment variables key-value pairs"
+                    },
+                    "timeout_ms": {
+                        "type": "integer",
+                        "description": "Command execution timeout in milliseconds (default: 30000)"
+                    }
+                },
+                "required": ["command"]
+            }
+        })
+    }
+
     fn execute(&self, input: Value) -> ToolResult<Value> {
         let params: ShellInput = serde_json::from_value(input)
             .map_err(|e| ZcodeError::InvalidToolInput(e.to_string()))?;

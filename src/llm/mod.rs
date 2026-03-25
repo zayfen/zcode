@@ -86,12 +86,14 @@ impl Message {
 /// LLM response
 #[derive(Debug, Clone)]
 pub struct LlmResponse {
-    /// Response content
+    /// Response content (text)
     pub content: String,
     /// Model used
     pub model: String,
     /// Usage statistics
     pub usage: Option<UsageStats>,
+    /// Raw JSON response body (useful for tool calls parsing)
+    pub raw_response: serde_json::Value,
 }
 
 /// Usage statistics for LLM calls
@@ -141,9 +143,9 @@ impl LlmClient {
     }
 
     /// Generate a completion from a conversation history
-    pub fn chat(&self, messages: &[Message]) -> crate::error::Result<LlmResponse> {
+    pub fn chat(&self, messages: &[Message], tools: &[serde_json::Value]) -> crate::error::Result<LlmResponse> {
         use crate::llm::provider::LlmProvider;
-        self.provider.chat(messages)
+        self.provider.chat(messages, tools)
     }
 }
 

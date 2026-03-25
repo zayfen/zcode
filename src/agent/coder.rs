@@ -145,14 +145,14 @@ impl CoderAgent {
         let result: crate::error::Result<crate::agent::loop_exec::LoopResult> = agent_loop.run(
             &task.description,
             &[],
-            move |messages| {
+            move |messages, tools| {
                 let p = Arc::clone(&effective_provider);
                 async move {
                     let llm_messages: Vec<Message> = messages.iter()
                         .filter_map(|v| {
-                            let role = v.get("role")?.as_str()?;
+                            let role_str = v.get("role")?.as_str()?;
                             let content = v.get("content")?.as_str().unwrap_or("").to_string();
-                            let role = match role {
+                            let role = match role_str {
                                 "system" => MessageRole::System,
                                 "assistant" => MessageRole::Assistant,
                                 _ => MessageRole::User,
@@ -161,8 +161,15 @@ impl CoderAgent {
                         })
                         .collect();
 
-                    match p.chat(&llm_messages) {
-                        Ok(resp) => Ok(LlmResponse::Text(resp.content)),
+                    match p.chat(&llm_messages, &tools) {
+                        Ok(resp) => {
+                            use crate::agent::loop_exec::LlmResponse as AgentLlmResponse;
+                            if let Ok(agent_resp) = AgentLlmResponse::from_anthropic_response(&resp.raw_response) {
+                                Ok(agent_resp)
+                            } else {
+                                Ok(AgentLlmResponse::Text(resp.content))
+                            }
+                        }
                         Err(e) => Err(e),
                     }
                 }

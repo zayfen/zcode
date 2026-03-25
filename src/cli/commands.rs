@@ -225,13 +225,12 @@ async fn execute_run(task: &str, resume_id: Option<&str>, args: &crate::cli::arg
     // Save initial state
     let _ = store.save(&mut task_record);
 
-    // ── Run loop ──────────────────────────────────────────────────────
     let resume_history = task_record.history.clone();
     let provider_clone = Arc::clone(&provider);
     let result = agent_loop.run(
         task,
         &[],
-        move |messages| {
+        move |messages, tools| {
             let p = Arc::clone(&provider_clone);
             async move {
                 let llm_messages: Vec<Message> = messages.iter()
@@ -247,8 +246,15 @@ async fn execute_run(task: &str, resume_id: Option<&str>, args: &crate::cli::arg
                     })
                     .collect();
 
-                match p.chat(&llm_messages) {
-                    Ok(resp) => Ok(LlmResponse::Text(resp.content)),
+                match p.chat(&llm_messages, &tools) {
+                    Ok(resp) => {
+                        // Directly use AgentLoop's format parser
+                        if let Ok(agent_resp) = LlmResponse::from_anthropic_response(&resp.raw_response) {
+                            Ok(agent_resp)
+                        } else {
+                            Ok(LlmResponse::Text(resp.content))
+                        }
+                    }
                     Err(crate::error::ZcodeError::MissingApiKey(provider)) => {
                         Ok(LlmResponse::Text(format!(
                             "Task acknowledged. No API key found for provider '{}'. \

@@ -11,7 +11,7 @@ pub trait LlmProvider: Send + Sync {
     fn complete(&self, prompt: &str) -> Result<String>;
 
     /// Generate a completion from a conversation
-    fn chat(&self, messages: &[Message]) -> Result<LlmResponse>;
+    fn chat(&self, messages: &[Message], tools: &[serde_json::Value]) -> Result<LlmResponse>;
 
     /// Stream a completion (returns a stream of text chunks)
     fn stream_complete(&self, prompt: &str) -> Result<StreamingResponse>;
@@ -87,15 +87,15 @@ where
 impl LlmProvider for RigProvider {
     fn complete(&self, prompt: &str) -> Result<String> {
         let messages = vec![Message::user(prompt)];
-        let resp = self.chat(&messages)?;
+        let resp = self.chat(&messages, &[])?;
         Ok(resp.content)
     }
 
-    fn chat(&self, messages: &[Message]) -> Result<LlmResponse> {
+    fn chat(&self, messages: &[Message], tools: &[serde_json::Value]) -> Result<LlmResponse> {
         let api_key = self.get_api_key()?;
 
         match self.config.provider.as_str() {
-            "anthropic" => self.chat_anthropic(messages, &api_key),
+            "anthropic" => self.chat_anthropic(messages, &api_key, tools),
             "openai" | _ => self.chat_openai(messages, &api_key),
         }
     }
@@ -110,8 +110,8 @@ impl LlmProvider for RigProvider {
 
 impl RigProvider {
     /// Anthropic Messages API call
-    fn chat_anthropic(&self, messages: &[Message], api_key: &str) -> Result<LlmResponse> {
-        use crate::llm::{MessageRole, UsageStats};
+    fn chat_anthropic(&self, messages: &[Message], api_key: &str, tools: &[serde_json::Value]) -> Result<LlmResponse> {
+        use crate::llm::MessageRole;
 
         // Separate system prompt from conversation messages
         let system_prompt: String = messages.iter()
@@ -141,6 +141,12 @@ impl RigProvider {
         if !system_prompt.is_empty() {
             body["system"] = serde_json::Value::String(system_prompt);
         }
+        // Inject tool schemas if provided
+        if !tools.is_empty() {
+            body["tools"] = serde_json::Value::Array(tools.to_vec());
+        }
+        
+        tracing::debug!("Anthropic API Request Body: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
 
         let api_key = api_key.to_string();
         let model = self.config.model.clone();
@@ -180,15 +186,24 @@ impl RigProvider {
             return Err(ZcodeError::LlmApiError(format!("Anthropic API error ({}): {}", status, err_msg)));
         }
 
-        let content = response_body
-            .get("content")
-            .and_then(|c| c.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|item| item.get("text"))
-            .and_then(|t| t.as_str())
-            .unwrap_or("")
-            .to_string();
+        // Parse the response using Anthropic format
+        println!(">>> RAW ANTHROPIC RESPONSE: {:#?}", response_body);
+        
+        use crate::agent::loop_exec::LlmResponse as AgentLlmResponse;
+        let agent_resp = AgentLlmResponse::from_anthropic_response(&response_body)
+            .map_err(|e| ZcodeError::LlmApiError(format!("Failed to parse Anthropic response: {}", e)))?;
 
+        // Map to provider LlmResponse
+        let content = match &agent_resp {
+            AgentLlmResponse::Text(t) => t.clone(),
+            AgentLlmResponse::ToolCalls(calls) => calls
+                .iter()
+                .filter_map(|c| c.get("name").and_then(|n| n.as_str()))
+                .collect::<Vec<_>>()
+                .join(", "),
+        };
+
+        use crate::llm::UsageStats;
         let input_tokens = response_body
             .get("usage").and_then(|u| u.get("input_tokens")).and_then(|t| t.as_u64())
             .unwrap_or(0) as u32;
@@ -196,10 +211,13 @@ impl RigProvider {
             .get("usage").and_then(|u| u.get("output_tokens")).and_then(|t| t.as_u64())
             .unwrap_or(0) as u32;
 
+        // Return the provider response — tool routing happens in AgentLoop
+        // We need to expose the raw agent response too
         Ok(LlmResponse {
             content,
             model,
             usage: Some(UsageStats { input_tokens, output_tokens }),
+            raw_response: response_body,
         })
     }
 
@@ -271,6 +289,7 @@ impl RigProvider {
             content,
             model,
             usage: Some(UsageStats { input_tokens, output_tokens }),
+            raw_response: response_body,
         })
     }
 }
@@ -295,13 +314,16 @@ impl LlmProvider for MockLlmProvider {
         Ok(self.response.clone())
     }
 
-    fn chat(&self, _messages: &[Message]) -> Result<LlmResponse> {
+    fn chat(&self, _messages: &[Message], _tools: &[serde_json::Value]) -> Result<LlmResponse> {
         Ok(LlmResponse {
             content: self.response.clone(),
             model: "mock-model".to_string(),
             usage: Some(crate::llm::UsageStats {
                 input_tokens: 10,
                 output_tokens: 5,
+            }),
+            raw_response: serde_json::json!({
+                "content": self.response
             }),
         })
     }

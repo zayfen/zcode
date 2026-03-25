@@ -48,6 +48,31 @@ impl Tool for AstSearchTool {
          Requires a grammar to be registered in the LanguageRegistry for the file's extension."
     }
 
+    fn anthropic_schema(&self) -> Value {
+        serde_json::json!({
+            "name": self.name(),
+            "description": self.description(),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File path to analyse"
+                    },
+                    "node_type": {
+                        "type": "string",
+                        "description": "Tree-sitter node type to find (e.g. 'function_item', 'class_definition')"
+                    },
+                    "text_contains": {
+                        "type": "string",
+                        "description": "Optional text filter: only return nodes whose text contains this string"
+                    }
+                },
+                "required": ["path", "node_type"]
+            }
+        })
+    }
+
     fn execute(&self, input: Value) -> ToolResult<Value> {
         let params: AstSearchInput = serde_json::from_value(input)
             .map_err(|e| ZcodeError::InvalidToolInput(e.to_string()))?;
@@ -130,6 +155,35 @@ impl Tool for AstEditTool {
     fn description(&self) -> &str {
         "Edit a source file by replacing exact AST node text. \
          Parses the file first to validate syntax, then performs precise text replacement."
+    }
+
+    fn anthropic_schema(&self) -> Value {
+        serde_json::json!({
+            "name": self.name(),
+            "description": self.description(),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file to edit"
+                    },
+                    "old_text": {
+                        "type": "string",
+                        "description": "The exact source text of the node to replace"
+                    },
+                    "new_text": {
+                        "type": "string",
+                        "description": "The new replacement text"
+                    },
+                    "replace_all": {
+                        "type": "boolean",
+                        "description": "Whether to replace all occurrences (default: false)"
+                    }
+                },
+                "required": ["path", "old_text", "new_text"]
+            }
+        })
     }
 
     fn execute(&self, input: Value) -> ToolResult<Value> {

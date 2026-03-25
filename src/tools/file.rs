@@ -33,6 +33,31 @@ impl Tool for FileReadTool {
         "Read file contents with optional line offset and limit"
     }
 
+    fn anthropic_schema(&self) -> Value {
+        serde_json::json!({
+            "name": self.name(),
+            "description": self.description(),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file to read"
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Line offset to start reading from (0-indexed)"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of lines to read"
+                    }
+                },
+                "required": ["path"]
+            }
+        })
+    }
+
     fn execute(&self, input: Value) -> ToolResult<Value> {
         let params: FileReadInput = serde_json::from_value(input)
             .map_err(|e| ZcodeError::InvalidToolInput(e.to_string()))?;
@@ -88,6 +113,27 @@ impl Tool for FileWriteTool {
         "Write content to a file, creating it and parent directories if they don't exist"
     }
 
+    fn anthropic_schema(&self) -> Value {
+        serde_json::json!({
+            "name": self.name(),
+            "description": self.description(),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute or relative path to the file"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content to write to the file"
+                    }
+                },
+                "required": ["path", "content"]
+            }
+        })
+    }
+
     fn execute(&self, input: Value) -> ToolResult<Value> {
         let params: FileWriteInput = serde_json::from_value(input)
             .map_err(|e| ZcodeError::InvalidToolInput(e.to_string()))?;
@@ -133,6 +179,35 @@ impl Tool for FileEditTool {
 
     fn description(&self) -> &str {
         "Edit a file by replacing text occurrences (first occurrence by default, or all with replace_all=true)"
+    }
+
+    fn anthropic_schema(&self) -> Value {
+        serde_json::json!({
+            "name": self.name(),
+            "description": self.description(),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the file to edit"
+                    },
+                    "old_text": {
+                        "type": "string",
+                        "description": "The exact text to be replaced"
+                    },
+                    "new_text": {
+                        "type": "string",
+                        "description": "The new text to replace with"
+                    },
+                    "replace_all": {
+                        "type": "boolean",
+                        "description": "If true, replace all occurrences; if false, replace only the first occurrence (default: false)"
+                    }
+                },
+                "required": ["path", "old_text", "new_text"]
+            }
+        })
     }
 
     fn execute(&self, input: Value) -> ToolResult<Value> {

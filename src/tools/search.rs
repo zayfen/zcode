@@ -57,6 +57,43 @@ impl Tool for SearchTool {
         "Search for a regex pattern in files, with optional context lines, file extension filter, and case sensitivity"
     }
 
+    fn anthropic_schema(&self) -> Value {
+        serde_json::json!({
+            "name": self.name(),
+            "description": self.description(),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Regex pattern to search for"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Directory or file path to search within"
+                    },
+                    "file_extension": {
+                        "type": "string",
+                        "description": "Optional file extension to filter by (e.g., '.rs', '.py')"
+                    },
+                    "case_sensitive": {
+                        "type": "boolean",
+                        "description": "Whether the search should be case sensitive (default: false)"
+                    },
+                    "context_lines": {
+                        "type": "integer",
+                        "description": "Number of context lines to return before and after each match (default: 0)"
+                    },
+                    "max_matches": {
+                        "type": "integer",
+                        "description": "Maximum number of matches to return (default: 100)"
+                    }
+                },
+                "required": ["pattern", "path"]
+            }
+        })
+    }
+
     fn execute(&self, input: Value) -> ToolResult<Value> {
         let params: SearchInput = serde_json::from_value(input)
             .map_err(|e| ZcodeError::InvalidToolInput(e.to_string()))?;

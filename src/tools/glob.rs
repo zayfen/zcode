@@ -37,6 +37,31 @@ impl Tool for GlobTool {
         "Find files matching a glob pattern (e.g. '**/*.rs')"
     }
 
+    fn anthropic_schema(&self) -> Value {
+        serde_json::json!({
+            "name": self.name(),
+            "description": self.description(),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "The glob pattern to match (e.g., '**/*.rs', 'src/**/*.py')"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Optional base directory path to search within"
+                    },
+                    "max_files": {
+                        "type": "integer",
+                        "description": "Maximum number of files to return (default: 1000)"
+                    }
+                },
+                "required": ["pattern"]
+            }
+        })
+    }
+
     fn execute(&self, input: Value) -> ToolResult<Value> {
         let params: GlobInput = serde_json::from_value(input)
             .map_err(|e| ZcodeError::InvalidToolInput(e.to_string()))?;

@@ -144,10 +144,13 @@ impl RigProvider {
 
         let api_key = api_key.to_string();
         let model = self.config.model.clone();
-        // Use ANTHROPIC_BASE_URL as the full endpoint if set (proxies like BigModel
-        // include the complete path in the base URL).
-        let endpoint = std::env::var("ANTHROPIC_BASE_URL")
-            .unwrap_or_else(|_| "https://api.anthropic.com/v1/messages".to_string());
+        // Use ANTHROPIC_BASE_URL as base; append /v1/messages for the Messages API.
+        // Verified: https://open.bigmodel.cn/api/anthropic/v1/messages → HTTP 200
+        let endpoint = {
+            let base = std::env::var("ANTHROPIC_BASE_URL")
+                .unwrap_or_else(|_| "https://api.anthropic.com".to_string());
+            format!("{}/v1/messages", base.trim_end_matches('/'))
+        };
 
         let (status, response_body) = run_http(async move {
             let client = reqwest::Client::builder()

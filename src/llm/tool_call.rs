@@ -81,6 +81,18 @@ impl ToolCallRequest {
 
         Some(Self { id, name, arguments })
     }
+
+    /// Parse from Anthropic tool_use block format:
+    /// `{"type": "tool_use", "id": "...", "name": "...", "input": {...}}`
+    pub fn from_anthropic(value: &Value) -> Option<Self> {
+        if value.get("type")?.as_str()? != "tool_use" {
+            return None;
+        }
+        let id = value.get("id")?.as_str()?.to_string();
+        let name = value.get("name")?.as_str()?.to_string();
+        let arguments = value.get("input").cloned().unwrap_or(json!({}));
+        Some(Self { id, name, arguments })
+    }
 }
 
 // ─── ToolCallResponse ──────────────────────────────────────────────────────────

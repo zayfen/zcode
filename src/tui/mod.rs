@@ -196,7 +196,7 @@ impl TuiApp {
             messages.push(Message::user(&user_text));
         }
 
-        match provider.chat(&messages) {
+        match provider.chat(&messages, &[]) {
             Ok(response) => {
                 self.chat.add_message(chat::ChatMessage::assistant(response.content));
             }

@@ -31,6 +31,26 @@ pub trait Tool: Send + Sync {
 
     /// Execute the tool with the given input
     fn execute(&self, input: Value) -> ToolResult<Value>;
+
+    /// Return the Anthropic-format tool schema for this tool.
+    ///
+    /// Override this to provide parameter schemas; the default produces a
+    /// generic schema that accepts any JSON object.
+    fn anthropic_schema(&self) -> Value {
+        serde_json::json!({
+            "name": self.name(),
+            "description": self.description(),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "input": {
+                        "type": "string",
+                        "description": "Tool input (JSON string or plain string)"
+                    }
+                }
+            }
+        })
+    }
 }
 
 /// Registry for managing and executing tools
@@ -69,6 +89,11 @@ impl ToolRegistry {
     /// List all registered tools
     pub fn list(&self) -> Vec<&str> {
         self.tools.keys().map(|s| s.as_str()).collect()
+    }
+
+    /// Return Anthropic-format schema array for all registered tools.
+    pub fn anthropic_schemas(&self) -> Vec<Value> {
+        self.tools.values().map(|t| t.anthropic_schema()).collect()
     }
 }
 

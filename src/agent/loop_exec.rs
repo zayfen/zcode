@@ -137,8 +137,7 @@ impl AgentLoop {
 
     /// Run the ReAct loop for a user message, using the provided LLM caller.
     ///
-    /// The `llm_call` function is injectable so that real HTTP calls can be
-    /// swapped out for mocks in tests.
+    /// `llm_call(messages, tools)` — tools is the Anthropic-format schema array.
     pub async fn run<F, Fut>(
         &self,
         user_message: &str,
@@ -146,13 +145,16 @@ impl AgentLoop {
         mut llm_call: F,
     ) -> Result<LoopResult>
     where
-        F: FnMut(Vec<Value>) -> Fut,
+        F: FnMut(Vec<Value>, Vec<Value>) -> Fut,
         Fut: std::future::Future<Output = Result<LlmResponse>>,
     {
         let mut history: Vec<ConversationMessage> = vec![
             ConversationMessage::system(&self.config.system_prompt),
             ConversationMessage::user(user_message),
         ];
+
+        // Build tool schemas from registry once
+        let tool_schemas = self.registry.anthropic_schemas();
 
         let mut llm_calls = 0usize;
         let mut tool_calls_executed = 0usize;
@@ -164,7 +166,7 @@ impl AgentLoop {
                 .map(|m| serde_json::to_value(m).unwrap())
                 .collect::<Vec<_>>();
 
-            let response = llm_call(messages).await?;
+            let response = llm_call(messages, tool_schemas.clone()).await?;
             llm_calls += 1;
 
             match response {
@@ -180,10 +182,10 @@ impl AgentLoop {
                 }
 
                 LlmResponse::ToolCalls(calls_json) => {
-                    // Parse tool call requests
+                    // Parse tool call requests (Anthropic format)
                     let requests: Vec<ToolCallRequest> = calls_json
                         .iter()
-                        .filter_map(ToolCallRequest::from_openai)
+                        .filter_map(ToolCallRequest::from_anthropic)
                         .collect();
 
                     // Record assistant tool call message
@@ -193,7 +195,7 @@ impl AgentLoop {
                     let responses = execute_tool_calls(&self.registry, &requests);
                     tool_calls_executed += responses.len();
 
-                    // Add tool results to history
+                    // Add tool results to history (Anthropic format: role=user, content=[tool_result])
                     for resp in &responses {
                         history.push(ConversationMessage::tool_result(resp));
                     }
@@ -252,6 +254,37 @@ impl LlmResponse {
             .to_string();
 
         Ok(LlmResponse::Text(content))
+    }
+
+    /// Parse from an Anthropic Messages API response JSON.
+    ///
+    /// Anthropic returns `content` as an array of blocks:
+    /// - `{"type": "text", "text": "..."}` → Text
+    /// - `{"type": "tool_use", "id": "...", "name": "...", "input": {...}}` → ToolCalls
+    pub fn from_anthropic_response(body: &Value) -> Result<Self> {
+        let content_arr = body
+            .get("content")
+            .and_then(|c| c.as_array())
+            .ok_or_else(|| ZcodeError::LlmApiError("No content array in Anthropic response".into()))?;
+
+        // Collect tool_use blocks
+        let tool_calls: Vec<Value> = content_arr.iter()
+            .filter(|block| block.get("type").and_then(|t| t.as_str()) == Some("tool_use"))
+            .cloned()
+            .collect();
+
+        if !tool_calls.is_empty() {
+            return Ok(LlmResponse::ToolCalls(tool_calls));
+        }
+
+        // Collect text blocks
+        let text = content_arr.iter()
+            .filter(|block| block.get("type").and_then(|t| t.as_str()) == Some("text"))
+            .filter_map(|block| block.get("text").and_then(|t| t.as_str()))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        Ok(LlmResponse::Text(text))
     }
 }
 

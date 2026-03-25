@@ -3,22 +3,97 @@
 //! This module implements the handlers for each CLI command.
 
 use crate::agent::loop_exec::{AgentLoop, LoopConfig, LlmResponse};
-use crate::cli::args::Command;
+use crate::cli::args::{Command, DocsAction};
+use crate::docs::{generate_docs_scaffold, DocsValidator};
 use crate::error::Result;
 use crate::llm::provider::{LlmProvider, RigProvider};
 use crate::llm::{LlmConfig, Message, MessageRole};
 use crate::tools::{register_default_tools, ToolRegistry};
 use crate::tui::{init_terminal, restore_terminal, TuiApp};
 use crate::Settings;
+use std::path::Path;
 use std::sync::Arc;
 use tracing::info;
 
 /// Execute a CLI command
 pub async fn execute_command(command: &Command, args: &crate::cli::args::Args) -> Result<()> {
+    // ── Harness Engineering docs validation ──────────────────────────
+    // All non-docs commands require a valid docs/ directory, unless
+    // --skip-docs-check is passed or the command is `docs`.
+    if !args.skip_docs_check {
+        if let Command::Run { .. } | Command::Chat = command {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            run_docs_validation(&cwd)?;
+        }
+    }
+
     match command {
         Command::Run { task } => execute_run(task, args).await,
         Command::Chat => execute_chat(args).await,
+        Command::Docs { action } => execute_docs(action),
         Command::Version => execute_version(),
+    }
+}
+
+/// Validate docs/ in `project_dir` and print results; returns `Err` if invalid.
+fn run_docs_validation(project_dir: &Path) -> Result<()> {
+    let validator = DocsValidator::new(project_dir);
+    let result = validator.validate();
+    if result.is_valid() {
+        info!("docs/ validation passed");
+        return Ok(());
+    }
+    // Print all errors to stderr
+    eprintln!("\n╔══════════════════════════════════════════════════════════╗");
+    eprintln!("║  Harness Engineering: docs/ validation FAILED            ║");
+    eprintln!("╚══════════════════════════════════════════════════════════╝");
+    for (i, err) in result.errors.iter().enumerate() {
+        eprintln!("  {}. {}", i + 1, err.message);
+        eprintln!("     → {}", err.hint);
+    }
+    eprintln!();
+    eprintln!("  Run `zcode docs init` to generate the required scaffolding.");
+    eprintln!("  Run `zcode docs check` to see this report again.");
+    eprintln!("  Use `--skip-docs-check` to bypass this validation.");
+    eprintln!();
+    Err(crate::error::ZcodeError::ConfigError(
+        "docs/ validation failed. Fix the issues above before running zcode.".to_string(),
+    ))
+}
+
+/// Handle `zcode docs {init|check}` commands.
+fn execute_docs(action: &DocsAction) -> Result<()> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    match action {
+        DocsAction::Init => {
+            let created = generate_docs_scaffold(&cwd).map_err(|e| {
+                crate::error::ZcodeError::ConfigError(format!("Failed to create docs scaffold: {}", e))
+            })?;
+            if created.is_empty() {
+                println!("docs/ scaffolding already exists — nothing to create.");
+            } else {
+                println!("Created {} file(s):", created.len());
+                for path in &created {
+                    println!("  {}", path.display());
+                }
+                println!("\nNext steps:");
+                println!("  1. Fill in docs/prd/001-feature.md with your requirements.");
+                println!("  2. Update docs/specs/coding.spec.md with your tech stack.");
+                println!("  3. Add tasks to docs/tasks/001-feature.tasks.md.");
+                println!("  4. Then run: zcode run \"<your task>\"");
+            }
+            Ok(())
+        }
+        DocsAction::Check => {
+            let validator = DocsValidator::new(&cwd);
+            let result = validator.validate();
+            if result.is_valid() {
+                println!("docs/ validation passed ✓");
+            } else {
+                run_docs_validation(&cwd)?;
+            }
+            Ok(())
+        }
     }
 }
 
@@ -217,6 +292,7 @@ mod tests {
             model: None,
             mcp: vec![],
             verbose: false,
+            skip_docs_check: false,
         };
 
         if let Some(Command::Run { task }) = &args.command {
@@ -236,6 +312,7 @@ mod tests {
             model: Some("claude-3-opus".to_string()),
             mcp: vec![],
             verbose: false,
+            skip_docs_check: false,
         };
 
         if let Some(Command::Run { task }) = &args.command {
@@ -255,6 +332,7 @@ mod tests {
             model: None,
             mcp: vec![],
             verbose: false,
+            skip_docs_check: false,
         };
 
         if let Some(Command::Run { task }) = &args.command {
@@ -275,6 +353,7 @@ mod tests {
             model: None,
             mcp: vec![],
             verbose: false,
+            skip_docs_check: false,
         };
 
         if let Some(Command::Run { task }) = &args.command {
@@ -294,6 +373,7 @@ mod tests {
             model: None,
             mcp: vec!["server1".to_string(), "server2".to_string()],
             verbose: false,
+            skip_docs_check: false,
         };
 
         if let Some(Command::Run { task }) = &args.command {
@@ -313,6 +393,7 @@ mod tests {
             model: None,
             mcp: vec![],
             verbose: true,
+            skip_docs_check: false,
         };
 
         if let Some(Command::Run { task }) = &args.command {
@@ -332,6 +413,7 @@ mod tests {
             model: None,
             mcp: vec![],
             verbose: false,
+            skip_docs_check: false,
         };
 
         if let Some(Command::Run { task }) = &args.command {
@@ -351,6 +433,7 @@ mod tests {
             model: None,
             mcp: vec![],
             verbose: false,
+            skip_docs_check: false,
         };
 
         if let Some(Command::Run { task }) = &args.command {
@@ -374,6 +457,7 @@ mod tests {
             model: None,
             mcp: vec![],
             verbose: false,
+            skip_docs_check: true, // no docs/ in test env
         };
 
         if let Some(ref cmd) = args.command {
@@ -389,6 +473,7 @@ mod tests {
             model: None,
             mcp: vec![],
             verbose: false,
+            skip_docs_check: false,
         };
 
         if let Some(ref cmd) = args.command {
@@ -457,6 +542,7 @@ mod tests {
             model: Some("gpt-4".to_string()),
             mcp: vec!["server1".to_string()],
             verbose: true,
+            skip_docs_check: false,
         };
 
         assert!(matches!(args.command, Some(Command::Version)));
@@ -472,6 +558,7 @@ mod tests {
             model: Some("claude".to_string()),
             mcp: vec![],
             verbose: false,
+            skip_docs_check: false,
         };
         let cloned = args.clone();
         assert!(matches!(cloned.command, Some(Command::Chat)));
@@ -485,6 +572,7 @@ mod tests {
             model: None,
             mcp: vec![],
             verbose: false,
+            skip_docs_check: false,
         };
         let debug_str = format!("{:?}", args);
         assert!(debug_str.contains("Args"));
@@ -508,6 +596,7 @@ mod tests {
                 "server3".to_string(),
             ],
             verbose: false,
+            skip_docs_check: false,
         };
 
         if let Some(Command::Run { task }) = &args.command {
@@ -527,6 +616,7 @@ mod tests {
             model: Some("claude-3-opus".to_string()),
             mcp: vec!["mcp-server".to_string()],
             verbose: true,
+            skip_docs_check: false,
         };
 
         if let Some(Command::Run { task }) = &args.command {

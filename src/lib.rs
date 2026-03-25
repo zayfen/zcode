@@ -41,6 +41,7 @@ pub mod session;
 pub mod git;
 pub mod lsp;
 pub mod workspace;
+pub mod docs;
 
 // Re-exports for convenience
 pub use error::{ZcodeError, Result};

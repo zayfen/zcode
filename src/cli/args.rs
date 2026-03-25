@@ -13,6 +13,10 @@ pub struct Args {
     #[command(subcommand)]
     pub command: Option<Command>,
 
+    /// Skip the Harness Engineering docs validation check
+    #[arg(long, global = true, help = "Skip docs/ validation")]
+    pub skip_docs_check: bool,
+
     /// Model to use for LLM interactions
     #[arg(short, long, global = true)]
     pub model: Option<String>,
@@ -38,8 +42,23 @@ pub enum Command {
     /// Start interactive chat mode (default)
     Chat,
 
+    /// Manage Harness Engineering docs
+    Docs {
+        #[command(subcommand)]
+        action: DocsAction,
+    },
+
     /// Show version information
     Version,
+}
+
+/// Actions for the `docs` subcommand
+#[derive(Subcommand, Debug, Clone)]
+pub enum DocsAction {
+    /// Initialise docs/ scaffolding in the current working directory
+    Init,
+    /// Validate docs/ against the Harness Engineering convention
+    Check,
 }
 
 #[cfg(test)]

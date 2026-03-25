@@ -37,6 +37,9 @@ pub enum Command {
     Run {
         /// The task description to execute
         task: String,
+        /// Resume a previously interrupted task by its ID
+        #[arg(long, value_name = "TASK_ID")]
+        resume: Option<String>,
     },
 
     /// Start interactive chat mode (default)
@@ -46,6 +49,12 @@ pub enum Command {
     Docs {
         #[command(subcommand)]
         action: DocsAction,
+    },
+
+    /// Manage saved task records
+    Task {
+        #[command(subcommand)]
+        action: TaskAction,
     },
 
     /// Show version information
@@ -59,6 +68,20 @@ pub enum DocsAction {
     Init,
     /// Validate docs/ against the Harness Engineering convention
     Check,
+}
+
+/// Actions for the `task` subcommand
+#[derive(Subcommand, Debug, Clone)]
+pub enum TaskAction {
+    /// List all saved tasks
+    List,
+    /// Show details of a specific task
+    Show {
+        /// Task ID to display
+        id: String,
+    },
+    /// Delete all completed, failed or interrupted tasks
+    Clean,
 }
 
 #[cfg(test)]
@@ -110,7 +133,7 @@ mod tests {
         let args = Args::try_parse_from(["zcode", "run", "test task"]);
         assert!(args.is_ok());
         let args = args.unwrap();
-        if let Some(Command::Run { task }) = args.command {
+        if let Some(Command::Run { task, .. }) = args.command {
             assert_eq!(task, "test task");
         } else {
             panic!("Expected Run command");
@@ -122,7 +145,7 @@ mod tests {
         let args = Args::try_parse_from(["zcode", "run", ""]);
         assert!(args.is_ok());
         let args = args.unwrap();
-        if let Some(Command::Run { task }) = args.command {
+        if let Some(Command::Run { task, .. }) = args.command {
             assert_eq!(task, "");
         } else {
             panic!("Expected Run command");
@@ -135,7 +158,7 @@ mod tests {
         let args = Args::try_parse_from(["zcode", "run", &long_task]);
         assert!(args.is_ok());
         let args = args.unwrap();
-        if let Some(Command::Run { task }) = args.command {
+        if let Some(Command::Run { task, .. }) = args.command {
             assert_eq!(task.len(), 1000);
         } else {
             panic!("Expected Run command");
@@ -147,7 +170,7 @@ mod tests {
         let args = Args::try_parse_from(["zcode", "run", "fix the \"bug\" in code"]);
         assert!(args.is_ok());
         let args = args.unwrap();
-        if let Some(Command::Run { task }) = args.command {
+        if let Some(Command::Run { task, .. }) = args.command {
             assert!(task.contains("bug"));
         } else {
             panic!("Expected Run command");
@@ -159,7 +182,7 @@ mod tests {
         let args = Args::try_parse_from(["zcode", "run", "你好世界 🎉"]);
         assert!(args.is_ok());
         let args = args.unwrap();
-        if let Some(Command::Run { task }) = args.command {
+        if let Some(Command::Run { task, .. }) = args.command {
             assert!(task.contains("你好"));
         } else {
             panic!("Expected Run command");
@@ -300,7 +323,7 @@ mod tests {
         assert!(args.verbose);
         assert_eq!(args.model, Some("gpt-4".to_string()));
         assert_eq!(args.mcp, vec!["server1"]);
-        if let Some(Command::Run { task }) = args.command {
+        if let Some(Command::Run { task, .. }) = args.command {
             assert_eq!(task, "task");
         } else {
             panic!("Expected Run command");
@@ -392,7 +415,7 @@ mod tests {
         let args = Args::try_parse_from(["zcode", "run", "Fix bug #123: handle @mentions"]);
         assert!(args.is_ok());
         let args = args.unwrap();
-        if let Some(Command::Run { task }) = args.command {
+        if let Some(Command::Run { task, .. }) = args.command {
             assert!(task.contains("#123"));
             assert!(task.contains("@mentions"));
         } else {

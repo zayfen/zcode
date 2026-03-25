@@ -2,12 +2,14 @@
 //!
 //! This module implements the handlers for each CLI command.
 
-use crate::agent::loop_exec::{AgentLoop, LoopConfig, LlmResponse};
-use crate::cli::args::{Command, DocsAction};
+use crate::agent::loop_exec::{AgentLoop, ConversationMessage, LoopConfig, LlmResponse};
+use crate::cli::args::{Command, DocsAction, TaskAction};
 use crate::docs::{generate_docs_scaffold, DocsValidator};
 use crate::error::Result;
 use crate::llm::provider::{LlmProvider, RigProvider};
 use crate::llm::{LlmConfig, Message, MessageRole};
+use crate::skills::SkillsLoader;
+use crate::task_store::{TaskRecord, TaskStatus, TaskStore};
 use crate::tools::{register_default_tools, ToolRegistry};
 use crate::tui::{init_terminal, restore_terminal, TuiApp};
 use crate::Settings;
@@ -28,9 +30,10 @@ pub async fn execute_command(command: &Command, args: &crate::cli::args::Args) -
     }
 
     match command {
-        Command::Run { task } => execute_run(task, args).await,
+        Command::Run { task, resume } => execute_run(task, resume.as_deref(), args).await,
         Command::Chat => execute_chat(args).await,
         Command::Docs { action } => execute_docs(action),
+        Command::Task { action } => execute_task(action),
         Command::Version => execute_version(),
     }
 }
@@ -102,20 +105,92 @@ pub async fn execute_default(args: &crate::cli::args::Args) -> Result<()> {
     execute_chat(args).await
 }
 
+/// Handle `zcode task {list|show|clean}` commands.
+fn execute_task(action: &TaskAction) -> Result<()> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let store = TaskStore::new(&cwd)?;
+    match action {
+        TaskAction::List => {
+            let tasks = store.list()?;
+            if tasks.is_empty() {
+                println!("No saved tasks. Run `zcode run \"<task>\"` to create one.");
+            } else {
+                println!("{:<10} {:<12} {:<5} {}",
+                    "ID", "STATUS", "ITER", "TASK");
+                println!("{}", "-".repeat(70));
+                for t in &tasks {
+                    let snippet = if t.task.len() > 45 {
+                        format!("{}…", &t.task[..45])
+                    } else {
+                        t.task.clone()
+                    };
+                    println!("{:<10} {:<12} {:<5} {}",
+                        t.id, t.status.to_string(), t.iteration, snippet);
+                }
+            }
+            Ok(())
+        }
+        TaskAction::Show { id } => {
+            let record = store.load(id)?;
+            println!("ID:        {}", record.id);
+            println!("Status:    {}", record.status);
+            println!("Iteration: {}", record.iteration);
+            println!("Task:      {}", record.task);
+            println!("Created:   {}", record.created_at);
+            println!("Updated:   {}", record.updated_at);
+            if let Some(result) = &record.result {
+                println!("\nResult:\n{}", result);
+            }
+            if let Some(error) = &record.error {
+                println!("\nError: {}", error);
+            }
+            println!("\nHistory: {} messages", record.history.len());
+            Ok(())
+        }
+        TaskAction::Clean => {
+            let deleted = store.clean()?;
+            if deleted == 0 {
+                println!("Nothing to clean — no completed/failed tasks.");
+            } else {
+                println!("Cleaned {} task record(s).", deleted);
+            }
+            Ok(())
+        }
+    }
+}
+
 /// Run a single task in non-interactive mode using AgentLoop + LLM
-async fn execute_run(task: &str, args: &crate::cli::args::Args) -> Result<()> {
-    info!("Running task: {}", task);
+async fn execute_run(task: &str, resume_id: Option<&str>, args: &crate::cli::args::Args) -> Result<()> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
-    // Load settings
-    let mut settings = Settings::load().unwrap_or_default();
+    // ── Task Store ────────────────────────────────────────────────────
+    let store = TaskStore::new(&cwd)?;
+    let mut task_record: TaskRecord = if let Some(id) = resume_id {
+        let mut record = store.load(id)?;
+        if record.status == TaskStatus::Completed {
+            println!("⚠  Task '{}' already completed. Starting fresh.", id);
+            record = store.create(task);
+        } else {
+            println!("▶  Resuming task '{}' from iteration {}.", record.id, record.iteration);
+        }
+        record
+    } else {
+        store.create(task)
+    };
+    info!("Task record id={}", task_record.id);
 
-    // Override model if specified
-    if let Some(model) = &args.model {
-        info!("Using model: {}", model);
-        settings.llm.model = model.clone();
+    // ── Skills ────────────────────────────────────────────────────────
+    let skills = SkillsLoader::load(&cwd);
+    if !skills.is_empty() {
+        let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
+        println!("📚 Loaded {} skill(s): {}", skills.len(), names.join(", "));
     }
 
-    // Build LLM config from settings
+    // ── Model / LLM config ────────────────────────────────────────────
+    let mut settings = Settings::load().unwrap_or_default();
+    if let Some(model) = &args.model {
+        settings.llm.model = model.clone();
+    }
     let llm_config = LlmConfig {
         provider: settings.llm.provider.clone(),
         model: settings.llm.model.clone(),
@@ -123,32 +198,35 @@ async fn execute_run(task: &str, args: &crate::cli::args::Args) -> Result<()> {
         temperature: settings.llm.temperature,
         max_tokens: settings.llm.max_tokens,
     };
-
     let provider: Arc<dyn LlmProvider> = Arc::new(RigProvider::new(llm_config.clone()));
 
-    // Build tool registry
+    // ── Tool registry ─────────────────────────────────────────────────
     let mut registry = ToolRegistry::new();
     register_default_tools(&mut registry);
     let registry = Arc::new(registry);
 
-    // Build agent loop config
-    let loop_config = LoopConfig {
-        max_iterations: 20,
-        system_prompt: format!(
-            "You are zcode, a senior AI coding agent using model {}. \
-             You have access to tools for reading/writing files, running shell commands, \
-             and searching code. Execute the user's task completely and report results.",
-            llm_config.model
-        ),
-    };
-
-    let agent_loop = AgentLoop::new(loop_config, registry);
+    // ── System prompt (base + skills) ─────────────────────────────────
+    let base_prompt = format!(
+        "You are zcode, a senior AI coding agent using model {}. \
+         You have access to tools for reading/writing files, running shell commands, \
+         and searching code. Execute the user's task completely and report results.",
+        llm_config.model
+    );
+    let system_prompt = SkillsLoader::build_system_prompt(&base_prompt, &skills);
+    let loop_config = LoopConfig { max_iterations: 20, system_prompt };
+    let agent_loop = AgentLoop::new(loop_config, Arc::clone(&registry));
 
     println!("🤖 zcode agent starting...");
-    println!("📋 Task: {}", task);
+    println!("📋 Task: {} [id={}]", task, task_record.id);
     println!("🧠 Model: {}", llm_config.model);
+    println!("💾 Progress saved to .zcode/tasks/{}.json", task_record.id);
     println!();
 
+    // Save initial state
+    let _ = store.save(&mut task_record);
+
+    // ── Run loop ──────────────────────────────────────────────────────
+    let resume_history = task_record.history.clone();
     let provider_clone = Arc::clone(&provider);
     let result = agent_loop.run(
         task,
@@ -156,7 +234,6 @@ async fn execute_run(task: &str, args: &crate::cli::args::Args) -> Result<()> {
         move |messages| {
             let p = Arc::clone(&provider_clone);
             async move {
-                // Convert serde_json messages to llm::Message
                 let llm_messages: Vec<Message> = messages.iter()
                     .filter_map(|v| {
                         let role = v.get("role")?.as_str()?;
@@ -172,11 +249,10 @@ async fn execute_run(task: &str, args: &crate::cli::args::Args) -> Result<()> {
 
                 match p.chat(&llm_messages) {
                     Ok(resp) => Ok(LlmResponse::Text(resp.content)),
-                    // Graceful offline fallback: if no API key configured, return a stub reply.
                     Err(crate::error::ZcodeError::MissingApiKey(provider)) => {
                         Ok(LlmResponse::Text(format!(
                             "Task acknowledged. No API key found for provider '{}'. \
-                             Set the corresponding API key env variable to enable real LLM responses.",
+                             Set the corresponding env variable to enable LLM responses.",
                             provider
                         )))
                     }
@@ -184,16 +260,34 @@ async fn execute_run(task: &str, args: &crate::cli::args::Args) -> Result<()> {
                 }
             }
         },
-    ).await?;
+    ).await;
 
-    println!("✅ Task completed in {} LLM call(s), {} tool call(s).", result.llm_calls, result.tool_calls_executed);
-    if result.hit_max_iterations {
-        println!("⚠ Warning: max iterations reached.");
+    // Persist resume history (best-effort; we don't have per-iteration hooks yet)
+    task_record.history = resume_history;
+
+    match result {
+        Ok(loop_result) => {
+            task_record.status = TaskStatus::Completed;
+            task_record.result = Some(loop_result.answer.clone());
+            task_record.history = loop_result.history.clone();
+            task_record.iteration = loop_result.llm_calls;
+            let _ = store.save(&mut task_record);
+
+            println!("\n✅ Task complete ({} LLM calls, {} tool calls)",
+                loop_result.llm_calls, loop_result.tool_calls_executed);
+            if loop_result.hit_max_iterations {
+                println!("⚠  Max iterations reached.");
+            }
+            println!("\n📤 Result:\n{}", loop_result.answer);
+            Ok(())
+        }
+        Err(e) => {
+            task_record.status = TaskStatus::Failed;
+            task_record.error = Some(e.to_string());
+            let _ = store.save(&mut task_record);
+            Err(e)
+        }
     }
-    println!();
-    println!("📤 Result:\n{}", result.answer);
-
-    Ok(())
 }
 
 /// Start interactive chat mode
@@ -288,6 +382,7 @@ mod tests {
         let args = Args {
             command: Some(Command::Run {
                 task: "test task".to_string(),
+                resume: None,
             }),
             model: None,
             mcp: vec![],
@@ -295,8 +390,8 @@ mod tests {
             skip_docs_check: false,
         };
 
-        if let Some(Command::Run { task }) = &args.command {
-            let result = execute_run(task, &args).await;
+        if let Some(Command::Run { task, resume: None }) = &args.command {
+            let result = execute_run(task, None, &args).await;
             assert!(result.is_ok());
         } else {
             panic!("Expected Run command");
@@ -308,6 +403,7 @@ mod tests {
         let args = Args {
             command: Some(Command::Run {
                 task: "test task".to_string(),
+                resume: None,
             }),
             model: Some("claude-3-opus".to_string()),
             mcp: vec![],
@@ -315,8 +411,8 @@ mod tests {
             skip_docs_check: false,
         };
 
-        if let Some(Command::Run { task }) = &args.command {
-            let result = execute_run(task, &args).await;
+        if let Some(Command::Run { task, resume: None }) = &args.command {
+            let result = execute_run(task, None, &args).await;
             assert!(result.is_ok());
         } else {
             panic!("Expected Run command");
@@ -328,6 +424,7 @@ mod tests {
         let args = Args {
             command: Some(Command::Run {
                 task: "".to_string(),
+                resume: None,
             }),
             model: None,
             mcp: vec![],
@@ -335,8 +432,8 @@ mod tests {
             skip_docs_check: false,
         };
 
-        if let Some(Command::Run { task }) = &args.command {
-            let result = execute_run(task, &args).await;
+        if let Some(Command::Run { task, resume: None }) = &args.command {
+            let result = execute_run(task, None, &args).await;
             assert!(result.is_ok());
         } else {
             panic!("Expected Run command");
@@ -349,6 +446,7 @@ mod tests {
         let args = Args {
             command: Some(Command::Run {
                 task: long_task.clone(),
+                resume: None,
             }),
             model: None,
             mcp: vec![],
@@ -356,8 +454,8 @@ mod tests {
             skip_docs_check: false,
         };
 
-        if let Some(Command::Run { task }) = &args.command {
-            let result = execute_run(task, &args).await;
+        if let Some(Command::Run { task, resume: None }) = &args.command {
+            let result = execute_run(task, None, &args).await;
             assert!(result.is_ok());
         } else {
             panic!("Expected Run command");
@@ -369,6 +467,7 @@ mod tests {
         let args = Args {
             command: Some(Command::Run {
                 task: "test".to_string(),
+                resume: None,
             }),
             model: None,
             mcp: vec!["server1".to_string(), "server2".to_string()],
@@ -376,8 +475,8 @@ mod tests {
             skip_docs_check: false,
         };
 
-        if let Some(Command::Run { task }) = &args.command {
-            let result = execute_run(task, &args).await;
+        if let Some(Command::Run { task, resume: None }) = &args.command {
+            let result = execute_run(task, None, &args).await;
             assert!(result.is_ok());
         } else {
             panic!("Expected Run command");
@@ -389,6 +488,7 @@ mod tests {
         let args = Args {
             command: Some(Command::Run {
                 task: "test".to_string(),
+                resume: None,
             }),
             model: None,
             mcp: vec![],
@@ -396,8 +496,8 @@ mod tests {
             skip_docs_check: false,
         };
 
-        if let Some(Command::Run { task }) = &args.command {
-            let result = execute_run(task, &args).await;
+        if let Some(Command::Run { task, resume: None }) = &args.command {
+            let result = execute_run(task, None, &args).await;
             assert!(result.is_ok());
         } else {
             panic!("Expected Run command");
@@ -409,6 +509,7 @@ mod tests {
         let args = Args {
             command: Some(Command::Run {
                 task: "Fix \"bug\" #123 @user".to_string(),
+                resume: None,
             }),
             model: None,
             mcp: vec![],
@@ -416,8 +517,8 @@ mod tests {
             skip_docs_check: false,
         };
 
-        if let Some(Command::Run { task }) = &args.command {
-            let result = execute_run(task, &args).await;
+        if let Some(Command::Run { task, resume: None }) = &args.command {
+            let result = execute_run(task, None, &args).await;
             assert!(result.is_ok());
         } else {
             panic!("Expected Run command");
@@ -429,6 +530,7 @@ mod tests {
         let args = Args {
             command: Some(Command::Run {
                 task: "你好世界 🎉".to_string(),
+                resume: None,
             }),
             model: None,
             mcp: vec![],
@@ -436,8 +538,8 @@ mod tests {
             skip_docs_check: false,
         };
 
-        if let Some(Command::Run { task }) = &args.command {
-            let result = execute_run(task, &args).await;
+        if let Some(Command::Run { task, resume: None }) = &args.command {
+            let result = execute_run(task, None, &args).await;
             assert!(result.is_ok());
         } else {
             panic!("Expected Run command");
@@ -453,6 +555,7 @@ mod tests {
         let args = Args {
             command: Some(Command::Run {
                 task: "test".to_string(),
+                resume: None,
             }),
             model: None,
             mcp: vec![],
@@ -501,9 +604,10 @@ mod tests {
     fn test_command_run_clone() {
         let cmd = Command::Run {
             task: "test".to_string(),
+            resume: None,
         };
         let cloned = cmd.clone();
-        if let Command::Run { task } = cloned {
+        if let Command::Run { task, resume: None } = cloned {
             assert_eq!(task, "test");
         } else {
             panic!("Expected Run command");
@@ -588,6 +692,7 @@ mod tests {
         let args = Args {
             command: Some(Command::Run {
                 task: "test".to_string(),
+                resume: None,
             }),
             model: None,
             mcp: vec![
@@ -599,8 +704,8 @@ mod tests {
             skip_docs_check: false,
         };
 
-        if let Some(Command::Run { task }) = &args.command {
-            let result = execute_run(task, &args).await;
+        if let Some(Command::Run { task, resume: None }) = &args.command {
+            let result = execute_run(task, None, &args).await;
             assert!(result.is_ok());
         } else {
             panic!("Expected Run command");
@@ -612,6 +717,7 @@ mod tests {
         let args = Args {
             command: Some(Command::Run {
                 task: "complex task".to_string(),
+                resume: None,
             }),
             model: Some("claude-3-opus".to_string()),
             mcp: vec!["mcp-server".to_string()],
@@ -619,8 +725,8 @@ mod tests {
             skip_docs_check: false,
         };
 
-        if let Some(Command::Run { task }) = &args.command {
-            let result = execute_run(task, &args).await;
+        if let Some(Command::Run { task, resume: None }) = &args.command {
+            let result = execute_run(task, None, &args).await;
             assert!(result.is_ok());
         } else {
             panic!("Expected Run command");

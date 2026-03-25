@@ -29,7 +29,7 @@ fn test_run_command() {
     let args = Args::try_parse_from(["zcode", "run", "fix the bug"]);
     assert!(args.is_ok());
     let args = args.unwrap();
-    if let Some(Command::Run { task }) = args.command {
+    if let Some(Command::Run { task, .. }) = args.command {
         assert_eq!(task, "fix the bug");
     } else {
         panic!("Expected Run command");
@@ -98,7 +98,7 @@ fn test_combined_flags_and_command() {
     let args = args.unwrap();
     assert!(args.verbose);
     assert_eq!(args.model, Some("gpt-4".to_string()));
-    if let Some(Command::Run { task }) = args.command {
+    if let Some(Command::Run { task, .. }) = args.command {
         assert_eq!(task, "test task");
     } else {
         panic!("Expected Run command");

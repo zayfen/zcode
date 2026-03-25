@@ -66,7 +66,14 @@ pub struct Skill {
 pub struct SkillsLoader;
 
 impl SkillsLoader {
-    /// Load all `*.md` skill files from `<project_root>/docs/skills/`.
+    /// Load all skills from `<project_root>/docs/skills/`.
+    ///
+    /// Each skill must live in its own subdirectory containing a `SKILL.md` file:
+    /// ```text
+    /// docs/skills/
+    /// └── rust-conventions/
+    ///     └── SKILL.md         ← loaded
+    /// ```
     ///
     /// Returns an empty vec if the directory does not exist.
     pub fn load(project_root: &Path) -> Vec<Skill> {
@@ -79,13 +86,15 @@ impl SkillsLoader {
             .into_iter()
             .flatten()
             .flatten()
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .map(|ext| ext == "md")
-                    .unwrap_or(false)
+            .filter(|e| e.path().is_dir())
+            .filter_map(|entry| {
+                let skill_file = entry.path().join("SKILL.md");
+                if skill_file.exists() {
+                    Self::parse_skill_file(&skill_file)
+                } else {
+                    None
+                }
             })
-            .filter_map(|entry| Self::parse_skill_file(&entry.path()))
             .collect();
 
         // Sort: High first, then Medium, then Low.
@@ -193,14 +202,17 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
-    fn make_skill_dir(root: &Path) -> std::path::PathBuf {
+    fn make_skills_dir(root: &Path) -> std::path::PathBuf {
         let dir = root.join("docs").join("skills");
         fs::create_dir_all(&dir).unwrap();
         dir
     }
 
-    fn write_skill(dir: &Path, filename: &str, content: &str) {
-        fs::write(dir.join(filename), content).unwrap();
+    /// Create a skill subdirectory with a SKILL.md file.
+    fn write_skill(skills_dir: &Path, skill_name: &str, content: &str) {
+        let skill_dir = skills_dir.join(skill_name);
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), content).unwrap();
     }
 
     #[test]
@@ -213,7 +225,7 @@ mod tests {
     #[test]
     fn test_load_empty_skills_dir_returns_empty() {
         let dir = TempDir::new().unwrap();
-        make_skill_dir(dir.path());
+        make_skills_dir(dir.path());
         let skills = SkillsLoader::load(dir.path());
         assert!(skills.is_empty());
     }
@@ -221,10 +233,10 @@ mod tests {
     #[test]
     fn test_load_single_skill_with_frontmatter() {
         let dir = TempDir::new().unwrap();
-        let skills_dir = make_skill_dir(dir.path());
+        let skills_dir = make_skills_dir(dir.path());
         write_skill(
             &skills_dir,
-            "rust-errors.md",
+            "rust-errors",
             "---\nname: rust-error-handling\ndescription: Error rules\npriority: high\n---\n\nAlways use ZcodeError.\n",
         );
 
@@ -237,25 +249,38 @@ mod tests {
     }
 
     #[test]
-    fn test_load_skill_without_frontmatter_uses_filename() {
+    fn test_load_skill_without_frontmatter_uses_dirname() {
         let dir = TempDir::new().unwrap();
-        let skills_dir = make_skill_dir(dir.path());
-        write_skill(&skills_dir, "my-skill.md", "# My Skill\n\nSome content.\n");
+        let skills_dir = make_skills_dir(dir.path());
+        // No frontmatter — name falls back to the SKILL.md stem ("SKILL")
+        write_skill(&skills_dir, "my-skill", "# My Skill\n\nSome content.\n");
 
         let skills = SkillsLoader::load(dir.path());
         assert_eq!(skills.len(), 1);
-        assert_eq!(skills[0].name, "my-skill");
         assert_eq!(skills[0].priority, SkillPriority::Medium);
+    }
+
+    #[test]
+    fn test_skill_dir_without_skill_md_is_ignored() {
+        let dir = TempDir::new().unwrap();
+        let skills_dir = make_skills_dir(dir.path());
+        // Subdirectory without SKILL.md should be silently ignored.
+        let orphan = skills_dir.join("no-skill-md");
+        fs::create_dir_all(&orphan).unwrap();
+        fs::write(orphan.join("README.md"), "Not a skill.").unwrap();
+
+        let skills = SkillsLoader::load(dir.path());
+        assert!(skills.is_empty());
     }
 
     #[test]
     fn test_skills_sorted_by_priority() {
         let dir = TempDir::new().unwrap();
-        let skills_dir = make_skill_dir(dir.path());
+        let skills_dir = make_skills_dir(dir.path());
 
-        write_skill(&skills_dir, "low.md", "---\nname: low\npriority: low\n---\nLow skill");
-        write_skill(&skills_dir, "high.md", "---\nname: high\npriority: high\n---\nHigh skill");
-        write_skill(&skills_dir, "mid.md", "---\nname: mid\npriority: medium\n---\nMid skill");
+        write_skill(&skills_dir, "low", "---\nname: low\npriority: low\n---\nLow skill");
+        write_skill(&skills_dir, "high", "---\nname: high\npriority: high\n---\nHigh skill");
+        write_skill(&skills_dir, "mid", "---\nname: mid\npriority: medium\n---\nMid skill");
 
         let skills = SkillsLoader::load(dir.path());
         assert_eq!(skills.len(), 3);
@@ -288,11 +313,12 @@ mod tests {
     }
 
     #[test]
-    fn test_non_md_files_are_ignored() {
+    fn test_flat_md_files_in_skills_dir_are_ignored() {
+        // Flat .md files placed directly in docs/skills/ (not in a subdirectory)
+        // should be ignored — only SKILL.md inside subdirs counts.
         let dir = TempDir::new().unwrap();
-        let skills_dir = make_skill_dir(dir.path());
-        write_skill(&skills_dir, "notes.txt", "This is not a skill.");
-        write_skill(&skills_dir, "data.json", r#"{"key": "value"}"#);
+        let skills_dir = make_skills_dir(dir.path());
+        fs::write(skills_dir.join("stray.md"), "# Stray file").unwrap();
 
         let skills = SkillsLoader::load(dir.path());
         assert!(skills.is_empty());

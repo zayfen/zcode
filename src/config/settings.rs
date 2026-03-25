@@ -62,7 +62,9 @@ fn default_provider() -> String {
 }
 
 fn default_model() -> String {
-    "claude-3-5-sonnet-20241022".to_string()
+    // Allow BigModel/proxy envvar overrides for model selection
+    std::env::var("ANTHROPIC_DEFAULT_SONNET_MODEL")
+        .unwrap_or_else(|_| "claude-3-5-sonnet-20241022".to_string())
 }
 
 fn default_temperature() -> f32 {

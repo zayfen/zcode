@@ -36,20 +36,31 @@ impl RigProvider {
         &self.config
     }
 
-    /// Get the API key from config or environment
+    /// Get the API key from config or environment.
+    ///
+    /// Priority for Anthropic provider:
+    /// 1. `config.api_key` (explicit override)
+    /// 2. `ANTHROPIC_AUTH_TOKEN` env var (BigModel / proxy compatible)
+    /// 3. `ANTHROPIC_API_KEY` env var (standard Anthropic)
     fn get_api_key(&self) -> Result<String> {
         if let Some(ref key) = self.config.api_key {
             return Ok(key.clone());
         }
 
-        // Try environment variable based on provider
-        let env_var = match self.config.provider.as_str() {
-            "anthropic" => "ANTHROPIC_API_KEY",
-            "openai" => "OPENAI_API_KEY",
-            _ => "API_KEY",
-        };
-
-        std::env::var(env_var).map_err(|_| ZcodeError::MissingApiKey(self.config.provider.clone()))
+        match self.config.provider.as_str() {
+            "anthropic" => {
+                // Try ANTHROPIC_AUTH_TOKEN first (used by BigModel / Claude proxies)
+                if let Ok(key) = std::env::var("ANTHROPIC_AUTH_TOKEN") {
+                    return Ok(key);
+                }
+                std::env::var("ANTHROPIC_API_KEY")
+                    .map_err(|_| ZcodeError::MissingApiKey(self.config.provider.clone()))
+            }
+            "openai" => std::env::var("OPENAI_API_KEY")
+                .map_err(|_| ZcodeError::MissingApiKey(self.config.provider.clone())),
+            _ => std::env::var("API_KEY")
+                .map_err(|_| ZcodeError::MissingApiKey(self.config.provider.clone())),
+        }
     }
 }
 
@@ -133,13 +144,18 @@ impl RigProvider {
 
         let api_key = api_key.to_string();
         let model = self.config.model.clone();
+        // Use ANTHROPIC_BASE_URL as the full endpoint if set (proxies like BigModel
+        // include the complete path in the base URL).
+        let endpoint = std::env::var("ANTHROPIC_BASE_URL")
+            .unwrap_or_else(|_| "https://api.anthropic.com/v1/messages".to_string());
 
-        // Run async reqwest: if inside a tokio runtime use block_in_place,
-        // otherwise create a one-shot Runtime to avoid panic.
         let (status, response_body) = run_http(async move {
-            let client = reqwest::Client::new();
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(120)) // 2-min hard limit
+                .build()
+                .map_err(|e| ZcodeError::LlmApiError(format!("Failed to build HTTP client: {}", e)))?;
             let resp = client
-                .post("https://api.anthropic.com/v1/messages")
+                .post(&endpoint)
                 .header("x-api-key", &api_key)
                 .header("anthropic-version", "2023-06-01")
                 .header("content-type", "application/json")

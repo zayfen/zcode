@@ -44,6 +44,11 @@ pub mod workspace;
 pub mod docs;
 pub mod task_store;
 pub mod skills;
+pub mod verification;
+pub mod execution;
+pub mod delivery;
+pub mod cognition;
+pub mod pipeline;
 
 // Re-exports for convenience
 pub use error::{ZcodeError, Result};
@@ -61,6 +66,43 @@ pub use git::{GitDiff, DiffContext};
 pub use agent::{ReviewerAgent, ReviewResult};
 pub use workspace::{Workspace, WorkspaceContext, WorkspaceInfo};
 pub use config::{LspServerConfig, GrammarConfig, ScriptConfig, SnapshotConfig, HookConfig};
+pub use verification::{
+    VerificationPipeline, VerificationContext, VerificationPolicy, VerificationScore,
+    VerificationFeedback, VerificationIssue, VerificationResult, IssueSeverity, Verifier,
+    TestVerifier, LintVerifier, ReviewerVerifier,
+};
+pub use execution::{
+    TaskGraph, TaskNode, TaskId, TaskNodeStatus,
+    ExecutionBudget, BudgetTracker, BudgetReport,
+    CheckpointPolicy, CheckpointMode, HighRiskPattern,
+    PlanVerifier, PlanVerificationResult, PlanIssue,
+};
+pub use delivery::{
+    DeliveryPipeline, DeliveryConfig, DeliveryResult, DeliveryContext,
+    GitPlatform, CiConfig, CiPlatform, GateCheck, GateCheckType,
+    ChangelogGenerator, TaskRecord, ChangeEntry, ChangeCategory,
+    PullRequestCreator, PrOptions, PrResult,
+    CiMonitor, CiStatus,
+    GateChecker, GateResult,
+};
+pub use cognition::{
+    CognitionEngine, CognitionEngineImpl, IndexMode, IndexStats,
+    EmbeddingModel, MockEmbedding,
+    CodeChunker, CodeBlock, BlockKind,
+    VectorIndex, SearchResult as CognitionSearchResult,
+    CognitionStorage,
+    SessionMemory, DecisionRecord, LearnedPattern, MemoryRecall, MemoryType,
+    KnowledgeSource, KnowledgeQuery, KnowledgeFragment, KnowledgeKind, KnowledgeContext,
+    cosine_similarity, vec_to_blob, blob_to_vec,
+};
+pub use pipeline::{
+    Pipeline, PipelineConfig, PipelineContext, PipelineState,
+    PipelineResult, PipelineMetrics, PipelinePhase,
+    PhaseResult, PhaseStatus, PhaseMetrics, TokenUsage,
+    PipelineHooks, HookConfig as PipelineHookConfig, HookAction,
+    CognitionPhase, PlanningPhase, ExecutionPhase,
+    VerificationPhase, DeliveryPhase,
+};
 
 
 #[cfg(test)]

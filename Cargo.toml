@@ -20,6 +20,9 @@ serde_json = "1.0"
 # Schema generation
 schemars = "0.8"
 
+# Date/time
+chrono = "0.4"
+
 # Error handling
 anyhow = "1.0"
 thiserror = "1.0"
@@ -83,3 +86,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "zcode"
 path = "src/main.rs"
+
+[[example]]
+name = "pipeline_demo"
+path = "examples/pipeline_demo.rs"

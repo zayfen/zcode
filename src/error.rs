@@ -58,6 +58,23 @@ pub enum ZcodeError {
 
     #[error("Operation cancelled by user")]
     Cancelled,
+
+    /// Cognition engine errors
+    #[error("Embedding error: {0}")]
+    EmbeddingError(String),
+
+    #[error("Index error: {0}")]
+    IndexError(String),
+
+    #[error("Knowledge error: {0}")]
+    KnowledgeError(String),
+}
+
+// Implement conversion from rusqlite errors
+impl From<rusqlite::Error> for ZcodeError {
+    fn from(err: rusqlite::Error) -> Self {
+        ZcodeError::InternalError(format!("SQLite error: {}", err))
+    }
 }
 
 /// Result type alias for zcode operations

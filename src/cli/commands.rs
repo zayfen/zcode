@@ -30,7 +30,7 @@ pub async fn execute_command(command: &Command, args: &crate::cli::args::Args) -
     }
 
     match command {
-        Command::Run { task, resume } => execute_run(task, resume.as_deref(), args).await,
+        Command::Run { task, resume, max_iterations } => execute_run(task, resume.as_deref(), *max_iterations, args).await,
         Command::Chat => execute_chat(args).await,
         Command::Docs { action } => execute_docs(action),
         Command::Task { action } => execute_task(action),
@@ -160,7 +160,7 @@ fn execute_task(action: &TaskAction) -> Result<()> {
 }
 
 /// Run a single task in non-interactive mode using AgentLoop + LLM
-async fn execute_run(task: &str, resume_id: Option<&str>, args: &crate::cli::args::Args) -> Result<()> {
+async fn execute_run(task: &str, resume_id: Option<&str>, max_iterations: usize, args: &crate::cli::args::Args) -> Result<()> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
     // ── Task Store ────────────────────────────────────────────────────
@@ -213,7 +213,7 @@ async fn execute_run(task: &str, resume_id: Option<&str>, args: &crate::cli::arg
         llm_config.model
     );
     let system_prompt = SkillsLoader::build_system_prompt(&base_prompt, &skills);
-    let loop_config = LoopConfig { max_iterations: 20, system_prompt };
+    let loop_config = LoopConfig { max_iterations, system_prompt };
     let agent_loop = AgentLoop::new(loop_config, Arc::clone(&registry));
 
     println!("🤖 zcode agent starting...");
@@ -389,6 +389,7 @@ mod tests {
             command: Some(Command::Run {
                 task: "test task".to_string(),
                 resume: None,
+                max_iterations: 50,
             }),
             model: None,
             mcp: vec![],
@@ -396,8 +397,8 @@ mod tests {
             skip_docs_check: false,
         };
 
-        if let Some(Command::Run { task, resume: None }) = &args.command {
-            let result = execute_run(task, None, &args).await;
+        if let Some(Command::Run { task, resume: None, .. }) = &args.command {
+            let result = execute_run(task, None, 50, &args).await;
             assert!(result.is_ok());
         } else {
             panic!("Expected Run command");
@@ -410,6 +411,7 @@ mod tests {
             command: Some(Command::Run {
                 task: "test task".to_string(),
                 resume: None,
+                max_iterations: 50,
             }),
             model: Some("claude-3-opus".to_string()),
             mcp: vec![],
@@ -417,8 +419,8 @@ mod tests {
             skip_docs_check: false,
         };
 
-        if let Some(Command::Run { task, resume: None }) = &args.command {
-            let result = execute_run(task, None, &args).await;
+        if let Some(Command::Run { task, resume: None, .. }) = &args.command {
+            let result = execute_run(task, None, 50, &args).await;
             assert!(result.is_ok());
         } else {
             panic!("Expected Run command");
@@ -431,6 +433,7 @@ mod tests {
             command: Some(Command::Run {
                 task: "".to_string(),
                 resume: None,
+                max_iterations: 50,
             }),
             model: None,
             mcp: vec![],
@@ -438,8 +441,8 @@ mod tests {
             skip_docs_check: false,
         };
 
-        if let Some(Command::Run { task, resume: None }) = &args.command {
-            let result = execute_run(task, None, &args).await;
+        if let Some(Command::Run { task, resume: None, .. }) = &args.command {
+            let result = execute_run(task, None, 50, &args).await;
             assert!(result.is_ok());
         } else {
             panic!("Expected Run command");
@@ -453,6 +456,7 @@ mod tests {
             command: Some(Command::Run {
                 task: long_task.clone(),
                 resume: None,
+                max_iterations: 50,
             }),
             model: None,
             mcp: vec![],
@@ -460,8 +464,8 @@ mod tests {
             skip_docs_check: false,
         };
 
-        if let Some(Command::Run { task, resume: None }) = &args.command {
-            let result = execute_run(task, None, &args).await;
+        if let Some(Command::Run { task, resume: None, .. }) = &args.command {
+            let result = execute_run(task, None, 50, &args).await;
             assert!(result.is_ok());
         } else {
             panic!("Expected Run command");
@@ -474,6 +478,7 @@ mod tests {
             command: Some(Command::Run {
                 task: "test".to_string(),
                 resume: None,
+                max_iterations: 50,
             }),
             model: None,
             mcp: vec!["server1".to_string(), "server2".to_string()],
@@ -481,8 +486,8 @@ mod tests {
             skip_docs_check: false,
         };
 
-        if let Some(Command::Run { task, resume: None }) = &args.command {
-            let result = execute_run(task, None, &args).await;
+        if let Some(Command::Run { task, resume: None, .. }) = &args.command {
+            let result = execute_run(task, None, 50, &args).await;
             assert!(result.is_ok());
         } else {
             panic!("Expected Run command");
@@ -495,6 +500,7 @@ mod tests {
             command: Some(Command::Run {
                 task: "test".to_string(),
                 resume: None,
+                max_iterations: 50,
             }),
             model: None,
             mcp: vec![],
@@ -502,8 +508,8 @@ mod tests {
             skip_docs_check: false,
         };
 
-        if let Some(Command::Run { task, resume: None }) = &args.command {
-            let result = execute_run(task, None, &args).await;
+        if let Some(Command::Run { task, resume: None, .. }) = &args.command {
+            let result = execute_run(task, None, 50, &args).await;
             assert!(result.is_ok());
         } else {
             panic!("Expected Run command");
@@ -516,6 +522,7 @@ mod tests {
             command: Some(Command::Run {
                 task: "Fix \"bug\" #123 @user".to_string(),
                 resume: None,
+                max_iterations: 50,
             }),
             model: None,
             mcp: vec![],
@@ -523,8 +530,8 @@ mod tests {
             skip_docs_check: false,
         };
 
-        if let Some(Command::Run { task, resume: None }) = &args.command {
-            let result = execute_run(task, None, &args).await;
+        if let Some(Command::Run { task, resume: None, .. }) = &args.command {
+            let result = execute_run(task, None, 50, &args).await;
             assert!(result.is_ok());
         } else {
             panic!("Expected Run command");
@@ -537,6 +544,7 @@ mod tests {
             command: Some(Command::Run {
                 task: "你好世界 🎉".to_string(),
                 resume: None,
+                max_iterations: 50,
             }),
             model: None,
             mcp: vec![],
@@ -544,8 +552,8 @@ mod tests {
             skip_docs_check: false,
         };
 
-        if let Some(Command::Run { task, resume: None }) = &args.command {
-            let result = execute_run(task, None, &args).await;
+        if let Some(Command::Run { task, resume: None, .. }) = &args.command {
+            let result = execute_run(task, None, 50, &args).await;
             assert!(result.is_ok());
         } else {
             panic!("Expected Run command");
@@ -562,6 +570,7 @@ mod tests {
             command: Some(Command::Run {
                 task: "test".to_string(),
                 resume: None,
+                max_iterations: 50,
             }),
             model: None,
             mcp: vec![],
@@ -611,9 +620,10 @@ mod tests {
         let cmd = Command::Run {
             task: "test".to_string(),
             resume: None,
+            max_iterations: 50,
         };
         let cloned = cmd.clone();
-        if let Command::Run { task, resume: None } = cloned {
+        if let Command::Run { task, resume: None, .. } = cloned {
             assert_eq!(task, "test");
         } else {
             panic!("Expected Run command");
@@ -699,6 +709,7 @@ mod tests {
             command: Some(Command::Run {
                 task: "test".to_string(),
                 resume: None,
+                max_iterations: 50,
             }),
             model: None,
             mcp: vec![
@@ -710,8 +721,8 @@ mod tests {
             skip_docs_check: false,
         };
 
-        if let Some(Command::Run { task, resume: None }) = &args.command {
-            let result = execute_run(task, None, &args).await;
+        if let Some(Command::Run { task, resume: None, .. }) = &args.command {
+            let result = execute_run(task, None, 50, &args).await;
             assert!(result.is_ok());
         } else {
             panic!("Expected Run command");
@@ -724,6 +735,7 @@ mod tests {
             command: Some(Command::Run {
                 task: "complex task".to_string(),
                 resume: None,
+                max_iterations: 50,
             }),
             model: Some("claude-3-opus".to_string()),
             mcp: vec!["mcp-server".to_string()],
@@ -731,8 +743,8 @@ mod tests {
             skip_docs_check: false,
         };
 
-        if let Some(Command::Run { task, resume: None }) = &args.command {
-            let result = execute_run(task, None, &args).await;
+        if let Some(Command::Run { task, resume: None, .. }) = &args.command {
+            let result = execute_run(task, None, 50, &args).await;
             assert!(result.is_ok());
         } else {
             panic!("Expected Run command");

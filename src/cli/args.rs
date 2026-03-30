@@ -40,6 +40,9 @@ pub enum Command {
         /// Resume a previously interrupted task by its ID
         #[arg(long, value_name = "TASK_ID")]
         resume: Option<String>,
+        /// Maximum number of LLM ↔ tool iterations (default: 50)
+        #[arg(long, short = 'n', default_value = "50")]
+        max_iterations: usize,
     },
 
     /// Start interactive chat mode (default)

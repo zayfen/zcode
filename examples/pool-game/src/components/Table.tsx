@@ -1,362 +1,182 @@
-import { useMemo } from 'react';
-import * as THREE from 'three';
+import { useRef, useMemo } from 'react'
+import * as THREE from 'three'
 import {
   TABLE_LENGTH,
   TABLE_WIDTH,
   RAIL_HEIGHT,
-  RAIL_WIDTH,
-  HALF_LENGTH,
-  HALF_WIDTH,
-  POCKET_POSITIONS,
+  RAIL_THICKNESS,
+  FELT_THICKNESS,
   POCKET_RADIUS,
-  CUSHION_THICKNESS,
   CUSHION_HEIGHT,
-  FLOOR_Y,
-} from '../constants/table';
-import { generateFeltTexture, generateWoodTexture } from '../utils/textures';
+  CUSHION_THICKNESS,
+  POCKET_POSITIONS,
+} from '../constants/table'
+import { generateFeltTexture, generateWoodTexture } from '../utils/textures'
 
-/**
- * Standard diamond sight positions on a pool table:
- * - Each long rail has 7 diamonds (3 per half + center)
- * - Each short rail has 3 diamonds
- * - Evenly spaced along the playing surface edge
- */
-
-/** Diamond sight marker component */
-function DiamondSight({
-  position,
-  rotation,
-}: {
-  position: [number, number, number];
-  rotation?: [number, number, number];
-}) {
-  // Small diamond shape (~8mm tall) on the rail top surface
-  const d = 0.008; // diamond half-size
-  return (
-    <mesh position={position} rotation={rotation} renderOrder={1}>
-      {/* Use a small rotated plane with diamond-shaped geometry approximated by a box */}
-      <boxGeometry args={[d * 2, 0.002, d * 2]} />
-      <meshStandardMaterial
-        color="#c4a265"
-        roughness={0.4}
-        metalness={0.2}
-      />
-    </mesh>
-  );
-}
-
+/** The table: felt bed, wooden rails, cushions, and pockets */
 export default function Table() {
-  const feltTexture = useMemo(() => {
-    const canvas = generateFeltTexture();
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(4, 8);
-    return tex;
-  }, []);
+  const feltTexture = useMemo(() => generateFeltTexture(), [])
+  const woodTexture = useMemo(() => generateWoodTexture(), [])
 
-  const woodTexture = useMemo(() => {
-    const canvas = generateWoodTexture();
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    return tex;
-  }, []);
+  const halfL = TABLE_LENGTH / 2
+  const halfW = TABLE_WIDTH / 2
 
-  // Long rail half-length (between side-pocket gap and corner-pocket gap)
-  const longSegmentLength = HALF_LENGTH - RAIL_WIDTH * 1.2;
-  // Short rail full length
-  const shortRailLength = TABLE_WIDTH;
-
-  // ── Diamond sight positions ──
-  // Long rails: 7 diamonds evenly spaced along the Z-axis playing surface
-  // Short rails: 3 diamonds evenly spaced along the X-axis playing surface
-  const diamondY = RAIL_HEIGHT + 0.001; // sit on top of rail
-  const longRailInset = RAIL_WIDTH * 0.35; // how far into the rail from edge
-
-  // Long rail diamond Z positions (7 marks: divide playing length into 8 segments)
-  const longDiamondZs = useMemo(() => {
-    const positions: number[] = [];
-    const segCount = 8;
-    for (let i = 1; i < segCount; i++) {
-      positions.push(-HALF_LENGTH + (TABLE_LENGTH / segCount) * i);
-    }
-    return positions;
-  }, []);
-
-  // Short rail diamond X positions (3 marks: divide playing width into 4 segments)
-  const shortDiamondXs = useMemo(() => {
-    const positions: number[] = [];
-    const segCount = 4;
-    for (let i = 1; i < segCount; i++) {
-      positions.push(-HALF_WIDTH + (TABLE_WIDTH / segCount) * i);
-    }
-    return positions;
-  }, []);
+  // Outer rail positions (the wooden frame)
+  const railY = RAIL_HEIGHT / 2 + FELT_THICKNESS
 
   return (
     <group>
-      {/* ── Table Bed (green felt surface) ── */}
-      <mesh position={[0, -0.005, 0]} receiveShadow>
-        <boxGeometry args={[TABLE_WIDTH, 0.01, TABLE_LENGTH]} />
-        <meshStandardMaterial color="#0d6b2e" map={feltTexture} roughness={0.9} />
+      {/* ===== FELT BED ===== */}
+      <mesh position={[0, 0, 0]} receiveShadow>
+        <boxGeometry args={[TABLE_LENGTH + RAIL_THICKNESS * 2, FELT_THICKNESS, TABLE_WIDTH + RAIL_THICKNESS * 2]} />
+        <meshStandardMaterial color={0x0d6b2e} />
       </mesh>
 
-      {/* ── Wooden frame beneath bed ── */}
-      <mesh position={[0, -0.025, 0]} receiveShadow>
-        <boxGeometry
-          args={[
-            TABLE_WIDTH + RAIL_WIDTH * 2,
-            0.03,
-            TABLE_LENGTH + RAIL_WIDTH * 2,
-          ]}
-        />
-        <meshStandardMaterial color="#3b1f0b" map={woodTexture} roughness={0.7} />
+      {/* Playing surface (slightly above felt) */}
+      <mesh position={[0, FELT_THICKNESS / 2 + 0.001, 0]} receiveShadow>
+        <boxGeometry args={[TABLE_LENGTH, 0.001, TABLE_WIDTH]} />
+        <meshStandardMaterial map={feltTexture} color={0x0d6b2e} />
       </mesh>
 
-      {/* ── Wooden Rails ── */}
+      {/* ===== WOODEN RAILS ===== */}
+      {/* Long sides (2) */}
+      <mesh position={[0, railY, -(halfW + RAIL_THICKNESS / 2)]} castShadow receiveShadow>
+        <boxGeometry args={[TABLE_LENGTH + RAIL_THICKNESS * 2, RAIL_HEIGHT, RAIL_THICKNESS]} />
+        <meshStandardMaterial map={woodTexture} color={0x5c3a1e} />
+      </mesh>
+      <mesh position={[0, railY, halfW + RAIL_THICKNESS / 2]} castShadow receiveShadow>
+        <boxGeometry args={[TABLE_LENGTH + RAIL_THICKNESS * 2, RAIL_HEIGHT, RAIL_THICKNESS]} />
+        <meshStandardMaterial map={woodTexture} color={0x5c3a1e} />
+      </mesh>
+      {/* Short sides (2) */}
+      <mesh position={[-(halfL + RAIL_THICKNESS / 2), railY, 0]} castShadow receiveShadow>
+        <boxGeometry args={[RAIL_THICKNESS, RAIL_HEIGHT, TABLE_WIDTH + RAIL_THICKNESS * 2]} />
+        <meshStandardMaterial map={woodTexture} color={0x5c3a1e} />
+      </mesh>
+      <mesh position={[halfL + RAIL_THICKNESS / 2, railY, 0]} castShadow receiveShadow>
+        <boxGeometry args={[RAIL_THICKNESS, RAIL_HEIGHT, TABLE_WIDTH + RAIL_THICKNESS * 2]} />
+        <meshStandardMaterial map={woodTexture} color={0x5c3a1e} />
+      </mesh>
 
-      {/* Left rail – two segments (gap at middle for side pocket) */}
-      <RailSegment
-        position={[
-          -HALF_WIDTH - RAIL_WIDTH / 2,
-          RAIL_HEIGHT / 2,
-          -HALF_LENGTH / 2 - RAIL_WIDTH / 4,
-        ]}
-        size={[RAIL_WIDTH, RAIL_HEIGHT, longSegmentLength]}
-        texture={woodTexture}
+      {/* ===== CUSHIONS (green rubber) ===== */}
+      {/* Top side cushions (split by center pocket) */}
+      <Cushion
+        position={[halfL / 2, CUSHION_HEIGHT / 2 + FELT_THICKNESS, -(halfW - CUSHION_THICKNESS / 2)]}
+        size={[halfL * 0.85, CUSHION_HEIGHT, CUSHION_THICKNESS]}
       />
-      <RailSegment
-        position={[
-          -HALF_WIDTH - RAIL_WIDTH / 2,
-          RAIL_HEIGHT / 2,
-          HALF_LENGTH / 2 + RAIL_WIDTH / 4,
-        ]}
-        size={[RAIL_WIDTH, RAIL_HEIGHT, longSegmentLength]}
-        texture={woodTexture}
+      <Cushion
+        position={[-halfL / 2, CUSHION_HEIGHT / 2 + FELT_THICKNESS, -(halfW - CUSHION_THICKNESS / 2)]}
+        size={[halfL * 0.85, CUSHION_HEIGHT, CUSHION_THICKNESS]}
       />
-
-      {/* Right rail – two segments (gap at middle for side pocket) */}
-      <RailSegment
-        position={[
-          HALF_WIDTH + RAIL_WIDTH / 2,
-          RAIL_HEIGHT / 2,
-          -HALF_LENGTH / 2 - RAIL_WIDTH / 4,
-        ]}
-        size={[RAIL_WIDTH, RAIL_HEIGHT, longSegmentLength]}
-        texture={woodTexture}
+      {/* Bottom side cushions */}
+      <Cushion
+        position={[halfL / 2, CUSHION_HEIGHT / 2 + FELT_THICKNESS, halfW - CUSHION_THICKNESS / 2]}
+        size={[halfL * 0.85, CUSHION_HEIGHT, CUSHION_THICKNESS]}
       />
-      <RailSegment
-        position={[
-          HALF_WIDTH + RAIL_WIDTH / 2,
-          RAIL_HEIGHT / 2,
-          HALF_LENGTH / 2 + RAIL_WIDTH / 4,
-        ]}
-        size={[RAIL_WIDTH, RAIL_HEIGHT, longSegmentLength]}
-        texture={woodTexture}
+      <Cushion
+        position={[-halfL / 2, CUSHION_HEIGHT / 2 + FELT_THICKNESS, halfW - CUSHION_THICKNESS / 2]}
+        size={[halfL * 0.85, CUSHION_HEIGHT, CUSHION_THICKNESS]}
       />
-
-      {/* Head rail (near end, Z negative) */}
-      <RailSegment
-        position={[0, RAIL_HEIGHT / 2, -HALF_LENGTH - RAIL_WIDTH / 2]}
-        size={[shortRailLength, RAIL_HEIGHT, RAIL_WIDTH]}
-        texture={woodTexture}
+      {/* Left end cushion */}
+      <Cushion
+        position={[-(halfL - CUSHION_THICKNESS / 2), CUSHION_HEIGHT / 2 + FELT_THICKNESS, 0]}
+        size={[CUSHION_THICKNESS, CUSHION_HEIGHT, TABLE_WIDTH * 0.75]}
       />
-
-      {/* Foot rail (far end, Z positive) */}
-      <RailSegment
-        position={[0, RAIL_HEIGHT / 2, HALF_LENGTH + RAIL_WIDTH / 2]}
-        size={[shortRailLength, RAIL_HEIGHT, RAIL_WIDTH]}
-        texture={woodTexture}
+      {/* Right end cushion */}
+      <Cushion
+        position={[halfL - CUSHION_THICKNESS / 2, CUSHION_HEIGHT / 2 + FELT_THICKNESS, 0]}
+        size={[CUSHION_THICKNESS, CUSHION_HEIGHT, TABLE_WIDTH * 0.75]}
       />
 
-      {/* ── Diamond Sight Markers ── */}
-
-      {/* Left rail diamonds */}
-      {longDiamondZs.map((z, i) => (
-        <DiamondSight
-          key={`left-diamond-${i}`}
-          position={[-HALF_WIDTH - longRailInset, diamondY, z]}
-          rotation={[0, Math.PI / 4, 0]}
-        />
-      ))}
-
-      {/* Right rail diamonds */}
-      {longDiamondZs.map((z, i) => (
-        <DiamondSight
-          key={`right-diamond-${i}`}
-          position={[HALF_WIDTH + longRailInset, diamondY, z]}
-          rotation={[0, Math.PI / 4, 0]}
-        />
-      ))}
-
-      {/* Head rail diamonds */}
-      {shortDiamondXs.map((x, i) => (
-        <DiamondSight
-          key={`head-diamond-${i}`}
-          position={[x, diamondY, -HALF_LENGTH - RAIL_WIDTH * 0.35]}
-          rotation={[0, Math.PI / 4, 0]}
-        />
-      ))}
-
-      {/* Foot rail diamonds */}
-      {shortDiamondXs.map((x, i) => (
-        <DiamondSight
-          key={`foot-diamond-${i}`}
-          position={[x, diamondY, HALF_LENGTH + RAIL_WIDTH * 0.35]}
-          rotation={[0, Math.PI / 4, 0]}
-        />
-      ))}
-
-      {/* ── Cushions (green rubber bumpers, slightly angled inward) ── */}
-
-      {/* Head-end left cushion */}
-      <CushionSegment
-        position={[
-          -HALF_WIDTH / 2 - RAIL_WIDTH * 0.3,
-          CUSHION_HEIGHT / 2,
-          -HALF_LENGTH + CUSHION_THICKNESS / 2 + 0.005,
-        ]}
-        size={[HALF_WIDTH - RAIL_WIDTH * 1.4, CUSHION_HEIGHT, CUSHION_THICKNESS]}
-      />
-
-      {/* Head-end right cushion */}
-      <CushionSegment
-        position={[
-          HALF_WIDTH / 2 + RAIL_WIDTH * 0.3,
-          CUSHION_HEIGHT / 2,
-          -HALF_LENGTH + CUSHION_THICKNESS / 2 + 0.005,
-        ]}
-        size={[HALF_WIDTH - RAIL_WIDTH * 1.4, CUSHION_HEIGHT, CUSHION_THICKNESS]}
-      />
-
-      {/* Foot-end left cushion */}
-      <CushionSegment
-        position={[
-          -HALF_WIDTH / 2 - RAIL_WIDTH * 0.3,
-          CUSHION_HEIGHT / 2,
-          HALF_LENGTH - CUSHION_THICKNESS / 2 - 0.005,
-        ]}
-        size={[HALF_WIDTH - RAIL_WIDTH * 1.4, CUSHION_HEIGHT, CUSHION_THICKNESS]}
-      />
-
-      {/* Foot-end right cushion */}
-      <CushionSegment
-        position={[
-          HALF_WIDTH / 2 + RAIL_WIDTH * 0.3,
-          CUSHION_HEIGHT / 2,
-          HALF_LENGTH - CUSHION_THICKNESS / 2 - 0.005,
-        ]}
-        size={[HALF_WIDTH - RAIL_WIDTH * 1.4, CUSHION_HEIGHT, CUSHION_THICKNESS]}
-      />
-
-      {/* Left side cushion */}
-      <CushionSegment
-        position={[
-          -HALF_WIDTH + CUSHION_THICKNESS / 2 + 0.005,
-          CUSHION_HEIGHT / 2,
-          0,
-        ]}
-        size={[
-          CUSHION_THICKNESS,
-          CUSHION_HEIGHT,
-          TABLE_LENGTH - RAIL_WIDTH * 3,
-        ]}
-      />
-
-      {/* Right side cushion */}
-      <CushionSegment
-        position={[
-          HALF_WIDTH - CUSHION_THICKNESS / 2 - 0.005,
-          CUSHION_HEIGHT / 2,
-          0,
-        ]}
-        size={[
-          CUSHION_THICKNESS,
-          CUSHION_HEIGHT,
-          TABLE_LENGTH - RAIL_WIDTH * 3,
-        ]}
-      />
-
-      {/* ── Pockets (6 dark circles) ── */}
+      {/* ===== POCKETS ===== */}
       {POCKET_POSITIONS.map((pos, i) => (
-        <group key={i} position={[pos[0], 0.001, pos[2]]}>
-          {/* Pocket hole */}
-          <mesh rotation={[-Math.PI / 2, 0, 0]}>
-            <circleGeometry args={[POCKET_RADIUS, 32]} />
-            <meshStandardMaterial color="#050505" roughness={1} />
-          </mesh>
-          {/* Pocket rim */}
-          <mesh rotation={[-Math.PI / 2, 0, 0]}>
-            <ringGeometry args={[POCKET_RADIUS, POCKET_RADIUS + 0.006, 32]} />
-            <meshStandardMaterial color="#2a1506" roughness={0.6} />
-          </mesh>
-        </group>
+        <mesh key={i} position={[pos.x, FELT_THICKNESS / 2, pos.z]} rotation={[-Math.PI / 2, 0, 0]}>
+          <circleGeometry args={[POCKET_RADIUS, 32]} />
+          <meshStandardMaterial color={0x111111} />
+        </mesh>
       ))}
 
-      {/* ── Dark floor plane beneath table ── */}
-      <mesh
-        rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, FLOOR_Y, 0]}
-        receiveShadow
-      >
-        <planeGeometry args={[12, 14]} />
-        <meshStandardMaterial color="#0a0604" roughness={0.95} />
+      {/* ===== POCKET RIMS ===== */}
+      {POCKET_POSITIONS.map((pos, i) => (
+        <mesh key={`rim-${i}`} position={[pos.x, FELT_THICKNESS / 2 + 0.002, pos.z]} rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[POCKET_RADIUS, POCKET_RADIUS + 0.008, 32]} />
+          <meshStandardMaterial color={0x2a1a0a} />
+        </mesh>
+      ))}
+
+      {/* ===== DIAMOND MARKERS ===== */}
+      <DiamondMarkers />
+
+      {/* ===== FLOOR ===== */}
+      <mesh position={[0, -0.5, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[10, 10]} />
+        <meshStandardMaterial color={0x1a0f06} />
       </mesh>
-
-      {/* ── Table legs (4 cylindrical legs) ── */}
-      <TableLeg position={[-HALF_WIDTH - 0.01, FLOOR_Y / 2, -HALF_LENGTH - 0.01]} />
-      <TableLeg position={[HALF_WIDTH + 0.01, FLOOR_Y / 2, -HALF_LENGTH - 0.01]} />
-      <TableLeg position={[-HALF_WIDTH - 0.01, FLOOR_Y / 2, HALF_LENGTH + 0.01]} />
-      <TableLeg position={[HALF_WIDTH + 0.01, FLOOR_Y / 2, HALF_LENGTH + 0.01]} />
     </group>
-  );
+  )
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
-   Sub-components
-   ──────────────────────────────────────────────────────────────────────────── */
-
-function RailSegment({
-  position,
-  size,
-  texture,
-}: {
-  position: [number, number, number];
-  size: [number, number, number];
-  texture: THREE.Texture;
-}) {
+/** A single cushion segment */
+function Cushion({ position, size }: { position: [number, number, number]; size: [number, number, number] }) {
   return (
     <mesh position={position} castShadow receiveShadow>
       <boxGeometry args={size} />
-      <meshStandardMaterial map={texture} color="#5C3317" roughness={0.65} />
+      <meshStandardMaterial color={0x0a5e28} />
     </mesh>
-  );
+  )
 }
 
-function CushionSegment({
-  position,
-  size,
-}: {
-  position: [number, number, number];
-  size: [number, number, number];
-}) {
-  return (
-    <mesh position={position}>
-      <boxGeometry args={size} />
-      <meshStandardMaterial color="#0a8a3a" roughness={0.85} />
-    </mesh>
-  );
-}
+/** Diamond sight markers on rails */
+function DiamondMarkers() {
+  const diamonds: JSX.Element[] = []
+  const halfL = TABLE_LENGTH / 2
+  const halfW = TABLE_WIDTH / 2
+  const markerY = RAIL_HEIGHT * 0.6 + FELT_THICKNESS
+  const markerSize = 0.012
 
-function TableLeg({
-  position,
-}: {
-  position: [number, number, number];
-}) {
-  const legHeight = Math.abs(position[1]) * 2;
-  return (
-    <mesh position={position} castShadow receiveShadow>
-      <cylinderGeometry args={[0.03, 0.035, legHeight, 12]} />
-      <meshStandardMaterial color="#3b1f0b" roughness={0.7} />
-    </mesh>
-  );
+  // Markers along long sides (top and bottom)
+  for (let i = 1; i <= 3; i++) {
+    const x = (halfL / 4) * i
+    // Top
+    diamonds.push(
+      <mesh key={`t-${i}`} position={[x, markerY, -(halfW + RAIL_THICKNESS * 0.5)]}>
+        <sphereGeometry args={[markerSize, 8, 8]} />
+        <meshStandardMaterial color={0xccccaa} metalness={0.8} roughness={0.2} />
+      </mesh>,
+      <mesh key={`t-${-i}`} position={[-x, markerY, -(halfW + RAIL_THICKNESS * 0.5)]}>
+        <sphereGeometry args={[markerSize, 8, 8]} />
+        <meshStandardMaterial color={0xccccaa} metalness={0.8} roughness={0.2} />
+      </mesh>
+    )
+    // Bottom
+    diamonds.push(
+      <mesh key={`b-${i}`} position={[x, markerY, halfW + RAIL_THICKNESS * 0.5]}>
+        <sphereGeometry args={[markerSize, 8, 8]} />
+        <meshStandardMaterial color={0xccccaa} metalness={0.8} roughness={0.2} />
+      </mesh>,
+      <mesh key={`b-${-i}`} position={[-x, markerY, halfW + RAIL_THICKNESS * 0.5]}>
+        <sphereGeometry args={[markerSize, 8, 8]} />
+        <meshStandardMaterial color={0xccccaa} metalness={0.8} roughness={0.2} />
+      </mesh>
+    )
+  }
+
+  // Markers along short sides (left and right)
+  for (let i = 1; i <= 2; i++) {
+    const z = (halfW / 3) * i - halfW / 2
+    diamonds.push(
+      <mesh key={`l-${i}`} position={[-(halfL + RAIL_THICKNESS * 0.5), markerY, z]}>
+        <sphereGeometry args={[markerSize, 8, 8]} />
+        <meshStandardMaterial color={0xccccaa} metalness={0.8} roughness={0.2} />
+      </mesh>
+    )
+    diamonds.push(
+      <mesh key={`r-${i}`} position={[halfL + RAIL_THICKNESS * 0.5, markerY, z]}>
+        <sphereGeometry args={[markerSize, 8, 8]} />
+        <meshStandardMaterial color={0xccccaa} metalness={0.8} roughness={0.2} />
+      </mesh>
+    )
+  }
+
+  return <group>{diamonds}</group>
 }

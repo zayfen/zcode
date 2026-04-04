@@ -1,79 +1,65 @@
-import { useRef } from 'react';
-import { useFrame } from '@react-three/fiber';
-import { useGameStore } from '../store/gameStore';
-import { SETTLE_LINEAR_THRESHOLD, SETTLE_FRAMES } from '../constants/physics';
-import type { Vec3Tuple } from '../types';
+import { useRef, useCallback } from 'react'
+import { useFrame } from '@react-three/fiber'
+import * as THREE from 'three'
+import { getBallPositions, getBallVelocities, getBallAngularVelocities } from '../physics/ballBodies'
+import { SETTLE_LINEAR_THRESHOLD, SETTLE_ANGULAR_THRESHOLD, SETTLE_FRAMES } from '../constants/physics'
+import { useGameStore } from '../store/gameStore'
+import type { BallId, BallState } from '../types'
+import { ALL_BALL_IDS } from '../constants/balls'
+import { BALL_RADIUS } from '../constants/table'
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Ball velocity registry — physics bodies subscribe their velocity callbacks
-// here so the settle detector (running inside useFrame) can poll them.
-// ─────────────────────────────────────────────────────────────────────────────
-
-type VelocityProvider = () => Vec3Tuple;
-
-const velocityProviders = new Map<number, VelocityProvider>();
-
-/**
- * Register a function that returns the current velocity of ball `id`.
- * Called once from BallBody's useEffect.
- */
-export function registerVelocityProvider(id: number, provider: VelocityProvider): void {
-  velocityProviders.set(id, provider);
-}
-
-/**
- * Unregister when the ball component unmounts.
- */
-export function unregisterVelocityProvider(id: number): void {
-  velocityProviders.delete(id);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Hook
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * `useSettleDetector` — runs inside the R3F render loop and watches every
- * active ball's linear velocity magnitude.  Once **all** balls are below
- * `SETTLE_LINEAR_THRESHOLD` for `SETTLE_FRAMES` consecutive frames (while
- * the game phase is `SIMULATING`), it transitions the store to `EVALUATING`.
- *
- * Must be used inside a `<Canvas>` component.
- */
-export default function useSettleDetector(): void {
-  const settleCountRef = useRef(0);
+export function useSettleDetector() {
+  const settleCount = useRef(0)
+  const phase = useGameStore(s => s.phase)
+  const evaluateShot = useGameStore(s => s.evaluateShot)
 
   useFrame(() => {
-    const { phase } = useGameStore.getState();
-
-    // Only active during SIMULATING
     if (phase !== 'SIMULATING') {
-      settleCountRef.current = 0;
-      return;
+      settleCount.current = 0
+      return
     }
 
-    // Check every registered ball velocity
-    let allSettled = true;
-
-    for (const provider of velocityProviders.values()) {
-      const vel = provider();
-      const speed = Math.sqrt(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]);
-      if (speed > SETTLE_LINEAR_THRESHOLD) {
-        allSettled = false;
-        break;
+    const velocities = getBallVelocities()
+    const angularVelocities = getBallAngularVelocities()
+    
+    let allSettled = true
+    for (let i = 0; i < velocities.length; i++) {
+      const vel = velocities[i]
+      const angVel = angularVelocities[i]
+      if (!vel || !angVel) continue
+      
+      const linearSpeed = Math.sqrt(vel[0] ** 2 + vel[1] ** 2 + vel[2] ** 2)
+      const angularSpeed = Math.sqrt(angVel[0] ** 2 + angVel[1] ** 2 + angVel[2] ** 2)
+      
+      if (linearSpeed > SETTLE_LINEAR_THRESHOLD || angularSpeed > SETTLE_ANGULAR_THRESHOLD) {
+        allSettled = false
+        break
       }
     }
 
-    if (allSettled && velocityProviders.size > 0) {
-      settleCountRef.current++;
-      if (settleCountRef.current >= SETTLE_FRAMES) {
-        settleCountRef.current = 0;
-        // Transition to EVALUATING phase — rules engine will run next
-        useGameStore.getState().evaluateShot();
+    if (allSettled) {
+      settleCount.current++
+      if (settleCount.current >= SETTLE_FRAMES) {
+        settleCount.current = 0
+        evaluateShot()
       }
     } else {
-      // Reset the counter if any ball is still moving
-      settleCountRef.current = 0;
+      settleCount.current = 0
     }
-  });
+  })
+}
+
+/** Get current ball states for snapshot */
+export function getCurrentBallStates(): BallState[] {
+  const positions = getBallPositions()
+  const velocities = getBallVelocities()
+  const angularVelocities = getBallAngularVelocities()
+  
+  return ALL_BALL_IDS.map((id) => ({
+    id,
+    position: positions[id] || [0, BALL_RADIUS, 0],
+    velocity: velocities[id] || [0, 0, 0],
+    angularVelocity: angularVelocities[id] || [0, 0, 0],
+    pocketed: false,
+  }))
 }

@@ -1,92 +1,94 @@
-import { Canvas, useThree } from '@react-three/fiber';
-import { OrbitControls } from '@react-three/drei';
-import { useEffect } from 'react';
-import Table from './Table';
-import Balls from './Balls';
-import CueStick from './CueStick';
-import AimLine from './AimLine';
-import PhysicsWorld from '../physics/PhysicsWorld';
-import useSettleDetector from '../hooks/useSettleDetector';
-import useShotSequence from '../hooks/useShotSequence';
-import { useAimStore } from '../store/aimStore';
-import {
-  CAMERA_DEFAULT_POSITION,
-  CAMERA_FOV,
-  FLOOR_Y,
-} from '../constants/table';
+import { useRef, useMemo, useState } from 'react'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
+import { OrbitControls } from '@react-three/drei'
+import * as THREE from 'three'
 
-function GameHooks() {
-  useSettleDetector();
-  useShotSequence();
-  return null;
+type CameraMode = 'orbit' | 'topdown'
+
+interface SceneProps {
+  children: React.ReactNode
 }
 
-function CameraRefSync() {
-  const { camera } = useThree();
-  useEffect(() => {
-    (window as any).__r3f_camera = camera;
-  }, [camera]);
-  return null;
+function CameraController() {
+  const controlsRef = useRef<any>(null)
+  const { camera } = useThree()
+  const targetPosition = useRef(new THREE.Vector3(0, 1.5, 1.2))
+  const targetLookAt = useRef(new THREE.Vector3(0, 0, 0))
+  const [mode, setMode] = useState<CameraMode>('orbit')
+
+  // T key toggle
+  useMemo(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 't' || e.key === 'T') {
+        setMode(prev => prev === 'orbit' ? 'topdown' : 'orbit')
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
+  useFrame(() => {
+    if (mode === 'topdown') {
+      targetPosition.current.set(0, 2.5, 0)
+      targetLookAt.current.set(0, 0, 0)
+    } else {
+      targetPosition.current.set(0, 1.5, 1.2)
+    }
+    camera.position.lerp(targetPosition.current, 0.05)
+    camera.lookAt(targetLookAt.current)
+    if (controlsRef.current) {
+      controlsRef.current.target.lerp(targetLookAt.current, 0.05)
+      controlsRef.current.enabled = mode === 'orbit'
+    }
+  })
+
+  return (
+    <OrbitControls
+      ref={controlsRef}
+      enablePan={false}
+      minPolarAngle={0.3}
+      maxPolarAngle={Math.PI / 2.2}
+      minDistance={0.8}
+      maxDistance={3}
+      target={[0, 0, 0]}
+    />
+  )
 }
 
-export default function Scene() {
-  const cameraMode = useAimStore((s) => s.cameraMode);
-
+export default function Scene({ children }: SceneProps) {
   return (
     <Canvas
       shadows
-      camera={{
-        position: CAMERA_DEFAULT_POSITION,
-        fov: CAMERA_FOV,
-        near: 0.01,
-        far: 50,
-      }}
-      style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
+      camera={{ position: [0, 1.5, 1.2], fov: 45, near: 0.01, far: 50 }}
+      style={{ width: '100vw', height: '100vh', background: '#1a1a2e' }}
+      gl={{ antialias: true, toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.2 }}
     >
-      <color attach="background" args={['#1a1a2e']} />
-      <CameraRefSync />
+      {/* Ambient fill light */}
+      <ambientLight intensity={0.4} color="#ffffff" />
 
-      {/* Lighting */}
-      <ambientLight intensity={0.35} />
+      {/* Main directional light with shadows */}
       <directionalLight
-        position={[0, 3, 0.5]}
-        intensity={1.2}
+        position={[0, 3, 0]}
+        intensity={1.0}
         castShadow
         shadow-mapSize-width={2048}
         shadow-mapSize-height={2048}
+        shadow-camera-near={0.1}
+        shadow-camera-far={6}
+        shadow-camera-left={-1.5}
+        shadow-camera-right={1.5}
+        shadow-camera-top={1.5}
+        shadow-camera-bottom={-1.5}
+        shadow-bias={-0.0001}
+        color="#fff5e6"
       />
-      <pointLight position={[-0.3, 1.5, -0.7]} intensity={0.5} distance={5} decay={2} />
-      <pointLight position={[0.3, 1.5, 0.7]} intensity={0.5} distance={5} decay={2} />
 
-      {/* Physics world */}
-      <PhysicsWorld>
-        <Table />
-        <Balls />
-        <CueStick />
-        <AimLine />
-        <GameHooks />
-      </PhysicsWorld>
+      {/* Point lights at table ends */}
+      <pointLight position={[-0.5, 1.5, -1.0]} intensity={0.5} color="#ffeedd" />
+      <pointLight position={[0.5, 1.5, 1.0]} intensity={0.5} color="#ffeedd" />
 
-      {/* Camera controls */}
-      {cameraMode === 'orbit' && (
-        <OrbitControls
-          target={[0, 0, 0]}
-          enablePan={false}
-          enableDamping
-          dampingFactor={0.08}
-          minPolarAngle={0.2}
-          maxPolarAngle={Math.PI / 2.15}
-          minDistance={0.8}
-          maxDistance={4.5}
-        />
-      )}
-
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, FLOOR_Y, 0]} receiveShadow>
-        <planeGeometry args={[20, 20]} />
-        <meshStandardMaterial color="#0e0806" />
-      </mesh>
-
-      <fog attach="fog" args={['#1a1a2e', 6, 14]} />
+      <CameraController />
+      {children}
     </Canvas>
-  );
+  )
 }

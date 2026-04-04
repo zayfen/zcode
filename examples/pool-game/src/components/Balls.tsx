@@ -1,25 +1,22 @@
-import { useMemo } from 'react';
-import { ALL_BALL_IDS } from '../types';
-import type { BallId } from '../types';
-import { getRackPositions } from '../constants/balls';
-import Ball from './Ball';
+import { useMemo } from 'react'
+import { ALL_BALL_IDS, getRackPositions } from '../constants/balls'
+import type { BallId } from '../types'
+import Ball from './Ball'
 
-/**
- * Container component that renders all 16 balls at their initial positions.
- * Maps ball IDs 0–15, rendering a <Ball> for each at INITIAL_POSITIONS.
- */
+/** Renders all 16 balls at their initial rack positions */
 export default function Balls() {
-  const initialPositions = useMemo(() => getRackPositions(), []);
+  const positions = useMemo(() => getRackPositions(), [])
+  const ballIds = useMemo(() => ALL_BALL_IDS as BallId[], [])
 
   return (
     <group>
-      {ALL_BALL_IDS.map((id: BallId) => (
+      {ballIds.map(id => (
         <Ball
           key={id}
           id={id}
-          position={initialPositions[id]}
+          position={positions[id]}
         />
       ))}
     </group>
-  );
+  )
 }

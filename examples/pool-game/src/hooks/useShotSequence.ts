@@ -1,304 +1,234 @@
-import { useEffect, useRef } from 'react';
-import type * as THREE from 'three';
-import { useGameStore } from '../store/gameStore';
-import { useAimStore } from '../store/aimStore';
-import { evaluateShotResult } from '../game-logic/rules';
-import type { ShotEvaluationInput } from '../game-logic/rules';
-import type { Vec3Tuple } from '../types';
-import { MAX_IMPULSE } from '../constants/physics';
+import { useRef, useCallback, useEffect } from 'react'
+import { useFrame, useThree } from '@react-three/fiber'
+import * as THREE from 'three'
+import { useGameStore } from '../store/gameStore'
+import { useAimStore } from '../store/aimStore'
+import { getPhysicsWorld } from '../physics/physicsEngine'
+import { BALL_RADIUS, TABLE_LENGTH, TABLE_WIDTH } from '../constants/table'
+import { MAX_IMPULSE, POWER_CHARGE_DURATION } from '../constants/physics'
+import { vec3XZDistance } from '../utils/vector'
+import { POCKET_CENTERS, POCKET_RADIUS } from '../constants/table'
+import type { BallId, BallState, Foul } from '../types'
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Ball API registry — physics bodies register their cannon-es API handles
-// here so the shot sequence can apply impulses to the cue ball.
-// ─────────────────────────────────────────────────────────────────────────────
+/** Hook that orchestrates aiming, power, shooting, and physics stepping */
+export function useShotSequence(getBallPositions: () => Map<number, THREE.Vector3>) {
+  const phase = useGameStore(s => s.phase)
+  const currentPlayer = useGameStore(s => s.currentPlayer)
+  const startPower = useGameStore(s => s.startPower)
+  const shoot = useGameStore(s => s.shoot)
+  const evaluateShot = useGameStore(s => s.evaluateShot)
+  const setFoul = useGameStore(s => s.setFoul)
+  const nextTurn = useGameStore(s => s.nextTurn)
+  const setGameOver = useGameStore(s => s.setGameOver)
+  const pocketBall = useGameStore(s => s.pocketBall)
+  const assignGroups = useGameStore(s => s.assignGroups)
+  const playerGroups = useGameStore(s => s.playerGroups)
+  const pocketedBalls = useGameStore(s => s.pocketedBalls)
+  const groupsAssigned = useGameStore(s => s.groupsAssigned)
+  const breakShot = useGameStore(s => s.breakShot)
+  const setBreakShot = useGameStore(s => s.setBreakShot)
+  const saveSnapshot = useGameStore(s => s.saveSnapshot)
+  const setBallInHand = useGameStore(s => s.setBallInHand)
 
-export interface BallPhysicsApi {
-  applyImpulse: (impulse: Vec3Tuple) => void;
-  position: { subscribe: (cb: (v: Vec3Tuple) => void) => () => void };
-  velocity: { subscribe: (cb: (v: Vec3Tuple) => void) => () => void };
-}
+  const aimDir = useAimStore(s => s.direction)
+  const aimPower = useAimStore(s => s.power)
+  const setPower = useAimStore(s => s.setPower)
+  const setIsCharging = useAimStore(s => s.setIsCharging)
+  const aimReset = useAimStore(s => s.reset)
 
-const ballApis = new Map<number, BallPhysicsApi>();
+  const { camera, raycaster, pointer } = useThree()
+  const tablePlane = useRef(new THREE.Plane(new THREE.Vector3(0, 1, 0), -BALL_RADIUS))
+  const chargeStart = useRef(0)
+  const shotActive = useRef(false)
+  const preShotBalls = useRef<BallId[]>([])
+  const firstContact = useRef<BallId | null>(null)
+  const settledFrames = useRef(0)
 
-export function registerBallApi(id: number, api: BallPhysicsApi): void {
-  ballApis.set(id, api);
-}
+  // Track mouse for aiming
+  useFrame(() => {
+    if (phase === 'AIMING') {
+      raycaster.setFromCamera(pointer, camera)
+      const hit = new THREE.Vector3()
+      raycaster.ray.intersectPlane(tablePlane.current, hit)
 
-export function unregisterBallApi(id: number): void {
-  ballApis.delete(id);
-}
-
-/**
- * Get the physics API for a ball (used by other systems).
- */
-export function getBallApi(id: number): BallPhysicsApi | undefined {
-  return ballApis.get(id);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Shot sequence orchestrator
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Hook that orchestrates the full shot lifecycle:
- *
- * 1. Listens for mouse/keyboard input to drive phase transitions
- *    (IDLE → AIMING → POWER → SIMULATING)
- * 2. Applies the cue-ball impulse on shoot
- * 3. After settle detection transitions to EVALUATING, runs the rules engine
- * 4. Applies evaluation results (fouls, group assignment, game over, next turn)
- *
- * Also integrates the useAim hook for camera-based raycasting on mousemove.
- */
-export default function useShotSequence(): void {
-  const evaluatedRef = useRef(false);
-
-  // ── Watch for EVALUATING phase and run rules ────────────────────────────
-  useEffect(() => {
-    let frameId: ReturnType<typeof requestAnimationFrame>;
-
-    const tick = () => {
-      const state = useGameStore.getState();
-
-      if (state.phase === 'EVALUATING' && !evaluatedRef.current) {
-        evaluatedRef.current = true;
-
-        // Determine if this is the break shot
-        const isBreak = state.pocketedBalls.length === 0 && state.shotHistory.length === 0;
-
-        // Build evaluation input using current store state
-        // allPocketedBalls: balls pocketed BEFORE this shot
-        const allPocketedBeforeShot = state.shotHistory.length > 0
-          ? state.shotHistory[0].state.pocketedBalls
-          : [];
-
-        const input: ShotEvaluationInput = {
-          currentPlayer: state.currentPlayer,
-          playerGroups: { ...state.playerGroups },
-          pocketedThisShot: [...state.ballsPocketedThisShot],
-          firstContact: state.firstContact,
-          railContact: state.railContacted,
-          allPocketedBalls: allPocketedBeforeShot,
-          isBreak,
-        };
-
-        const result = evaluateShotResult(input);
-
-        // ── Apply results to store ────────────────────────────────────────
-
-        // Foul
-        if (result.foul) {
-          useGameStore.getState().setFoul(result.foul);
+      if (hit) {
+        const positions = getBallPositions()
+        const cuePos = positions.get(0)
+        if (cuePos) {
+          const dir = new THREE.Vector3().subVectors(hit, cuePos)
+          dir.y = 0
+          if (dir.length() > 0.001) {
+            dir.normalize()
+            useAimStore.getState().setDirection(dir)
+          }
         }
+      }
+    }
 
-        // Group assignment
-        if (result.assignGroup) {
-          useGameStore.getState().assignGroups(
-            result.assignGroup.player,
-            result.assignGroup.group,
-          );
-        }
+    if (phase === 'POWER') {
+      const elapsed = (performance.now() - chargeStart.current) / 1000
+      const pwr = Math.min(elapsed / POWER_CHARGE_DURATION, 1)
+      setPower(pwr)
+    }
 
-        // Game over
-        if (result.gameOver && result.winner !== null) {
-          useGameStore.getState().setGameOver(result.winner);
-          evaluatedRef.current = false;
-          return; // stop processing
-        }
-
-        // Ball-in-hand
-        if (result.ballInHand) {
-          useGameStore.getState().setBallInHand(true);
-        }
-
-        // Transition to next turn
-        useGameStore.getState().nextTurn(result.nextPlayer);
-
-        // Reset aim power for next shot
-        useAimStore.getState().resetPower();
-
-        // Reset evaluation guard after a short delay to allow state to settle
-        setTimeout(() => {
-          evaluatedRef.current = false;
-        }, 100);
+    if (phase === 'SIMULATING') {
+      const world = getPhysicsWorld()
+      if (world) {
+        world.step(1 / 60)
       }
 
-      frameId = requestAnimationFrame(tick);
-    };
-
-    frameId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frameId);
-  }, []);
-
-  // ── Input handling: mouse & keyboard ────────────────────────────────────
-  useEffect(() => {
-    const canvas = document.querySelector('canvas');
-    if (!canvas) return;
-
-    // ── Helpers for raycasting from camera to Y=0 plane ──────────────────
-    // We lazily import THREE to avoid requiring it at module level in this hook
-    let raycaster: THREE.Raycaster | null = null;
-    let plane: THREE.Plane | null = null;
-    let vec2: THREE.Vector2 | null = null;
-    let vec3: THREE.Vector3 | null = null;
-
-    const getThreeObjects = async () => {
-      if (raycaster) return;
-      const THREE = await import('three');
-      raycaster = new THREE.Raycaster();
-      plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
-      vec2 = new THREE.Vector2();
-      vec3 = new THREE.Vector3();
-    };
-
-    // Pre-initialize
-    getThreeObjects();
-
-    /**
-     * Compute aim direction from mouse position via camera raycasting.
-     * Falls back to simple NDC-based mapping if Three.js not ready.
-     */
-    const computeAimFromMouse = (e: MouseEvent): Vec3Tuple | null => {
-      const rect = canvas.getBoundingClientRect();
-      const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-
-      const store = useGameStore.getState();
-      const cuePos = store.cueBallPosition;
-
-      if (raycaster && plane) {
-        // Camera-based raycasting onto Y=0 table plane
-        vec2!.set(ndcX, ndcY);
-
-        // Get camera from the R3F store — we access it through a global reference
-        // set by the Scene component
-        const camera = (window as any).__r3f_camera as THREE.Camera;
-        if (camera) {
-          raycaster.setFromCamera(vec2!, camera);
-          const hit = raycaster.ray.intersectPlane(plane, vec3!);
-          if (hit) {
-            const dx = hit.x - cuePos[0];
-            const dz = hit.z - cuePos[2];
-            const len = Math.sqrt(dx * dx + dz * dz);
-            if (len > 0.001) {
-              return [dx / len, 0, dz / len];
+      // Check pocketing
+      const positions = getBallPositions()
+      positions.forEach((pos, id) => {
+        for (const pocket of POCKET_CENTERS) {
+          const dist = vec3XZDistance(pos, pocket)
+          if (dist < POCKET_RADIUS) {
+            if (!preShotBalls.current.includes(id as BallId) || 
+                !useGameStore.getState().pocketedBalls.includes(id as BallId)) {
+              pocketBall(id as BallId)
             }
+          }
+        }
+      })
+
+      // Check settle
+      let allSettled = true
+      const world2 = getPhysicsWorld()
+      if (world2) {
+        const bodies = world2.bodies
+        for (const body of bodies) {
+          const lv = body.velocity
+          const av = body.angularVelocity
+          if (Math.abs(lv.x) > 0.001 || Math.abs(lv.y) > 0.001 || Math.abs(lv.z) > 0.001 ||
+              Math.abs(av.x) > 0.01 || Math.abs(av.y) > 0.01 || Math.abs(av.z) > 0.01) {
+            allSettled = false
+            break
           }
         }
       }
 
-      // Fallback: simple NDC angle-based aim
-      const angle = ndcX * Math.PI;
-      return [Math.sin(angle), 0, Math.cos(angle)];
-    };
-
-    // ── Mouse down ───────────────────────────────────────────────────────
-    const handleMouseDown = (e: MouseEvent) => {
-      // Ignore right-click
-      if (e.button !== 0) return;
-
-      const { phase, ballInHand } = useGameStore.getState();
-
-      // Ball-in-hand placement
-      if (ballInHand && phase === 'IDLE') {
-        const rect = canvas.getBoundingClientRect();
-        const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-        const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-
-        // Map NDC to approximate table coordinates
-        const x = ndcX * 0.56; // HALF_WIDTH
-        const z = -ndcY * 1.12; // HALF_LENGTH
-
-        useGameStore.getState().placeBallInHand([x, 0.0285, z]);
-        return;
-      }
-
-      if (phase === 'IDLE') {
-        // IDLE → AIMING
-        const aimDir = computeAimFromMouse(e);
-        if (aimDir) {
-          useAimStore.getState().setDirection(aimDir);
+      if (allSettled) {
+        settledFrames.current++
+        if (settledFrames.current >= 10) {
+          evaluateShot()
         }
-        useGameStore.getState().startAiming();
-      } else if (phase === 'AIMING') {
-        // AIMING → POWER (start charging)
-        useGameStore.getState().startPower();
-        useAimStore.getState().startCharging();
+      } else {
+        settledFrames.current = 0
       }
-    };
+    }
+  })
 
-    // ── Mouse up ─────────────────────────────────────────────────────────
-    const handleMouseUp = (e: MouseEvent) => {
-      if (e.button !== 0) return;
+  // Handle evaluate
+  useEffect(() => {
+    if (phase !== 'EVALUATING') return
 
-      const { phase } = useGameStore.getState();
-      const { power, direction, isCharging } = useAimStore.getState();
+    const state = useGameStore.getState()
+    const newlyPocketed = state.pocketedBalls.filter(b => !preShotBalls.current.includes(b))
+    const cuePocketed = newlyPocketed.includes(0)
 
-      if (phase === 'POWER' && isCharging) {
-        // Calculate impulse vector
-        const impulseMagnitude = power * MAX_IMPULSE;
-        const impulse: Vec3Tuple = [
-          direction[0] * impulseMagnitude,
-          0,
-          direction[2] * impulseMagnitude,
-        ];
+    let foul: Foul = null
+    if (cuePocketed) {
+      foul = 'SCRATCH'
+    } else if (!firstContact.current && !breakShot) {
+      foul = 'NO_BALL_HIT'
+    }
 
-        // Apply impulse to the cue ball via physics API
-        const cueApi = ballApis.get(0);
-        if (cueApi) {
-          cueApi.applyImpulse(impulse);
+    const pocketedNonCue = newlyPocketed.filter(b => b !== 0)
+
+    // Group assignment
+    let groupAssigned = false
+    if (!groupsAssigned && pocketedNonCue.length > 0) {
+      const firstPocketed = pocketedNonCue[0]
+      if (firstPocketed >= 1 && firstPocketed <= 7) {
+        assignGroups(currentPlayer, 'solids')
+        groupAssigned = true
+      } else if (firstPocketed >= 9 && firstPocketed <= 15) {
+        assignGroups(currentPlayer, 'stripes')
+        groupAssigned = true
+      }
+    }
+
+    // Check 8-ball
+    if (newlyPocketed.includes(8)) {
+      const myGroup = playerGroups[currentPlayer]
+      const myBalls = myGroup === 'solids'
+        ? [1,2,3,4,5,6,7] as BallId[]
+        : myGroup === 'stripes'
+        ? [9,10,11,12,13,14,15] as BallId[]
+        : []
+      const allCleared = myBalls.every(b => state.pocketedBalls.includes(b))
+
+      if (allCleared && !foul) {
+        setGameOver(currentPlayer)
+      } else {
+        setGameOver(currentPlayer === 1 ? 2 : 1)
+      }
+      return
+    }
+
+    if (foul) {
+      setFoul(foul)
+      const opponent = currentPlayer === 1 ? 2 : 1
+      setBallInHand(true)
+      nextTurn(opponent as 1 | 2)
+    } else if (pocketedNonCue.length > 0) {
+      // Player continues
+      useGameStore.getState().setPhase('IDLE')
+    } else {
+      nextTurn((currentPlayer === 1 ? 2 : 1) as 1 | 2)
+    }
+
+    setBreakShot(false)
+    aimReset()
+  }, [phase])
+
+  const onMouseDown = useCallback(() => {
+    if (phase === 'AIMING') {
+      startPower()
+      chargeStart.current = performance.now()
+      setIsCharging(true)
+    }
+  }, [phase])
+
+  const onMouseUp = useCallback(() => {
+    if (phase === 'POWER') {
+      const positions = getBallPositions()
+      const state = useGameStore.getState()
+      preShotBalls.current = [...state.pocketedBalls]
+      firstContact.current = null
+
+      // Save snapshot for undo
+      const ballStates: BallState[] = []
+      positions.forEach((pos, id) => {
+        ballStates.push({
+          id: id as BallId,
+          position: [pos.x, pos.y, pos.z],
+          velocity: [0, 0, 0],
+          angularVelocity: [0, 0, 0],
+          pocketed: state.pocketedBalls.includes(id as BallId),
+        })
+      })
+      saveSnapshot(ballStates)
+
+      // Apply impulse to cue ball
+      const world = getPhysicsWorld()
+      if (world) {
+        const bodies = world.bodies
+        for (const body of bodies) {
+          if (body.userData?.ballId === 0) {
+            const dir = aimDir.clone().normalize()
+            const impulse = dir.multiplyScalar(aimPower * MAX_IMPULSE)
+            body.applyImpulse(new (await import('cannon-es')).Vec3(impulse.x, 0, impulse.z))
+            break
+          }
         }
-
-        // Transition store: POWER → SIMULATING (also takes snapshot internally)
-        useGameStore.getState().shoot(impulse);
-        useAimStore.getState().stopCharging();
-      }
-    };
-
-    // ── Mouse move: update aim direction during AIMING/POWER ─────────────
-    const handleMouseMove = (e: MouseEvent) => {
-      const { phase } = useGameStore.getState();
-      if (phase !== 'AIMING' && phase !== 'POWER' && phase !== 'IDLE') return;
-
-      const aimDir = computeAimFromMouse(e);
-      if (aimDir) {
-        useAimStore.getState().setDirection(aimDir);
-      }
-    };
-
-    // ── Keyboard shortcuts ───────────────────────────────────────────────
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Undo (U)
-      if (e.key === 'u' || e.key === 'U') {
-        const snapshot = useGameStore.getState().undo();
-        if (snapshot) {
-          useGameStore.getState().restoreSnapshot(snapshot);
-          useAimStore.getState().resetPower();
-        }
       }
 
-      // Camera toggle (T)
-      if (e.key === 't' || e.key === 'T') {
-        useAimStore.getState().toggleCameraMode();
-      }
+      shoot()
+      setIsCharging(false)
+      setPower(0)
+    }
+  }, [phase, aimDir, aimPower])
 
-      // Reset game (R)
-      if (e.key === 'r' || e.key === 'R') {
-        useGameStore.getState().resetGame();
-        useAimStore.getState().resetPower();
-      }
-    };
-
-    window.addEventListener('mousedown', handleMouseDown);
-    window.addEventListener('mouseup', handleMouseUp);
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      window.removeEventListener('mousedown', handleMouseDown);
-      window.removeEventListener('mouseup', handleMouseUp);
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, []);
+  return { onMouseDown, onMouseUp }
 }

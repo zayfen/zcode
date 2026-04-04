@@ -80,11 +80,17 @@ impl Tool for ShellTool {
         let params: ShellInput = serde_json::from_value(input)
             .map_err(|e| ZcodeError::InvalidToolInput(e.to_string()))?;
 
-        let mut cmd = Command::new(&params.command);
-
-        if !params.args.is_empty() {
-            cmd.args(&params.args);
+        let mut cmd = Command::new("sh");
+        let mut full_cmd = params.command.clone();
+        for arg in &params.args {
+            full_cmd.push(' ');
+            // Shell escape: wrap in single quotes, replacing ' with '\''
+            let escaped = arg.replace('\'', "'\\''");
+            full_cmd.push('\'');
+            full_cmd.push_str(&escaped);
+            full_cmd.push('\'');
         }
+        cmd.arg("-c").arg(&full_cmd);
 
         if let Some(ref cwd) = params.cwd {
             cmd.current_dir(cwd);
@@ -174,9 +180,10 @@ mod tests {
     fn test_shell_nonexistent_command() {
         let result = ShellTool.execute(serde_json::json!({
             "command": "zcode_nonexistent_command_xyz_12345"
-        }));
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), ZcodeError::ToolExecutionFailed { .. }));
+        })).unwrap();
+        
+        assert!(!result["success"].as_bool().unwrap());
+        assert_ne!(result["exit_code"], 0);
     }
 
     #[test]

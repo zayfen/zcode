@@ -1,0 +1,23 @@
+{
+  "id": "69d11a82",
+  "task": "Execute all tasks in docs/tasks/001-pool-game.tasks.md sequentially to re-execute pool-game.",
+  "status": "running",
+  "created_at": 1775311490,
+  "updated_at": 1775311493,
+  "state": {
+    "messages": [],
+    "task": {
+      "id": "a1d79f3a-8bb3-46c8-a9dd-17cc37459bc9",
+      "description": "Execute all tasks in docs/tasks/001-pool-game.tasks.md sequentially to re-execute pool-game.",
+      "cwd": null,
+      "context": {},
+      "priority": "Normal",
+      "parent_id": null
+    },
+    "result": null,
+    "agent_state": "Idle",
+    "metadata": {},
+    "iteration": 0
+  },
+  "error": null
+}

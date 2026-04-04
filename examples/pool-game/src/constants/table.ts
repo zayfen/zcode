@@ -1,71 +1,74 @@
-import type { Vec3Tuple } from '../types';
+/**
+ * Table geometry constants.
+ * Coordinate system: origin at center of table bed surface.
+ * X = length (long), Z = width (short), Y = up.
+ */
 
-// Table dimensions (meters)
-export const TABLE_LENGTH = 2.24; // Z-axis (long dimension)
-export const TABLE_WIDTH = 1.12;  // X-axis (short dimension)
-export const TABLE_HEIGHT = 0.02; // Y-axis thickness of bed
+// Playing surface dimensions (meters) — regulation 7-foot table proportions
+export const TABLE_LENGTH = 2.24; // X axis (long dimension)
+export const TABLE_WIDTH = 1.12; // Z axis (short dimension)
 
-// Rail dimensions
+export const BALL_RADIUS = 0.0285; // Standard billiard ball radius
+export const POCKET_RADIUS = 0.047; // Distance threshold for pocket detection
+
+// Table structure
+export const TABLE_HEIGHT = 0.05;
+export const FELT_THICKNESS = 0.02;
 export const RAIL_HEIGHT = 0.05;
-export const RAIL_WIDTH = 0.06;
-
-// Ball
-export const BALL_RADIUS = 0.0285;
-
-// Pocket
-export const POCKET_RADIUS = 0.047;
-
-// Playing bounds (half extents)
-export const HALF_LENGTH = TABLE_LENGTH / 2;
-export const HALF_WIDTH = TABLE_WIDTH / 2;
-
-// Playing surface bounds (where balls can travel, accounting for rail thickness)
+export const RAIL_THICKNESS = 0.08;
+export const RAIL_WIDTH = 0.08;
+export const CUSHION_HEIGHT = 0.035;
 export const CUSHION_THICKNESS = 0.03;
-export const PLAYING_BOUNDS = {
-  minX: -(HALF_WIDTH - CUSHION_THICKNESS),
-  maxX: HALF_WIDTH - CUSHION_THICKNESS,
-  minZ: -(HALF_LENGTH - CUSHION_THICKNESS),
-  maxZ: HALF_LENGTH - CUSHION_THICKNESS,
-};
+export const CUSHION_WIDTH = 0.03;
 
-// Head string: 1/4 of table length from head rail
-// This is the line behind which the cue ball is placed for the break
-export const HEAD_STRING_Z = -HALF_LENGTH / 2;
+// Half dimensions
+const HL = TABLE_LENGTH / 2;
+const HW = TABLE_WIDTH / 2;
 
-// Foot spot: center of the foot end (for racking)
-// Located at the intersection of the long center line and a line drawn
-// through the foot rail's center spot
-export const FOOT_SPOT: Vec3Tuple = [0, 0, HALF_LENGTH / 2];
-
-// Pocket center positions (6 pockets)
-// 4 corner pockets + 2 side (middle) pockets
-export const POCKET_POSITIONS: Vec3Tuple[] = [
+// Pocket center positions (6 pockets: 4 corners + 2 side)
+export const POCKET_POSITIONS: { x: number; y: number; z: number }[] = [
   // Corner pockets
-  [-HALF_WIDTH, 0, -HALF_LENGTH],  // head-left
-  [HALF_WIDTH, 0, -HALF_LENGTH],   // head-right
-  [-HALF_WIDTH, 0, HALF_LENGTH],   // foot-left
-  [HALF_WIDTH, 0, HALF_LENGTH],    // foot-right
+  { x: -HL, y: 0, z: -HW },
+  { x: HL, y: 0, z: -HW },
+  { x: -HL, y: 0, z: HW },
+  { x: HL, y: 0, z: HW },
   // Side pockets (middle of long rails)
-  [-HALF_WIDTH, 0, 0],             // mid-left
-  [HALF_WIDTH, 0, 0],              // mid-right
+  { x: -HL, y: 0, z: 0 },
+  { x: HL, y: 0, z: 0 },
 ];
 
-// Pocket labels for readability
-export const POCKET_LABELS = [
-  'head-left',
-  'head-right',
-  'foot-left',
-  'foot-right',
-  'mid-left',
-  'mid-right',
-] as const;
+// Pocket positions as tuples for physics
+export const POCKET_CENTERS: [number, number, number][] = [
+  [-HL, 0, -HW],
+  [HL, 0, -HW],
+  [-HL, 0, HW],
+  [HL, 0, HW],
+  [-HL, 0, 0],
+  [HL, 0, 0],
+];
 
-// Cushion height (how tall the cushion is above the bed)
-export const CUSHION_HEIGHT = BALL_RADIUS * 1.5;
+// Cushion segment definitions
+export const CUSHION_SEGMENTS: {
+  position: [number, number, number];
+  size: [number, number, number];
+}[] = [
+  // Long rails (along X), split by side pockets
+  // Top long rail (Z = -HW), left half
+  { position: [-HL / 2, CUSHION_HEIGHT / 2, -HW + CUSHION_THICKNESS / 2], size: [HL - POCKET_RADIUS * 2, CUSHION_HEIGHT, CUSHION_THICKNESS] },
+  // Top long rail, right half
+  { position: [HL / 2, CUSHION_HEIGHT / 2, -HW + CUSHION_THICKNESS / 2], size: [HL - POCKET_RADIUS * 2, CUSHION_HEIGHT, CUSHION_THICKNESS] },
+  // Bottom long rail (Z = +HW), left half
+  { position: [-HL / 2, CUSHION_HEIGHT / 2, HW - CUSHION_THICKNESS / 2], size: [HL - POCKET_RADIUS * 2, CUSHION_HEIGHT, CUSHION_THICKNESS] },
+  // Bottom long rail, right half
+  { position: [HL / 2, CUSHION_HEIGHT / 2, HW - CUSHION_THICKNESS / 2], size: [HL - POCKET_RADIUS * 2, CUSHION_HEIGHT, CUSHION_THICKNESS] },
+  // Left short rail (X = -HL)
+  { position: [-HL + CUSHION_THICKNESS / 2, CUSHION_HEIGHT / 2, 0], size: [CUSHION_THICKNESS, CUSHION_HEIGHT, TABLE_WIDTH * 0.7] },
+  // Right short rail (X = +HL)
+  { position: [HL - CUSHION_THICKNESS / 2, CUSHION_HEIGHT / 2, 0], size: [CUSHION_THICKNESS, CUSHION_HEIGHT, TABLE_WIDTH * 0.7] },
+];
 
-// Floor
-export const FLOOR_Y = -0.8;
+// Head string position
+export const HEAD_STRING_X = -TABLE_LENGTH / 4;
 
-// Camera defaults
-export const CAMERA_DEFAULT_POSITION: Vec3Tuple = [0, 1.8, 1.6];
-export const CAMERA_FOV = 45;
+// Foot spot
+export const FOOT_SPOT_X = TABLE_LENGTH / 4;

@@ -22,7 +22,8 @@ export default function AimLine() {
   if (phase !== 'AIMING' && phase !== 'POWER') return null
 
   const cuePos = getCueBallPosition()
-  const endPoint = cuePos.clone().add(direction.clone().multiplyScalar(2.0))
+  const dirVec = new THREE.Vector3(direction.x, direction.y, direction.z)
+  const endPoint = cuePos.clone().add(dirVec.multiplyScalar(2.0))
 
   const linePoints = [
     new THREE.Vector3(cuePos.x, cuePos.y, cuePos.z),

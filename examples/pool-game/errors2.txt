@@ -1,0 +1,36 @@
+src/components/AimLine.tsx(25,49): error TS2339: Property 'clone' does not exist on type 'Vec3'.
+src/components/GameController.tsx(28,16): error TS2339: Property 'iterations' does not exist on type 'Solver'.
+src/components/GameController.tsx(92,23): error TS7053: Element implicitly has an 'any' type because expression of type '0' can't be used to index type 'Vector3'.
+  Property '0' does not exist on type 'Vector3'.
+src/components/GameController.tsx(92,44): error TS7053: Element implicitly has an 'any' type because expression of type '2' can't be used to index type 'Vector3'.
+  Property '2' does not exist on type 'Vector3'.
+src/components/GameController.tsx(127,23): error TS7053: Element implicitly has an 'any' type because expression of type '0' can't be used to index type 'Vector3'.
+  Property '0' does not exist on type 'Vector3'.
+src/components/GameController.tsx(127,44): error TS7053: Element implicitly has an 'any' type because expression of type '2' can't be used to index type 'Vector3'.
+  Property '2' does not exist on type 'Vector3'.
+src/components/GameController.tsx(206,47): error TS2339: Property 'x' does not exist on type '[number, number, number]'.
+src/components/GameController.tsx(207,47): error TS2339: Property 'z' does not exist on type '[number, number, number]'.
+src/components/GameController.tsx(210,19): error TS2551: Property 'pocketBall' does not exist on type 'GameStoreState & GameStoreActions'. Did you mean 'pocketedBalls'?
+src/components/GameController.tsx(236,17): error TS2554: Expected 3 arguments, but got 0.
+src/components/GameController.tsx(257,26): error TS2554: Expected 3 arguments, but got 2.
+src/components/GameController.tsx(260,29): error TS2339: Property 'playerGroups' does not exist on type 'GameStoreState & GameStoreActions'.
+src/components/GameController.tsx(267,26): error TS2339: Property 'breakShot' does not exist on type 'GameStoreState & GameStoreActions'.
+src/components/GameController.tsx(268,31): error TS2339: Property 'groupsAssigned' does not exist on type 'GameStoreState & GameStoreActions'.
+src/components/GameController.tsx(272,22): error TS2339: Property 'ballGroupAssigned' does not exist on type 'ShotEvaluation'.
+src/components/GameController.tsx(272,50): error TS2339: Property 'groupsAssigned' does not exist on type 'GameStoreState & GameStoreActions'.
+src/components/GameController.tsx(277,19): error TS2339: Property 'assignGroups' does not exist on type 'GameStoreState & GameStoreActions'.
+src/components/GameController.tsx(285,15): error TS2339: Property 'setFoul' does not exist on type 'GameStoreState & GameStoreActions'.
+src/components/GameController.tsx(286,29): error TS2345: Argument of type 'boolean' is not assignable to parameter of type '[number, number, number]'.
+src/components/GameController.tsx(287,24): error TS2554: Expected 0 arguments, but got 1.
+src/components/GameController.tsx(289,24): error TS2554: Expected 0 arguments, but got 1.
+src/components/GameController.tsx(292,13): error TS2339: Property 'setBreakShot' does not exist on type 'GameStoreState & GameStoreActions'.
+src/components/GameController.tsx(293,16): error TS2339: Property 'reset' does not exist on type 'AimState'.
+src/components/GameController.tsx(328,33): error TS2345: Argument of type 'boolean' is not assignable to parameter of type '[number, number, number]'.
+src/components/GameController.tsx(350,13): error TS2353: Object literal may only specify known properties, and 'angularVelocity' does not exist in type 'BallState'.
+src/components/GameController.tsx(354,15): error TS2551: Property 'saveSnapshot' does not exist on type 'GameStoreState & GameStoreActions'. Did you mean 'snapshot'?
+src/components/GameController.tsx(359,42): error TS2339: Property 'clone' does not exist on type 'Vec3'.
+src/components/GameController.tsx(381,15): error TS1345: An expression of type 'void' cannot be tested for truthiness.
+src/components/GameUI.tsx(11,44): error TS2339: Property 'playerGroups' does not exist on type 'GameStoreState & GameStoreActions'.
+src/constants/balls.ts(36,14): error TS2451: Cannot redeclare block-scoped variable 'ALL_BALL_IDS'.
+src/constants/balls.ts(46,14): error TS2451: Cannot redeclare block-scoped variable 'ALL_BALL_IDS'.
+src/constants/balls.ts(94,14): error TS2451: Cannot redeclare block-scoped variable 'ALL_BALL_IDS'.

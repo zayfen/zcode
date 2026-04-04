@@ -17,25 +17,12 @@ export default function Balls() {
         const pos = id === 0 && ballInHand && ballInHandPosition
           ? ballInHandPosition
           : positions[id] || [0, BALL_RADIUS, 0];
-        const isPocketed = pocketedBalls.includes(id);
-
-        if (isPocketed) {
-          return (
-            <Ball
-              key={id}
-              id={id}
-              position={[pos[0], -0.5, pos[2]]}
-              onPocketed={() => {}}
-            />
-          );
-        }
 
         return (
           <Ball
             key={id}
             id={id}
-            position={pos}
-            onPocketed={() => {}}
+            position={pos as [number, number, number]}
           />
         );
       })}

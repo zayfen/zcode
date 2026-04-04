@@ -8,7 +8,7 @@ import type { BallId, BallGroup } from '../types'
 export default function GameUI() {
   const phase = useGameStore(s => s.phase)
   const currentPlayer = useGameStore(s => s.currentPlayer)
-  const playerGroups = useGameStore(s => s.playerGroups)
+  const ballGroups = useGameStore(s => s.ballGroups)
   const pocketedBalls = useGameStore(s => s.pocketedBalls)
   const foul = useGameStore(s => s.foul)
   const winner = useGameStore(s => s.winner)
@@ -35,13 +35,13 @@ export default function GameUI() {
   }, [foul])
 
   const groupLabel = (player: 1 | 2): string => {
-    const g = playerGroups[player]
+    const g = player === 1 ? ballGroups.player1 : ballGroups.player2
     if (!g) return ''
     return g === 'solids' ? '(Solids 1-7)' : '(Stripes 9-15)'
   }
 
   const playerPocketed = (player: 1 | 2): BallId[] => {
-    const g = playerGroups[player]
+    const g = player === 1 ? ballGroups.player1 : ballGroups.player2
     if (!g) return []
     return pocketedBalls.filter(id => {
       const bg = getBallGroup(id)

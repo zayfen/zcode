@@ -1,6 +1,5 @@
 // src/components/Table.tsx
-import React, { useRef } from 'react';
-import { useBox, usePlane } from '@react-three/cannon';
+import React from 'react';
 import * as THREE from 'three';
 import {
   TABLE_LENGTH,
@@ -13,28 +12,11 @@ import {
   POCKET_RADIUS,
   POCKET_POSITIONS,
   BALL_RADIUS,
-  CUSHION_RESTITUTION,
 } from '../constants/table';
-import {
-  BALL_CUSHION_FRICTION,
-  BALL_CUSHION_RESTITUTION,
-  BALL_FELT_FRICTION,
-  BALL_FELT_RESTITUTION,
-} from '../constants/physics';
 
 function FeltBed() {
-  const [ref] = usePlane(() => ({
-    rotation: [-Math.PI / 2, 0, 0],
-    position: [0, TABLE_HEIGHT, 0],
-    type: 'Static',
-    material: {
-      friction: BALL_FELT_FRICTION,
-      restitution: BALL_FELT_RESTITUTION,
-    },
-  }));
-
   return (
-    <mesh ref={ref as React.RefObject<THREE.Mesh>} receiveShadow>
+    <mesh position={[0, TABLE_HEIGHT, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
       <planeGeometry args={[TABLE_WIDTH, TABLE_LENGTH]} />
       <meshStandardMaterial color="#0a7e1a" roughness={0.8} />
     </mesh>
@@ -42,18 +24,8 @@ function FeltBed() {
 }
 
 function Rail({ position, size }: { position: [number, number, number]; size: [number, number, number] }) {
-  const [ref] = useBox(() => ({
-    position,
-    args: size,
-    type: 'Static',
-    material: {
-      friction: BALL_CUSHION_FRICTION,
-      restitution: BALL_CUSHION_RESTITUTION,
-    },
-  }));
-
   return (
-    <mesh ref={ref as React.RefObject<THREE.Mesh>} castShadow receiveShadow>
+    <mesh position={position} castShadow receiveShadow>
       <boxGeometry args={size} />
       <meshStandardMaterial color="#5D3A1A" roughness={0.4} />
     </mesh>
@@ -61,18 +33,8 @@ function Rail({ position, size }: { position: [number, number, number]; size: [n
 }
 
 function Cushion({ position, size }: { position: [number, number, number]; size: [number, number, number] }) {
-  const [ref] = useBox(() => ({
-    position,
-    args: size,
-    type: 'Static',
-    material: {
-      friction: BALL_CUSHION_FRICTION,
-      restitution: BALL_CUSHION_RESTITUTION,
-    },
-  }));
-
   return (
-    <mesh ref={ref as React.RefObject<THREE.Mesh>}>
+    <mesh position={position}>
       <boxGeometry args={size} />
       <meshStandardMaterial color="#0d8c23" roughness={0.7} />
     </mesh>
@@ -81,7 +43,7 @@ function Cushion({ position, size }: { position: [number, number, number]; size:
 
 function Pocket({ position }: { position: [number, number, number] }) {
   return (
-    <mesh position={position} rotation={[-Math.PI / 2, 0, 0]}>
+    <mesh position={[position[0], position[1] + 0.002, position[2]]} rotation={[-Math.PI / 2, 0, 0]}>
       <circleGeometry args={[POCKET_RADIUS, 32]} />
       <meshStandardMaterial color="#111111" />
     </mesh>
@@ -141,36 +103,36 @@ export default function Table() {
       <Rail position={[halfW + rw / 2, tableY + rh / 2, 0]} size={[rw, rh, TABLE_LENGTH + rw * 2]} />
 
       {/* Cushions (inner bouncing surfaces) */}
-      {/* Top cushion (negative Z) - two halves with gap for center pocket */}
+      {/* Short cushion (negative Z) - top rail solid */}
       <Cushion
-        position={[-halfW / 2 - CUSHION_WIDTH / 2, tableY + CUSHION_HEIGHT / 2, -halfL + CUSHION_WIDTH / 2]}
-        size={[halfW - POCKET_RADIUS, CUSHION_HEIGHT, CUSHION_WIDTH]}
-      />
-      <Cushion
-        position={[halfW / 2 + CUSHION_WIDTH / 2, tableY + CUSHION_HEIGHT / 2, -halfL + CUSHION_WIDTH / 2]}
-        size={[halfW - POCKET_RADIUS, CUSHION_HEIGHT, CUSHION_WIDTH]}
+        position={[0, tableY + CUSHION_HEIGHT / 2, -halfL + CUSHION_WIDTH / 2]}
+        size={[TABLE_WIDTH - POCKET_RADIUS * 2.5, CUSHION_HEIGHT, CUSHION_WIDTH]}
       />
 
-      {/* Bottom cushion (positive Z) - two halves */}
+      {/* Short cushion (positive Z) - bottom rail solid */}
       <Cushion
-        position={[-halfW / 2 - CUSHION_WIDTH / 2, tableY + CUSHION_HEIGHT / 2, halfL - CUSHION_WIDTH / 2]}
-        size={[halfW - POCKET_RADIUS, CUSHION_HEIGHT, CUSHION_WIDTH]}
-      />
-      <Cushion
-        position={[halfW / 2 + CUSHION_WIDTH / 2, tableY + CUSHION_HEIGHT / 2, halfL - CUSHION_WIDTH / 2]}
-        size={[halfW - POCKET_RADIUS, CUSHION_HEIGHT, CUSHION_WIDTH]}
+        position={[0, tableY + CUSHION_HEIGHT / 2, halfL - CUSHION_WIDTH / 2]}
+        size={[TABLE_WIDTH - POCKET_RADIUS * 2.5, CUSHION_HEIGHT, CUSHION_WIDTH]}
       />
 
-      {/* Left cushion */}
+      {/* Long cushion Left - split for side pocket at Z=0 */}
       <Cushion
-        position={[-halfW + CUSHION_WIDTH / 2, tableY + CUSHION_HEIGHT / 2, 0]}
-        size={[CUSHION_WIDTH, CUSHION_HEIGHT, TABLE_LENGTH - POCKET_RADIUS * 3]}
+        position={[-halfW + CUSHION_WIDTH / 2, tableY + CUSHION_HEIGHT / 2, -halfL / 2 - CUSHION_WIDTH / 4]}
+        size={[CUSHION_WIDTH, CUSHION_HEIGHT, halfL - POCKET_RADIUS * 1.5]}
+      />
+      <Cushion
+        position={[-halfW + CUSHION_WIDTH / 2, tableY + CUSHION_HEIGHT / 2, halfL / 2 + CUSHION_WIDTH / 4]}
+        size={[CUSHION_WIDTH, CUSHION_HEIGHT, halfL - POCKET_RADIUS * 1.5]}
       />
 
-      {/* Right cushion */}
+      {/* Long cushion Right - split for side pocket at Z=0 */}
       <Cushion
-        position={[halfW - CUSHION_WIDTH / 2, tableY + CUSHION_HEIGHT / 2, 0]}
-        size={[CUSHION_WIDTH, CUSHION_HEIGHT, TABLE_LENGTH - POCKET_RADIUS * 3]}
+        position={[halfW - CUSHION_WIDTH / 2, tableY + CUSHION_HEIGHT / 2, -halfL / 2 - CUSHION_WIDTH / 4]}
+        size={[CUSHION_WIDTH, CUSHION_HEIGHT, halfL - POCKET_RADIUS * 1.5]}
+      />
+      <Cushion
+        position={[halfW - CUSHION_WIDTH / 2, tableY + CUSHION_HEIGHT / 2, halfL / 2 + CUSHION_WIDTH / 4]}
+        size={[CUSHION_WIDTH, CUSHION_HEIGHT, halfL - POCKET_RADIUS * 1.5]}
       />
 
       {/* Pockets */}

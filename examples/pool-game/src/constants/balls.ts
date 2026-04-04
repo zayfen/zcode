@@ -32,15 +32,20 @@ export function isStripe(ballId: number): boolean {
   return ballId >= 9 && ballId <= 15;
 }
 
+// All ball IDs (0-15)
+export const ALL_BALL_IDS: number[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+
 // Standard triangle rack positions
 // The rack is positioned at the foot spot (3/4 of the table length from the head)
 // Row layout: 1-2-3-4-5 balls
 
-import { TABLE_LENGTH, BALL_RADIUS } from './table';
+import { TABLE_LENGTH, BALL_RADIUS, TABLE_HEIGHT } from './table';
+import type { BallId } from '../types';
 
-const FOOT_SPOT_X = TABLE_LENGTH / 4;  // 3/4 from head = 1/4 from center (we use center as origin)
-const ROW_SPACING = BALL_RADIUS * 2 * Math.cos(Math.PI / 6); // sqrt(3) * radius
-const COL_SPACING = BALL_RADIUS * 2;
+
+const FOOT_SPOT_Z = -TABLE_LENGTH / 4;  // 1/4 from center on Z axis (negative Z is far from camera)
+const ROW_SPACING = BALL_RADIUS * 2.02 * Math.cos(Math.PI / 6); // Add 0.02 gap to prevent penetration explosion
+const COL_SPACING = BALL_RADIUS * 2.02;
 
 // Standard rack order: 
 // Row 0: 1
@@ -59,16 +64,16 @@ export function getRackPositions(): { [key: number]: THREE.Vector3 } {
   for (let row = 0; row < 5; row++) {
     const ballsInRow = row + 1;
     for (let col = 0; col < ballsInRow; col++) {
-      const x = FOOT_SPOT_X + row * ROW_SPACING;
-      const z = (col - (ballsInRow - 1) / 2) * COL_SPACING;
+      const z = FOOT_SPOT_Z - row * ROW_SPACING; // Grow towards negative Z (away from cue)
+      const x = (col - (ballsInRow - 1) / 2) * COL_SPACING;
       const ballId = RACK_ORDER[ballIndex];
-      positions[ballId] = new THREE.Vector3(x, BALL_RADIUS, z);
+      positions[ballId] = new THREE.Vector3(x, TABLE_HEIGHT + BALL_RADIUS, z);
       ballIndex++;
     }
   }
 
-  // Cue ball at head spot
-  positions[0] = new THREE.Vector3(-TABLE_LENGTH / 4, BALL_RADIUS, 0);
+  // Cue ball at head spot (near camera)
+  positions[0] = new THREE.Vector3(0, TABLE_HEIGHT + BALL_RADIUS, TABLE_LENGTH / 4);
 
   return positions;
 }
@@ -82,3 +87,4 @@ export function getInitialBallPositions(): { [key: number]: [number, number, num
   }
   return positions;
 }
+

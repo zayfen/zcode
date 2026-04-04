@@ -26,7 +26,7 @@ export const SETTLE_ANGULAR_THRESHOLD = 0.01;
 export const SETTLE_DEBOUNCE_FRAMES = 10;
 
 // Shot
-export const MAX_IMPULSE = 8;
+export const MAX_IMPULSE = 2.0;
 export const POWER_CHARGE_DURATION = 2000; // ms to reach full power
 
 // Physics step

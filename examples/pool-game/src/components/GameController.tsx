@@ -1,7 +1,7 @@
 import { useRef, useEffect, useMemo, useCallback } from 'react'
 import * as THREE from 'three'
 import { useFrame, useThree } from '@react-three/fiber'
-import { BALL_RADIUS, TABLE_LENGTH, TABLE_WIDTH, POCKET_POSITIONS, POCKET_RADIUS } from '../constants/table'
+import { BALL_RADIUS, TABLE_LENGTH, TABLE_WIDTH, POCKET_POSITIONS, POCKET_RADIUS, TABLE_HEIGHT } from '../constants/table'
 import { ALL_BALL_IDS, getRackPositions, BALL_COLORS, isStripe } from '../constants/balls'
 import { BALL_MASS, LINEAR_DAMPING, ANGULAR_DAMPING, MAX_IMPULSE, SETTLE_LINEAR_THRESHOLD, SETTLE_ANGULAR_THRESHOLD } from '../constants/physics'
 import { useGameStore } from '../store/gameStore'
@@ -18,6 +18,7 @@ let world: CANNON.World | null = null
 const ballBodies = new Map<number, CANNON.Body>()
 let firstContactThisShot: BallId | null = null
 let preShotPocketed: BallId[] = []
+let newlyPocketedThisShot: BallId[] = []
 
 function getOrCreateWorld(): CANNON.World {
   if (world) return world
@@ -25,7 +26,7 @@ function getOrCreateWorld(): CANNON.World {
   world = new CANNON.World()
   world.gravity.set(0, -9.81, 0)
   world.broadphase = new CANNON.SAPBroadphase(world)
-  world.solver.iterations = 10
+  ;(world.solver as CANNON.GSSolver).iterations = 10
 
   const ballMat = new CANNON.Material('ball')
   const feltMat = new CANNON.Material('felt')
@@ -50,22 +51,26 @@ function getOrCreateWorld(): CANNON.World {
     material: feltMat,
     shape: new CANNON.Plane(),
   })
+  ground.position.set(0, TABLE_HEIGHT, 0)
   ground.quaternion.setFromEuler(-Math.PI / 2, 0, 0)
   world.addBody(ground)
 
   // Cushions
   const halfL = TABLE_LENGTH / 2
   const halfW = TABLE_WIDTH / 2
-  const ch = 0.035
-  const ct = 0.03
+  const ch = 0.1
+  const ct = 0.15
 
   const cushionDefs: { pos: [number, number, number]; size: [number, number, number] }[] = [
-    { pos: [-halfL / 2, ch / 2, -(halfW)], size: [halfL * 0.85, ch, ct] },
-    { pos: [halfL / 2, ch / 2, -(halfW)], size: [halfL * 0.85, ch, ct] },
-    { pos: [-halfL / 2, ch / 2, halfW], size: [halfL * 0.85, ch, ct] },
-    { pos: [halfL / 2, ch / 2, halfW], size: [halfL * 0.85, ch, ct] },
-    { pos: [-(halfL), ch / 2, 0], size: [ct, ch, TABLE_WIDTH * 0.75] },
-    { pos: [halfL, ch / 2, 0], size: [ct, ch, TABLE_WIDTH * 0.75] },
+    // Long rails (Left, split at middle)
+    { pos: [-halfW - ct/2 + 0.05, TABLE_HEIGHT + ch / 2, -halfL / 2], size: [ct, ch, halfL * 0.85] },
+    { pos: [-halfW - ct/2 + 0.05, TABLE_HEIGHT + ch / 2, halfL / 2], size: [ct, ch, halfL * 0.85] },
+    // Long rails (Right, split at middle)
+    { pos: [halfW + ct/2 - 0.05, TABLE_HEIGHT + ch / 2, -halfL / 2], size: [ct, ch, halfL * 0.85] },
+    { pos: [halfW + ct/2 - 0.05, TABLE_HEIGHT + ch / 2, halfL / 2], size: [ct, ch, halfL * 0.85] },
+    // Short rails (Top/Bottom, solid)
+    { pos: [0, TABLE_HEIGHT + ch / 2, -halfL - ct/2 + 0.05], size: [halfW * 0.85, ch, ct] },
+    { pos: [0, TABLE_HEIGHT + ch / 2, halfL + ct/2 - 0.05], size: [halfW * 0.85, ch, ct] },
   ]
 
   for (const def of cushionDefs) {
@@ -89,7 +94,7 @@ function getOrCreateWorld(): CANNON.World {
       linearDamping: LINEAR_DAMPING,
       angularDamping: ANGULAR_DAMPING,
     })
-    body.position.set(pos[0], BALL_RADIUS, pos[2])
+    body.position.set(pos.x, pos.y, pos.z)
     world.addBody(body)
     ballBodies.set(id, body)
 
@@ -124,7 +129,7 @@ export function resetBallPositions() {
   const positions = getRackPositions()
   for (const [id, body] of ballBodies) {
     const pos = positions[id as BallId]
-    body.position.set(pos[0], BALL_RADIUS, pos[2])
+    body.position.set(pos.x, pos.y, pos.z)
     body.velocity.setZero()
     body.angularVelocity.setZero()
     body.wakeUp()
@@ -138,9 +143,9 @@ export function placeCueBall(x: number, z: number) {
   const halfL = TABLE_LENGTH / 2 - BALL_RADIUS
   const halfW = TABLE_WIDTH / 2 - BALL_RADIUS
   cueBody.position.set(
-    Math.max(-halfL, Math.min(halfL, x)),
-    BALL_RADIUS,
-    Math.max(-halfW, Math.min(halfW, z)),
+    Math.max(-halfW, Math.min(halfW, x)),
+    TABLE_HEIGHT + BALL_RADIUS,
+    Math.max(-halfL, Math.min(halfL, z)),
   )
   cueBody.velocity.setZero()
   cueBody.angularVelocity.setZero()
@@ -201,13 +206,13 @@ export default function GameController() {
 
       // Pocket detection
       for (const [id, body] of ballBodies) {
-        if (state.pocketedBalls.includes(id as BallId)) continue
+        if (state.pocketedBalls.includes(id as BallId) || newlyPocketedThisShot.includes(id as BallId)) continue
         for (const pocket of POCKET_POSITIONS) {
-          const dx = body.position.x - pocket.x
-          const dz = body.position.z - pocket.z
+          const dx = body.position.x - pocket[0]
+          const dz = body.position.z - pocket[2]
           const dist = Math.sqrt(dx * dx + dz * dz)
           if (dist < POCKET_RADIUS) {
-            state.pocketBall(id as BallId)
+            newlyPocketedThisShot.push(id as BallId)
             // Move ball below table
             body.position.set(0, -1, 0)
             body.velocity.setZero()
@@ -218,14 +223,15 @@ export default function GameController() {
         }
       }
 
-      // Settle detection
+      // Settle detection & state sync
       let allSettled = true
-      for (const [, body] of ballBodies) {
+      for (const [id, body] of ballBodies) {
+        state.updateBallPosition(id, [body.position.x, body.position.y, body.position.z])
+
         const lv = body.velocity.length()
         const av = body.angularVelocity.length()
         if (lv > SETTLE_LINEAR_THRESHOLD || av > SETTLE_ANGULAR_THRESHOLD) {
           allSettled = false
-          break
         }
       }
 
@@ -233,69 +239,18 @@ export default function GameController() {
         settledFrames.current++
         if (settledFrames.current >= 10) {
           settledFrames.current = 0
-          state.evaluateShot()
+          
+          let foul: Foul = null;
+          if (newlyPocketedThisShot.includes(0)) foul = 'SCRATCH';
+          else if (firstContactThisShot === null) foul = 'NO_BALL_HIT';
+
+          state.evaluateShot(newlyPocketedThisShot, firstContactThisShot, foul)
+          aimState.resetShot()
+          firstContactThisShot = null
         }
       } else {
         settledFrames.current = 0
       }
-    }
-
-    // ── EVALUATING: run rules engine ──
-    if (state.phase === 'EVALUATING' && !shotDone.current) {
-      shotDone.current = true
-
-      const newlyPocketed = state.pocketedBalls.filter(b => !preShotPocketed.includes(b))
-      const cuePocketed = newlyPocketed.includes(0 as BallId)
-
-      const shotData = {
-        pocketed: newlyPocketed,
-        firstContact: firstContactThisShot,
-        cueBallPocketed: cuePocketed,
-        cueBallStopped: { x: 0, y: 0, z: 0 },
-      }
-
-      const evaluation = evaluateShotResult(shotData, {
-        phase: state.phase,
-        currentPlayer: state.currentPlayer,
-        playerGroups: state.playerGroups,
-        pocketedBalls: state.pocketedBalls,
-        scores: state.scores,
-        foul: state.foul,
-        winner: state.winner,
-        ballInHand: state.ballInHand,
-        ballInHandPosition: state.ballInHandPosition,
-        breakShot: state.breakShot,
-        groupsAssigned: state.groupsAssigned,
-      })
-
-      // Assign groups if needed
-      if (evaluation.ballGroupAssigned && !state.groupsAssigned) {
-        const firstPocketedNonCue = newlyPocketed.find(b => b !== 0 && b !== 8)
-        if (firstPocketedNonCue !== undefined) {
-          const group = getBallGroup(firstPocketedNonCue)
-          if (group) {
-            state.assignGroups(state.currentPlayer, group)
-          }
-        }
-      }
-
-      if (evaluation.gameOver) {
-        state.setGameOver(evaluation.winner!)
-      } else if (evaluation.foul) {
-        state.setFoul(evaluation.foul)
-        state.setBallInHand(true)
-        state.nextTurn(evaluation.nextPlayer)
-      } else {
-        state.nextTurn(evaluation.nextPlayer)
-      }
-
-      state.setBreakShot(false)
-      aimState.reset()
-      firstContactThisShot = null
-    }
-
-    if (phase !== 'EVALUATING') {
-      shotDone.current = false
     }
   })
 
@@ -325,7 +280,7 @@ export default function GameController() {
           raycaster.ray.intersectPlane(plane, hit)
           if (hit) {
             placeCueBall(hit.x, hit.z)
-            state.setBallInHand(false)
+            state.setBallInHand(null)
           }
         }
       }
@@ -338,25 +293,17 @@ export default function GameController() {
         // Save pre-shot state
         preShotPocketed = [...state.pocketedBalls]
         firstContactThisShot = null
+        newlyPocketedThisShot = []
         settledFrames.current = 0
 
         // Save snapshot for undo
-        const ballStates: BallState[] = []
-        for (const [id, body] of ballBodies) {
-          ballStates.push({
-            id: id as BallId,
-            position: [body.position.x, body.position.y, body.position.z],
-            velocity: [body.velocity.x, body.velocity.y, body.velocity.z],
-            angularVelocity: [body.angularVelocity.x, body.angularVelocity.y, body.angularVelocity.z],
-            pocketed: state.pocketedBalls.includes(id as BallId),
-          })
-        }
-        state.saveSnapshot(ballStates)
+        state.takeSnapshot()
 
         // Apply impulse to cue ball
         const cueBody = ballBodies.get(0)
         if (cueBody) {
-          const dir = aimState.direction.clone().normalize()
+          const dirVec = new THREE.Vector3(aimState.direction.x, aimState.direction.y, aimState.direction.z)
+          const dir = dirVec.clone().normalize()
           const impulse = new CANNON.Vec3(
             dir.x * aimState.power * MAX_IMPULSE,
             0,
@@ -377,10 +324,7 @@ export default function GameController() {
       if (e.key === 'u' || e.key === 'U') {
         const state = useGameStore.getState()
         if (state.phase === 'IDLE') {
-          const snapshot = state.undo()
-          if (snapshot) {
-            resetBallPositions()
-          }
+          state.undo()
         }
       }
     }

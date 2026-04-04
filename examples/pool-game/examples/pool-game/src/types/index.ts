@@ -1,4 +1,4 @@
-import { Vector3 } from 'three';
+// src/types/index.ts
 
 export type BallId = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15;
 export type BallGroup = 'solids' | 'stripes' | null;
@@ -36,11 +36,6 @@ export interface Vec3 {
   x: number;
   y: number;
   z: number;
-}
-
-export interface Snapshot {
-  ballPositions: Map<BallId, [number, number, number]>;
-  gameState: GameState;
 }
 
 export const BALL_IDS: BallId[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];

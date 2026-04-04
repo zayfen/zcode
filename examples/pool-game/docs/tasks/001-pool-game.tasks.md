@@ -8,13 +8,12 @@
 
 ### T01: Initialize Vite Project
 
-- **Description**: Create Vite + React + TypeScript project at `examples/pool-game/`
+- **Description**: Setup Vite + React + TypeScript project at current directory `examples/pool-game/` WITHOUT DELETING ANY EXISTING FILES.
 - **Actions**:
-  - Run `npm create vite@latest pool-game -- --template react-ts` in `examples/`
-  - Verify `npm run dev` and `npm run build` work
-  - Clean default boilerplate (remove App.css, assets/)
+  - The `pool-game` directory and `docs/` already exist. DO NOT run `rm -rf` on this directory or its parent!
+  - If package.json is missing, generate a simple Vite react-ts package.json manually, or run `npm init -y` and add vite.
 - **Dependencies**: None
-- **Acceptance**: `npm run dev` starts without errors, `npm run build` produces a bundle
+- **Acceptance**: `package.json` exists.
 
 ### T02: Install 3D Dependencies
 

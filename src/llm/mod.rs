@@ -363,6 +363,7 @@ mod tests {
             content: "Hello, world!".to_string(),
             model: "claude-3".to_string(),
             usage: None,
+            raw_response: serde_json::Value::Null,
         };
         assert_eq!(response.content, "Hello, world!");
         assert_eq!(response.model, "claude-3");
@@ -378,6 +379,7 @@ mod tests {
                 input_tokens: 100,
                 output_tokens: 50,
             }),
+            raw_response: serde_json::Value::Null,
         };
         assert!(response.usage.is_some());
         let usage = response.usage.unwrap();
@@ -391,6 +393,7 @@ mod tests {
             content: "".to_string(),
             model: "test".to_string(),
             usage: None,
+            raw_response: serde_json::Value::Null,
         };
         assert_eq!(response.content, "");
     }
@@ -401,6 +404,7 @@ mod tests {
             content: "test".to_string(),
             model: "claude".to_string(),
             usage: None,
+            raw_response: serde_json::Value::Null,
         };
         let cloned = response.clone();
         assert_eq!(response.content, cloned.content);
@@ -413,6 +417,7 @@ mod tests {
             content: "test".to_string(),
             model: "claude".to_string(),
             usage: None,
+            raw_response: serde_json::Value::Null,
         };
         let debug_str = format!("{:?}", response);
         assert!(debug_str.contains("LlmResponse"));

@@ -406,7 +406,7 @@ mod tests {
         let result = agent_loop.run(
             "What is 2+2?",
             &[],
-            |_messages| async { Ok(LlmResponse::Text("The answer is 4.".to_string())) },
+            |_messages: Vec<serde_json::Value>, _tools: Vec<serde_json::Value>| async { Ok(LlmResponse::Text("The answer is 4.".to_string())) },
         ).await.unwrap();
 
         assert_eq!(result.answer, "The answer is 4.");
@@ -428,17 +428,15 @@ mod tests {
         let result = agent_loop.run(
             "Can you add 3 and 4?",
             &[],
-            |_msgs| {
+            |_msgs: Vec<serde_json::Value>, _tools: Vec<serde_json::Value>| {
                 let n = call_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
                 async move {
                     if n == 1 {
                         Ok(LlmResponse::ToolCalls(vec![json!({
+                            "type": "tool_use",
                             "id": "call-1",
-                            "type": "function",
-                            "function": {
-                                "name": "add",
-                                "arguments": "{\"a\": 3, \"b\": 4}"
-                            }
+                            "name": "add",
+                            "input": {"a": 3, "b": 4}
                         })]))
                     } else {
                         Ok(LlmResponse::Text("3 + 4 = 7".to_string()))
@@ -465,7 +463,7 @@ mod tests {
         let result = agent_loop.run(
             "Loop forever",
             &[],
-            |_| async {
+            |_: Vec<serde_json::Value>, _: Vec<serde_json::Value>| async {
                 Ok(LlmResponse::ToolCalls(vec![json!({
                     "id": "call-x",
                     "type": "function",

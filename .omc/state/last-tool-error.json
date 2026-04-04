@@ -1,7 +1,0 @@
-{
-  "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"git merge feature/glm5 --no-edit\",\"description\":\"Merge feature/glm5 into master\"}",
-  "error": "Exit code 1\nAuto-merging Cargo.lock\nCONFLICT (content): Merge conflict in Cargo.lock\nAuto-merging Cargo.toml\nCONFLICT (modify/delete): src/agent.rs deleted in feature/glm5 and modified in HEAD.  Version HEAD of src/agent.rs left in tree.\nAuto-merging src/error.rs\nAuto-merging src/lib.rs\nCONFLICT (content): Merge conflict in src/lib.rs\nAuto-merging src/llm/provider.rs\nCONFLICT (content): Merge conflict in src/llm/provider.rs\nAuto-merging src/main.rs\nCONFLICT (content): Merge conflict in src/main....",
-  "timestamp": "2026-04-04T08:09:26.725Z",
-  "retry_count": 1
-}

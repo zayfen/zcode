@@ -230,11 +230,11 @@ async fn execute_run(task: &str, resume_id: Option<&str>, max_iterations: usize,
     let result = agent_loop.run(
         task,
         &[],
-        move |messages, tools| {
+        move |messages: Vec<serde_json::Value>, tools: Vec<serde_json::Value>| {
             let p = Arc::clone(&provider_clone);
             async move {
                 let llm_messages: Vec<Message> = messages.iter()
-                    .filter_map(|v| {
+                    .filter_map(|v: &serde_json::Value| {
                         let role = v.get("role")?.as_str()?;
                         let content = v.get("content")?.as_str().unwrap_or("").to_string();
                         let role = match role {

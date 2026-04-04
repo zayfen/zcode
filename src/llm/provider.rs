@@ -198,7 +198,7 @@ impl RigProvider {
             AgentLlmResponse::Text(t) => t.clone(),
             AgentLlmResponse::ToolCalls(calls) => calls
                 .iter()
-                .filter_map(|c| c.get("name").and_then(|n| n.as_str()))
+                .filter_map(|c: &serde_json::Value| c.get("name").and_then(|n: &serde_json::Value| n.as_str()))
                 .collect::<Vec<_>>()
                 .join(", "),
         };
@@ -378,7 +378,7 @@ mod tests {
     fn test_mock_provider_chat_basic() {
         let provider = MockLlmProvider::new("Response");
         let messages = vec![Message::user("Hello")];
-        let response = provider.chat(&messages).unwrap();
+        let response = provider.chat(&messages, &[]).unwrap();
         assert_eq!(response.content, "Response");
     }
 
@@ -386,7 +386,7 @@ mod tests {
     fn test_mock_provider_chat_model_field() {
         let provider = MockLlmProvider::new("Response");
         let messages = vec![Message::user("Hello")];
-        let response = provider.chat(&messages).unwrap();
+        let response = provider.chat(&messages, &[]).unwrap();
         assert_eq!(response.model, "mock-model");
     }
 
@@ -394,7 +394,7 @@ mod tests {
     fn test_mock_provider_chat_usage_stats() {
         let provider = MockLlmProvider::new("Response");
         let messages = vec![Message::user("Hello")];
-        let response = provider.chat(&messages).unwrap();
+        let response = provider.chat(&messages, &[]).unwrap();
         assert!(response.usage.is_some());
         let usage = response.usage.unwrap();
         assert_eq!(usage.input_tokens, 10);
@@ -405,7 +405,7 @@ mod tests {
     fn test_mock_provider_chat_empty_messages() {
         let provider = MockLlmProvider::new("Response");
         let messages: Vec<Message> = vec![];
-        let response = provider.chat(&messages).unwrap();
+        let response = provider.chat(&messages, &[]).unwrap();
         assert_eq!(response.content, "Response");
     }
 
@@ -418,7 +418,7 @@ mod tests {
             Message::assistant("Hello"),
             Message::user("How are you?"),
         ];
-        let response = provider.chat(&messages).unwrap();
+        let response = provider.chat(&messages, &[]).unwrap();
         assert_eq!(response.content, "Response");
     }
 
@@ -462,6 +462,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "makes real HTTP call, run with -- --ignored"]
     fn test_rig_provider_complete_with_api_key() {
         // RigProvider now makes real HTTP calls. With an invalid test key it errors.
         let config = LlmConfig {
@@ -499,6 +500,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "makes real HTTP call, run with -- --ignored"]
     fn test_rig_provider_chat_with_api_key() {
         // Real HTTP call with invalid key errors
         let config = LlmConfig {
@@ -507,7 +509,7 @@ mod tests {
         };
         let provider = RigProvider::new(config);
         let messages = vec![Message::user("Hello")];
-        let result = provider.chat(&messages);
+        let result = provider.chat(&messages, &[]);
         assert!(result.is_err(), "Expected HTTP/API error with invalid key");
     }
 
@@ -516,7 +518,7 @@ mod tests {
         // Use MockLlmProvider to verify response structure
         let provider = MockLlmProvider::new("reply");
         let messages = vec![Message::user("Hello")];
-        let response = provider.chat(&messages).unwrap();
+        let response = provider.chat(&messages, &[]).unwrap();
         assert_eq!(response.model, "mock-model");
     }
 
@@ -529,7 +531,7 @@ mod tests {
             Message::assistant("Response"),
             Message::user("Last message"),
         ];
-        let response = provider.chat(&messages).unwrap();
+        let response = provider.chat(&messages, &[]).unwrap();
         assert_eq!(response.content, "mock reply");
     }
 
@@ -537,7 +539,7 @@ mod tests {
     fn test_rig_provider_chat_no_user_message() {
         let provider = MockLlmProvider::new("mock");
         let messages = vec![Message::assistant("Just assistant")];
-        let response = provider.chat(&messages).unwrap();
+        let response = provider.chat(&messages, &[]).unwrap();
         assert!(!response.content.is_empty());
     }
 
@@ -546,7 +548,7 @@ mod tests {
         // MockLlmProvider returns 10/5 tokens
         let provider = MockLlmProvider::new("hello");
         let messages = vec![Message::user("Hello")];
-        let response = provider.chat(&messages).unwrap();
+        let response = provider.chat(&messages, &[]).unwrap();
         assert!(response.usage.is_some());
         let usage = response.usage.unwrap();
         assert_eq!(usage.input_tokens, 10);
@@ -561,11 +563,12 @@ mod tests {
         };
         let provider = RigProvider::new(config);
         let messages = vec![Message::user("Hello")];
-        let result = provider.chat(&messages);
+        let result = provider.chat(&messages, &[]);
         assert!(result.is_err());
     }
 
     #[tokio::test]
+    #[ignore = "makes real HTTP call, run with -- --ignored"]
     async fn test_rig_provider_stream_complete_with_api_key() {
         // stream_complete calls complete() internally, which makes real HTTP
         // with invalid key → should return Err before creating a stream

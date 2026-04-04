@@ -19,7 +19,7 @@ A modular AI coding agent CLI tool built in Rust. Zcode provides multi-agent orc
 ## Subdirectories
 | Directory | Purpose |
 |-----------|---------|
-| `src/` | All source code — 16 submodules (see `src/AGENTS.md`) |
+| `src/` | All source code — 17 submodules (see `src/AGENTS.md`) |
 | `tests/` | Integration tests (see `tests/AGENTS.md`) |
 | `docs/` | Design docs, PRDs, specs, plans (see `docs/AGENTS.md`) |
 | `templates/` | Document templates for PRD, spec, tasks, etc. (see `templates/AGENTS.md`) |

@@ -129,6 +129,66 @@
   },
   "hotPaths": [
     {
+      "path": "src/agent/mod.rs",
+      "accessCount": 7,
+      "lastAccessed": 1775293999629,
+      "type": "file"
+    },
+    {
+      "path": "src/agent/graph/presets.rs",
+      "accessCount": 4,
+      "lastAccessed": 1775293938915,
+      "type": "file"
+    },
+    {
+      "path": "src/agent/graph/checkpoint.rs",
+      "accessCount": 4,
+      "lastAccessed": 1775294005337,
+      "type": "file"
+    },
+    {
+      "path": "src/agent/graph/edge.rs",
+      "accessCount": 4,
+      "lastAccessed": 1775294005391,
+      "type": "file"
+    },
+    {
+      "path": "src/agent/graph/state.rs",
+      "accessCount": 4,
+      "lastAccessed": 1775294005442,
+      "type": "file"
+    },
+    {
+      "path": "src/agent/graph/node.rs",
+      "accessCount": 4,
+      "lastAccessed": 1775294005500,
+      "type": "file"
+    },
+    {
+      "path": "src/agent/graph/mod.rs",
+      "accessCount": 3,
+      "lastAccessed": 1775293979538,
+      "type": "file"
+    },
+    {
+      "path": "src/agent/loop_exec.rs",
+      "accessCount": 2,
+      "lastAccessed": 1775293141374,
+      "type": "file"
+    },
+    {
+      "path": "src/agent/types.rs",
+      "accessCount": 2,
+      "lastAccessed": 1775293141432,
+      "type": "file"
+    },
+    {
+      "path": "src/agent/graph/graph.rs",
+      "accessCount": 2,
+      "lastAccessed": 1775293587199,
+      "type": "file"
+    },
+    {
       "path": "src/lib.rs",
       "accessCount": 1,
       "lastAccessed": 1775290180459,
@@ -175,6 +235,30 @@
       "accessCount": 1,
       "lastAccessed": 1775290192086,
       "type": "file"
+    },
+    {
+      "path": "src/agent/traits.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775292655479,
+      "type": "file"
+    },
+    {
+      "path": "src/agent/orchestrator.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775292660751,
+      "type": "file"
+    },
+    {
+      "path": "src/error.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775293141322,
+      "type": "directory"
+    },
+    {
+      "path": "Cargo.toml",
+      "accessCount": 1,
+      "lastAccessed": 1775293158528,
+      "type": "directory"
     }
   ],
   "userDirectives": []

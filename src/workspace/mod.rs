@@ -31,6 +31,8 @@ pub struct WorkspaceInfo {
 pub struct WorkspaceContext {
     /// The user's request / task description
     pub task: String,
+    /// Changed file paths (Agentic Pull summary)
+    pub changed_file_paths: Vec<String>,
     /// Relevant file contents (path → content)
     pub files: Vec<(String, String)>,
     /// Git diff patch (if applicable)
@@ -45,6 +47,13 @@ impl WorkspaceContext {
     /// Format the context as an LLM prompt addition
     pub fn as_prompt_context(&self) -> String {
         let mut parts = Vec::new();
+
+        if !self.changed_file_paths.is_empty() {
+            parts.push(format!(
+                "## Changed Files\nThe following files have pending changes:\n{}\n\n=> INSTRUCTION: To understand the codebase, use the `read_file` or `grep_search` tools to investigate these files before proceeding.",
+                self.changed_file_paths.iter().map(|p| format!("- {}", p)).collect::<Vec<_>>().join("\n")
+            ));
+        }
 
         if !self.files.is_empty() {
             parts.push(format!(
@@ -158,12 +167,14 @@ impl Workspace {
             ctx.diff_patch = diff.patch.chars().take(max_chars / 2).collect();
             ctx.recent_commits = GitDiff::recent_commits(&self.root, 5).unwrap_or_default();
 
-            // Load changed file contents (up to budget)
-            let mut used = ctx.diff_patch.len();
-            for (path, content) in diff.load_changed_contents() {
-                if used + content.len() > max_chars { break; }
-                used += content.len();
-                ctx.files.push((path, content));
+            // Under Agentic Pull, we just provide the paths. We intentionally do NOT
+            // load the full changed contents to avoid exceeding tokens, relying
+            // instead on the agent to read dynamically if needed.
+            for file in &diff.changed_files {
+                // To support FileStatus we might need to match or just exclude deleted.
+                // It's defined as crate::git::diff::FileStatus but imported indirectly.
+                // Assuming diff.changed_files has a `status` field.
+                ctx.changed_file_paths.push(file.path.clone());
             }
         }
 

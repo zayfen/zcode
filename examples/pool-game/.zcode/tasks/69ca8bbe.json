@@ -1,0 +1,11 @@
+{
+  "id": "69ca8bbe",
+  "task": "Fix the top-down camera toggle in the pool game. The cameraMode state exists in aimStore.ts ('orbit' | 'topdown') but Scene.tsx never reads it. When user presses T key, the camera should switch between the existing perspective/OrbitControls view and an orthographic top-down view looking straight down at the table. Modify Scene.tsx to read cameraMode from useAimStore and conditionally render either the current perspective camera setup or an orthographic camera at a top-down position. Keep all existing lighting, physics, fog and other elements unchanged.",
+  "status": "failed",
+  "created_at": 1774881726,
+  "updated_at": 1774881726,
+  "iteration": 0,
+  "history": [],
+  "result": null,
+  "error": "LLM API error: Anthropic API error (401 Unauthorized): Header中未收到Authorization参数，无法进行身份验证。"
+}

@@ -1,0 +1,629 @@
+{
+  "id": "69ca8c8b",
+  "task": "Fix the top-down camera toggle in the pool game. The cameraMode state exists in aimStore.ts ('orbit' | 'topdown') but Scene.tsx never reads it. When user presses T key, the camera should switch between the existing perspective/OrbitControls view and an orthographic top-down view looking straight down at the table. Modify Scene.tsx to read cameraMode from useAimStore and conditionally render either the current perspective camera setup or an orthographic camera at a top-down position. Keep all existing lighting, physics, fog and other elements unchanged.",
+  "status": "completed",
+  "created_at": 1774881931,
+  "updated_at": 1774882163,
+  "iteration": 24,
+  "history": [
+    {
+      "role": "system",
+      "content": "You are zcode, a senior AI coding agent using model glm-5.1. You have access to tools for reading/writing files, running shell commands, and searching code. Execute the user's task completely and report results."
+    },
+    {
+      "role": "user",
+      "content": "Fix the top-down camera toggle in the pool game. The cameraMode state exists in aimStore.ts ('orbit' | 'topdown') but Scene.tsx never reads it. When user presses T key, the camera should switch between the existing perspective/OrbitControls view and an orthographic top-down view looking straight down at the table. Modify Scene.tsx to read cameraMode from useAimStore and conditionally render either the current perspective camera setup or an orthographic camera at a top-down position. Keep all existing lighting, physics, fog and other elements unchanged."
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_86642930a9f2434eae889df5",
+          "input": {
+            "pattern": "**/*.{ts,tsx}"
+          },
+          "name": "glob",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"count\":0,\"files\":[],\"pattern\":\"**/*.{ts,tsx}\"}",
+      "tool_call_id": "call_86642930a9f2434eae889df5",
+      "name": "glob"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_deba00586972499b84d8c809",
+          "input": {
+            "args": [
+              "-la"
+            ],
+            "command": "ls"
+          },
+          "name": "shell",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_4def7b6680f54beeaa447670",
+          "input": {
+            "pattern": "**/*.{ts,tsx,js,jsx}"
+          },
+          "name": "glob",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"command\":\"ls\",\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"total 336\\ndrwxr-xr-x@  19 riven  staff     608 Mar 29 15:45 .\\ndrwxr-xr-x@   4 riven  staff     128 Mar 29 15:24 ..\\n-rw-r--r--@   1 riven  staff     253 Mar 29 15:24 .gitignore\\ndrwxr-xr-x@   4 riven  staff     128 Mar 30 22:41 .omc\\ndrwxr-xr-x@   3 riven  staff      96 Mar 29 15:29 .zcode\\ndrwxr-xr-x@   6 riven  staff     192 Mar 30 22:39 dist\\ndrwxr-xr-x@   7 riven  staff     224 Mar 29 14:03 docs\\n-rw-r--r--@   1 riven  staff     616 Mar 29 15:24 eslint.config.js\\n-rw-r--r--@   1 riven  staff     365 Mar 29 15:24 index.html\\ndrwxr-xr-x@ 178 riven  staff    5696 Mar 29 15:45 node_modules\\n-rw-r--r--@   1 riven  staff  134304 Mar 29 15:25 package-lock.json\\n-rw-r--r--@   1 riven  staff     934 Mar 29 15:25 package.json\\ndrwxr-xr-x@   4 riven  staff     128 Mar 29 15:24 public\\n-rw-r--r--@   1 riven  staff    2425 Mar 29 15:24 README.md\\ndrwxr-xr-x@  13 riven  staff     416 Mar 29 15:50 src\\n-rw-r--r--@   1 riven  staff     732 Mar 29 15:24 tsconfig.app.json\\n-rw-r--r--@   1 riven  staff     119 Mar 29 15:24 tsconfig.json\\n-rw-r--r--@   1 riven  staff     653 Mar 29 15:24 tsconfig.node.json\\n-rw-r--r--@   1 riven  staff     161 Mar 29 15:24 vite.config.ts\\n\",\"success\":true,\"timeout_ms\":30000}",
+      "tool_call_id": "call_deba00586972499b84d8c809",
+      "name": "shell"
+    },
+    {
+      "role": "tool",
+      "content": "{\"count\":0,\"files\":[],\"pattern\":\"**/*.{ts,tsx,js,jsx}\"}",
+      "tool_call_id": "call_4def7b6680f54beeaa447670",
+      "name": "glob"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_173dea71afd24faebe7913bd",
+          "input": {
+            "command": "find . -type f -not -path './node_modules/*' -not -path './dist/*' -not -path './.git/*' -not -path './.omc/*' -not -path './.zcode/*' | head -100"
+          },
+          "name": "shell",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"error\":\"Tool 'shell' execution failed: Failed to execute 'find . -type f -not -path './node_modules/*' -not -path './dist/*' -not -path './.git/*' -not -path './.omc/*' -not -path './.zcode/*' | head -100': No such file or directory (os error 2)\"}",
+      "tool_call_id": "call_173dea71afd24faebe7913bd",
+      "name": "shell"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_22cd2b7f79064ec08f9aaada",
+          "input": {
+            "command": "ls -la src/"
+          },
+          "name": "shell",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"error\":\"Tool 'shell' execution failed: Failed to execute 'ls -la src/': No such file or directory (os error 2)\"}",
+      "tool_call_id": "call_22cd2b7f79064ec08f9aaada",
+      "name": "shell"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_9010e3f158a448a894dfceb3",
+          "input": {
+            "args": [
+              "-la",
+              "src/"
+            ],
+            "command": "ls"
+          },
+          "name": "shell",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"command\":\"ls\",\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"total 24\\ndrwxr-xr-x@ 13 riven  staff  416 Mar 29 15:50 .\\ndrwxr-xr-x@ 19 riven  staff  608 Mar 29 15:45 ..\\n-rw-r--r--@  1 riven  staff  659 Mar 29 15:50 App.tsx\\ndrwxr-xr-x@ 11 riven  staff  352 Mar 29 15:56 components\\ndrwxr-xr-x@  5 riven  staff  160 Mar 29 15:55 constants\\ndrwxr-xr-x@  4 riven  staff  128 Mar 29 17:01 game-logic\\ndrwxr-xr-x@  7 riven  staff  224 Mar 29 15:56 hooks\\n-rw-r--r--@  1 riven  staff  309 Mar 29 15:45 main.tsx\\ndrwxr-xr-x@  6 riven  staff  192 Mar 29 15:54 physics\\ndrwxr-xr-x@  5 riven  staff  160 Mar 29 15:51 store\\ndrwxr-xr-x@  3 riven  staff   96 Mar 29 15:44 types\\ndrwxr-xr-x@  4 riven  staff  128 Mar 29 15:55 utils\\n-rw-r--r--@  1 riven  staff   38 Mar 29 15:45 vite-env.d.ts\\n\",\"success\":true,\"timeout_ms\":30000}",
+      "tool_call_id": "call_9010e3f158a448a894dfceb3",
+      "name": "shell"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_e7bd893a60b94bf98ce589e1",
+          "input": {
+            "path": "src/store/aimStore.ts"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_f0bffafafdc440cc94c049bd",
+          "input": {
+            "path": "src/components/Scene.tsx"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_53e7612bd0874132bbe2074a",
+          "input": {
+            "path": "src/App.tsx"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"import { create } from 'zustand';\\nimport type { Vec3Tuple } from '../types';\\n\\n// ---------------------------------------------------------------------------\\n// Aim store — Phase 6 (T17)\\n//\\n// Tracks the player's aim direction, shot power, charging state, and camera\\n// mode.  Updated every frame by the useAim hook (mouse movement) and the\\n// usePower hook (charging animation).\\n// ---------------------------------------------------------------------------\\n\\ninterface AimStoreState {\\n  /** Normalised aim direction on the XZ plane */\\n  direction: Vec3Tuple;\\n  /** Shot power clamped to [0, 1] */\\n  power: number;\\n  /** True while the player is holding the mouse button to charge power */\\n  isCharging: boolean;\\n  /** Camera mode toggle */\\n  cameraMode: 'orbit' | 'topdown';\\n}\\n\\ninterface AimStoreActions {\\n  setDirection: (dir: Vec3Tuple) => void;\\n  setPower: (power: number) => void;\\n  /** Alias: set isCharging to true */\\n  setIsCharging: (charging: boolean) => void;\\n  /** Begin charging from 0 */\\n  startCharging: () => void;\\n  /** Stop charging (power stays at current value) */\\n  stopCharging: () => void;\\n  /** Reset power and charging for next shot */\\n  resetPower: () => void;\\n  toggleCameraMode: () => void;\\n  setCameraMode: (mode: 'orbit' | 'topdown') => void;\\n}\\n\\nexport const useAimStore = create<AimStoreState & AimStoreActions>((set) => ({\\n  direction: [0, 0, 1],\\n  power: 0,\\n  isCharging: false,\\n  cameraMode: 'orbit',\\n\\n  setDirection: (dir: Vec3Tuple) => set({ direction: dir }),\\n  setPower: (power: number) => set({ power: Math.min(1, Math.max(0, power)) }),\\n  setIsCharging: (charging: boolean) => set({ isCharging: charging }),\\n  startCharging: () => set({ isCharging: true, power: 0 }),\\n  stopCharging: () => set({ isCharging: false }),\\n  resetPower: () => set({ power: 0, isCharging: false }),\\n  toggleCameraMode: () =>\\n    set((s) => ({ cameraMode: s.cameraMode === 'orbit' ? 'topdown' : 'orbit' })),\\n  setCameraMode: (mode) => set({ cameraMode: mode }),\\n}));\",\"end_line\":52,\"start_line\":0,\"total_lines\":53}",
+      "tool_call_id": "call_e7bd893a60b94bf98ce589e1",
+      "name": "file_read"
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"import { Canvas } from '@react-three/fiber';\\nimport * as THREE from 'three';\\nimport { OrbitControls } from '@react-three/drei';\\nimport Table from './Table';\\nimport Balls from './Balls';\\nimport CueStick from './CueStick';\\nimport AimLine from './AimLine';\\nimport PhysicsWorld from '../physics/PhysicsWorld';\\nimport useSettleDetector from '../hooks/useSettleDetector';\\nimport useShotSequence from '../hooks/useShotSequence';\\nimport {\\n  CAMERA_DEFAULT_POSITION,\\n  CAMERA_FOV,\\n  HALF_LENGTH,\\n  HALF_WIDTH,\\n  FLOOR_Y,\\n} from '../constants/table';\\n\\n/**\\n * Wrapper for game hooks that must run inside the Canvas/Physics context.\\n */\\nfunction GameHooks() {\\n  useSettleDetector();\\n  useShotSequence();\\n  return null;\\n}\\n\\n/**\\n * R3F Canvas with PCFSoftShadowMap (2048×2048), perspective camera (45 deg FOV)\\n * positioned above the table at an angle, ambient + directional + point lights,\\n * and OrbitControls constrained so the user cannot go below the table.\\n *\\n * Phase 8 (T25): shadow map upgraded to PCFSoftShadowMap for soft shadow edges,\\n * directional light shadow camera covers the full table area, balls cast shadows\\n * onto the felt surface.\\n */\\nexport default function Scene() {\\n  const orbitTarget: [number, number, number] = [0, 0, 0];\\n\\n  return (\\n    <Canvas\\n      shadows\\n      gl={{\\n        shadowMap: {\\n          enabled: true,\\n          type: THREE.PCFSoftShadowMap,\\n        } as any,\\n      }}\\n      camera={{\\n        position: CAMERA_DEFAULT_POSITION,\\n        fov: CAMERA_FOV,\\n        near: 0.01,\\n        far: 50,\\n      }}\\n      style={{ width: '100%', height: '100%' }}\\n    >\\n      <color attach=\\\"background\\\" args={['#1a1a2e']} />\\n\\n      {/* Lighting */}\\n      <ambientLight intensity={0.35} color=\\\"#ffffff\\\" />\\n      <directionalLight\\n        position={[0, 3, 0.5]}\\n        intensity={1.2}\\n        color=\\\"#fffbe6\\\"\\n        castShadow\\n        shadow-mapSize-width={2048}\\n        shadow-mapSize-height={2048}\\n        shadow-camera-near={0.5}\\n        shadow-camera-far={8}\\n        shadow-camera-left={-HALF_WIDTH - 0.3}\\n        shadow-camera-right={HALF_WIDTH + 0.3}\\n        shadow-camera-top={HALF_LENGTH + 0.3}\\n        shadow-camera-bottom={-HALF_LENGTH - 0.3}\\n        shadow-bias={-0.0005}\\n        shadow-normalBias={0.02}\\n      />\\n      <pointLight\\n        position={[-HALF_WIDTH * 0.4, 1.5, -HALF_LENGTH * 0.6]}\\n        intensity={0.5}\\n        color=\\\"#fff5e6\\\"\\n        distance={5}\\n        decay={2}\\n      />\\n      <pointLight\\n        position={[HALF_WIDTH * 0.4, 1.5, HALF_LENGTH * 0.6]}\\n        intensity={0.5}\\n        color=\\\"#fff5e6\\\"\\n        distance={5}\\n        decay={2}\\n      />\\n\\n      {/* Physics world wrapping all game objects */}\\n      <PhysicsWorld>\\n        <Table />\\n        <Balls />\\n        <CueStick />\\n        <AimLine />\\n        <GameHooks />\\n      </PhysicsWorld>\\n\\n      {/* Camera controls */}\\n      <OrbitControls\\n        target={orbitTarget}\\n        enablePan={false}\\n        enableDamping\\n        dampingFactor={0.08}\\n        minPolarAngle={0.2}\\n        maxPolarAngle={Math.PI / 2.15}\\n        minDistance={0.8}\\n        maxDistance={4.5}\\n      />\\n\\n      {/* ── Dark floor plane beneath table (Phase 8, T25) ── */}\\n      <mesh\\n        rotation={[-Math.PI / 2, 0, 0]}\\n        position={[0, FLOOR_Y, 0]}\\n        receiveShadow\\n      >\\n        <planeGeometry args={[20, 20]} />\\n        <meshStandardMaterial color=\\\"#0e0806\\\" roughness={0.95} metalness={0} />\\n      </mesh>\\n\\n      <fog attach=\\\"fog\\\" args={['#1a1a2e', 6, 14]} />\\n    </Canvas>\\n  );\\n}\",\"end_line\":125,\"start_line\":0,\"total_lines\":126}",
+      "tool_call_id": "call_f0bffafafdc440cc94c049bd",
+      "name": "file_read"
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"import Scene from './components/Scene';\\nimport GameUI from './components/GameUI';\\n\\n/**\\n * Root component for the 3D 8-Ball Pool Game.\\n *\\n * Architecture:\\n *   App\\n *   ├── Scene (R3F Canvas)\\n *   │   ├── PhysicsWorld\\n *   │   ├── Table\\n *   │   ├── Balls (16x BallBody + Ball mesh)\\n *   │   ├── CueStick\\n *   │   └── AimLine\\n *   └── GameUI (HTML overlay)\\n */\\nfunction App() {\\n  return (\\n    <div\\n      style={{\\n        width: '100vw',\\n        height: '100vh',\\n        background: '#1a1a2e',\\n        overflow: 'hidden',\\n      }}\\n    >\\n      <Scene />\\n      <GameUI />\\n    </div>\\n  );\\n}\\n\\nexport default App;\",\"end_line\":32,\"start_line\":0,\"total_lines\":33}",
+      "tool_call_id": "call_53e7612bd0874132bbe2074a",
+      "name": "file_read"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_d93728e2019846ccaaa50687",
+          "input": {
+            "path": "src/constants/table.ts"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_9cba6b0072d649feb05af3f7",
+          "input": {
+            "args": [
+              "src/hooks/"
+            ],
+            "command": "ls"
+          },
+          "name": "shell",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"import type { Vec3Tuple } from '../types';\\n\\n// Table dimensions (meters)\\nexport const TABLE_LENGTH = 2.24; // Z-axis (long dimension)\\nexport const TABLE_WIDTH = 1.12;  // X-axis (short dimension)\\nexport const TABLE_HEIGHT = 0.02; // Y-axis thickness of bed\\n\\n// Rail dimensions\\nexport const RAIL_HEIGHT = 0.05;\\nexport const RAIL_WIDTH = 0.06;\\n\\n// Ball\\nexport const BALL_RADIUS = 0.0285;\\n\\n// Pocket\\nexport const POCKET_RADIUS = 0.047;\\n\\n// Playing bounds (half extents)\\nexport const HALF_LENGTH = TABLE_LENGTH / 2;\\nexport const HALF_WIDTH = TABLE_WIDTH / 2;\\n\\n// Playing surface bounds (where balls can travel, accounting for rail thickness)\\nexport const CUSHION_THICKNESS = 0.03;\\nexport const PLAYING_BOUNDS = {\\n  minX: -(HALF_WIDTH - CUSHION_THICKNESS),\\n  maxX: HALF_WIDTH - CUSHION_THICKNESS,\\n  minZ: -(HALF_LENGTH - CUSHION_THICKNESS),\\n  maxZ: HALF_LENGTH - CUSHION_THICKNESS,\\n};\\n\\n// Head string: 1/4 of table length from head rail\\n// This is the line behind which the cue ball is placed for the break\\nexport const HEAD_STRING_Z = -HALF_LENGTH / 2;\\n\\n// Foot spot: center of the foot end (for racking)\\n// Located at the intersection of the long center line and a line drawn\\n// through the foot rail's center spot\\nexport const FOOT_SPOT: Vec3Tuple = [0, 0, HALF_LENGTH / 2];\\n\\n// Pocket center positions (6 pockets)\\n// 4 corner pockets + 2 side (middle) pockets\\nexport const POCKET_POSITIONS: Vec3Tuple[] = [\\n  // Corner pockets\\n  [-HALF_WIDTH, 0, -HALF_LENGTH],  // head-left\\n  [HALF_WIDTH, 0, -HALF_LENGTH],   // head-right\\n  [-HALF_WIDTH, 0, HALF_LENGTH],   // foot-left\\n  [HALF_WIDTH, 0, HALF_LENGTH],    // foot-right\\n  // Side pockets (middle of long rails)\\n  [-HALF_WIDTH, 0, 0],             // mid-left\\n  [HALF_WIDTH, 0, 0],              // mid-right\\n];\\n\\n// Pocket labels for readability\\nexport const POCKET_LABELS = [\\n  'head-left',\\n  'head-right',\\n  'foot-left',\\n  'foot-right',\\n  'mid-left',\\n  'mid-right',\\n] as const;\\n\\n// Cushion height (how tall the cushion is above the bed)\\nexport const CUSHION_HEIGHT = BALL_RADIUS * 1.5;\\n\\n// Floor\\nexport const FLOOR_Y = -0.8;\\n\\n// Camera defaults\\nexport const CAMERA_DEFAULT_POSITION: Vec3Tuple = [0, 1.8, 1.6];\\nexport const CAMERA_FOV = 45;\",\"end_line\":70,\"start_line\":0,\"total_lines\":71}",
+      "tool_call_id": "call_d93728e2019846ccaaa50687",
+      "name": "file_read"
+    },
+    {
+      "role": "tool",
+      "content": "{\"command\":\"ls\",\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"useAim.ts\\nusePower.ts\\nuseSettleDetector.ts\\nuseShotSequence.ts\\n\",\"success\":true,\"timeout_ms\":30000}",
+      "tool_call_id": "call_9cba6b0072d649feb05af3f7",
+      "name": "shell"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_fa5f4f8cfcdc47a48055af0e",
+          "input": {
+            "path": "src/hooks/useAim.ts"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_28ae334660804c47b28e0c30",
+          "input": {
+            "args": [
+              "-rn",
+              "toggleCameraMode",
+              "cameraMode",
+              "setCameraMode"
+            ],
+            "command": "grep",
+            "timeout_ms": 10000
+          },
+          "name": "shell",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"/**\\n * Aim hook — Phase 6 (T18)\\n *\\n * Uses R3F's `useThree` to raycast from the camera through the current\\n * mouse position onto the Y = 0 table plane. The aim direction is computed\\n * as the normalized XZ vector from the cue ball position to the ray hit\\n * point, then pushed into `aimStore`.\\n *\\n * Must be used inside a `<Canvas>` component (uses `useThree`).\\n *\\n * Input flow:\\n *   mousemove (window) → computeAim(clientX, clientY) → raycast → setDirection\\n */\\nimport { useCallback, useEffect, useRef } from 'react';\\nimport { useThree } from '@react-three/fiber';\\nimport * as THREE from 'three';\\nimport { useAimStore } from '../store/aimStore';\\nimport { useGameStore } from '../store/gameStore';\\nimport type { Vec3Tuple } from '../types';\\n\\nexport default function useAim(): void {\\n  const { camera, gl } = useThree();\\n\\n  // Reusable objects to avoid GC pressure on every mouse move\\n  const raycasterRef = useRef(new THREE.Raycaster());\\n  const ndcRef = useRef(new THREE.Vector2());\\n  const hitRef = useRef(new THREE.Vector3());\\n  const tablePlane = useRef(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0));\\n\\n  const computeAim = useCallback(\\n    (mouseX: number, mouseY: number) => {\\n      const { phase, cueBallPosition } = useGameStore.getState();\\n      if (phase !== 'AIMING' && phase !== 'POWER' && phase !== 'IDLE') return;\\n\\n      const rect = gl.domElement.getBoundingClientRect();\\n      const ndcX = ((mouseX - rect.left) / rect.width) * 2 - 1;\\n      const ndcY = -((mouseY - rect.top) / rect.height) * 2 + 1;\\n\\n      ndcRef.current.set(ndcX, ndcY);\\n      raycasterRef.current.setFromCamera(ndcRef.current, camera);\\n\\n      const didHit = raycasterRef.current.ray.intersectPlane(\\n        tablePlane.current,\\n        hitRef.current,\\n      );\\n      if (!didHit) return;\\n\\n      // Direction from cue ball to hit point (XZ only)\\n      const dx = hitRef.current.x - cueBallPosition[0];\\n      const dz = hitRef.current.z - cueBallPosition[2];\\n\\n      // Ignore if hit point is too close to cue ball (degenerate)\\n      const len = Math.sqrt(dx * dx + dz * dz);\\n      if (len < 0.001) return;\\n\\n      const aimDir: Vec3Tuple = [dx / len, 0, dz / len];\\n      useAimStore.getState().setDirection(aimDir);\\n    },\\n    [camera, gl],\\n  );\\n\\n  // Attach window mousemove listener that feeds into computeAim\\n  useEffect(() => {\\n    const onMouseMove = (e: MouseEvent) => {\\n      computeAim(e.clientX, e.clientY);\\n    };\\n\\n    window.addEventListener('mousemove', onMouseMove);\\n    return () => window.removeEventListener('mousemove', onMouseMove);\\n  }, [computeAim]);\\n}\",\"end_line\":70,\"start_line\":0,\"total_lines\":71}",
+      "tool_call_id": "call_fa5f4f8cfcdc47a48055af0e",
+      "name": "file_read"
+    },
+    {
+      "role": "tool",
+      "content": "{\"command\":\"grep\",\"exit_code\":2,\"stderr\":\"grep: cameraMode: No such file or directory\\ngrep: setCameraMode: No such file or directory\\n\",\"stdout\":\"\",\"success\":false,\"timeout_ms\":10000}",
+      "tool_call_id": "call_28ae334660804c47b28e0c30",
+      "name": "shell"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_aafd6f916b1d492b902fd641",
+          "input": {
+            "args": [
+              "-rn",
+              "toggleCameraMode",
+              "--include=*.ts",
+              "--include=*.tsx",
+              "src/"
+            ],
+            "command": "grep"
+          },
+          "name": "shell",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_a20347dd3b474631a7a9ae0f",
+          "input": {
+            "args": [
+              "-rn",
+              "toggleCameraMode",
+              "--include=*.ts",
+              "--include=*.tsx",
+              "src/"
+            ],
+            "command": "grep"
+          },
+          "name": "shell",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"command\":\"grep\",\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"src/hooks/useShotSequence.ts:281:        useAimStore.getState().toggleCameraMode();\\nsrc/store/aimStore.ts:34:  toggleCameraMode: () => void;\\nsrc/store/aimStore.ts:50:  toggleCameraMode: () =>\\n\",\"success\":true,\"timeout_ms\":30000}",
+      "tool_call_id": "call_aafd6f916b1d492b902fd641",
+      "name": "shell"
+    },
+    {
+      "role": "tool",
+      "content": "{\"command\":\"grep\",\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"src/hooks/useShotSequence.ts:281:        useAimStore.getState().toggleCameraMode();\\nsrc/store/aimStore.ts:34:  toggleCameraMode: () => void;\\nsrc/store/aimStore.ts:50:  toggleCameraMode: () =>\\n\",\"success\":true,\"timeout_ms\":30000}",
+      "tool_call_id": "call_a20347dd3b474631a7a9ae0f",
+      "name": "shell"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_6230b48dbf9146d79fad5c2f",
+          "input": {
+            "path": "src/hooks/useShotSequence.ts"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"import { useEffect, useRef } from 'react';\\nimport { useGameStore } from '../store/gameStore';\\nimport { useAimStore } from '../store/aimStore';\\nimport { evaluateShotResult } from '../game-logic/rules';\\nimport type { ShotEvaluationInput } from '../game-logic/rules';\\nimport type { Vec3Tuple } from '../types';\\nimport { MAX_IMPULSE } from '../constants/physics';\\n\\n// ─────────────────────────────────────────────────────────────────────────────\\n// Ball API registry — physics bodies register their cannon-es API handles\\n// here so the shot sequence can apply impulses to the cue ball.\\n// ─────────────────────────────────────────────────────────────────────────────\\n\\nexport interface BallPhysicsApi {\\n  applyImpulse: (impulse: Vec3Tuple) => void;\\n  position: { subscribe: (cb: (v: Vec3Tuple) => void) => () => void };\\n  velocity: { subscribe: (cb: (v: Vec3Tuple) => void) => () => void };\\n}\\n\\nconst ballApis = new Map<number, BallPhysicsApi>();\\n\\nexport function registerBallApi(id: number, api: BallPhysicsApi): void {\\n  ballApis.set(id, api);\\n}\\n\\nexport function unregisterBallApi(id: number): void {\\n  ballApis.delete(id);\\n}\\n\\n/**\\n * Get the physics API for a ball (used by other systems).\\n */\\nexport function getBallApi(id: number): BallPhysicsApi | undefined {\\n  return ballApis.get(id);\\n}\\n\\n// ─────────────────────────────────────────────────────────────────────────────\\n// Shot sequence orchestrator\\n// ─────────────────────────────────────────────────────────────────────────────\\n\\n/**\\n * Hook that orchestrates the full shot lifecycle:\\n *\\n * 1. Listens for mouse/keyboard input to drive phase transitions\\n *    (IDLE → AIMING → POWER → SIMULATING)\\n * 2. Applies the cue-ball impulse on shoot\\n * 3. After settle detection transitions to EVALUATING, runs the rules engine\\n * 4. Applies evaluation results (fouls, group assignment, game over, next turn)\\n *\\n * Also integrates the useAim hook for camera-based raycasting on mousemove.\\n */\\nexport default function useShotSequence(): void {\\n  const evaluatedRef = useRef(false);\\n\\n  // ── Watch for EVALUATING phase and run rules ────────────────────────────\\n  useEffect(() => {\\n    let frameId: ReturnType<typeof requestAnimationFrame>;\\n\\n    const tick = () => {\\n      const state = useGameStore.getState();\\n\\n      if (state.phase === 'EVALUATING' && !evaluatedRef.current) {\\n        evaluatedRef.current = true;\\n\\n        // Determine if this is the break shot\\n        const isBreak = state.pocketedBalls.length === 0 && state.shotHistory.length === 0;\\n\\n        // Build evaluation input using current store state\\n        // allPocketedBalls: balls pocketed BEFORE this shot\\n        const allPocketedBeforeShot = state.shotHistory.length > 0\\n          ? state.shotHistory[0].state.pocketedBalls\\n          : [];\\n\\n        const input: ShotEvaluationInput = {\\n          currentPlayer: state.currentPlayer,\\n          playerGroups: { ...state.playerGroups },\\n          pocketedThisShot: [...state.ballsPocketedThisShot],\\n          firstContact: state.firstContact,\\n          railContact: state.railContacted,\\n          allPocketedBalls: allPocketedBeforeShot,\\n          isBreak,\\n        };\\n\\n        const result = evaluateShotResult(input);\\n\\n        // ── Apply results to store ────────────────────────────────────────\\n\\n        // Foul\\n        if (result.foul) {\\n          useGameStore.getState().setFoul(result.foul);\\n        }\\n\\n        // Group assignment\\n        if (result.assignGroup) {\\n          useGameStore.getState().assignGroups(\\n            result.assignGroup.player,\\n            result.assignGroup.group,\\n          );\\n        }\\n\\n        // Game over\\n        if (result.gameOver && result.winner !== null) {\\n          useGameStore.getState().setGameOver(result.winner);\\n          evaluatedRef.current = false;\\n          return; // stop processing\\n        }\\n\\n        // Ball-in-hand\\n        if (result.ballInHand) {\\n          useGameStore.getState().setBallInHand(true);\\n        }\\n\\n        // Transition to next turn\\n        useGameStore.getState().nextTurn(result.nextPlayer);\\n\\n        // Reset aim power for next shot\\n        useAimStore.getState().resetPower();\\n\\n        // Reset evaluation guard after a short delay to allow state to settle\\n        setTimeout(() => {\\n          evaluatedRef.current = false;\\n        }, 100);\\n      }\\n\\n      frameId = requestAnimationFrame(tick);\\n    };\\n\\n    frameId = requestAnimationFrame(tick);\\n    return () => cancelAnimationFrame(frameId);\\n  }, []);\\n\\n  // ── Input handling: mouse & keyboard ────────────────────────────────────\\n  useEffect(() => {\\n    const canvas = document.querySelector('canvas');\\n    if (!canvas) return;\\n\\n    // ── Helpers for raycasting from camera to Y=0 plane ──────────────────\\n    // We lazily import THREE to avoid requiring it at module level in this hook\\n    let raycaster: any = null;\\n    let plane: any = null;\\n    let vec2: any = null;\\n    let vec3: any = null;\\n\\n    const getThreeObjects = async () => {\\n      if (raycaster) return;\\n      const THREE = await import('three');\\n      raycaster = new THREE.Raycaster();\\n      plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);\\n      vec2 = new THREE.Vector2();\\n      vec3 = new THREE.Vector3();\\n    };\\n\\n    // Pre-initialize\\n    getThreeObjects();\\n\\n    /**\\n     * Compute aim direction from mouse position via camera raycasting.\\n     * Falls back to simple NDC-based mapping if Three.js not ready.\\n     */\\n    const computeAimFromMouse = (e: MouseEvent): Vec3Tuple | null => {\\n      const rect = canvas.getBoundingClientRect();\\n      const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;\\n      const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;\\n\\n      const store = useGameStore.getState();\\n      const cuePos = store.cueBallPosition;\\n\\n      if (raycaster && plane) {\\n        // Camera-based raycasting onto Y=0 table plane\\n        vec2.set(ndcX, ndcY);\\n\\n        // Get camera from the R3F store — we access it through a global reference\\n        // set by the Scene component\\n        const camera = (window as any).__r3f_camera;\\n        if (camera) {\\n          raycaster.setFromCamera(vec2, camera);\\n          const hit = raycaster.ray.intersectPlane(plane, vec3);\\n          if (hit) {\\n            const dx = hit.x - cuePos[0];\\n            const dz = hit.z - cuePos[2];\\n            const len = Math.sqrt(dx * dx + dz * dz);\\n            if (len > 0.001) {\\n              return [dx / len, 0, dz / len];\\n            }\\n          }\\n        }\\n      }\\n\\n      // Fallback: simple NDC angle-based aim\\n      const angle = ndcX * Math.PI;\\n      return [Math.sin(angle), 0, Math.cos(angle)];\\n    };\\n\\n    // ── Mouse down ───────────────────────────────────────────────────────\\n    const handleMouseDown = (e: MouseEvent) => {\\n      // Ignore right-click\\n      if (e.button !== 0) return;\\n\\n      const { phase, ballInHand } = useGameStore.getState();\\n\\n      // Ball-in-hand placement\\n      if (ballInHand && phase === 'IDLE') {\\n        const rect = canvas.getBoundingClientRect();\\n        const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;\\n        const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;\\n\\n        // Map NDC to approximate table coordinates\\n        const x = ndcX * 0.56; // HALF_WIDTH\\n        const z = -ndcY * 1.12; // HALF_LENGTH\\n\\n        useGameStore.getState().placeBallInHand([x, 0.0285, z]);\\n        return;\\n      }\\n\\n      if (phase === 'IDLE') {\\n        // IDLE → AIMING\\n        const aimDir = computeAimFromMouse(e);\\n        if (aimDir) {\\n          useAimStore.getState().setDirection(aimDir);\\n        }\\n        useGameStore.getState().startAiming();\\n      } else if (phase === 'AIMING') {\\n        // AIMING → POWER (start charging)\\n        useGameStore.getState().startPower();\\n        useAimStore.getState().startCharging();\\n      }\\n    };\\n\\n    // ── Mouse up ─────────────────────────────────────────────────────────\\n    const handleMouseUp = (e: MouseEvent) => {\\n      if (e.button !== 0) return;\\n\\n      const { phase } = useGameStore.getState();\\n      const { power, direction, isCharging } = useAimStore.getState();\\n\\n      if (phase === 'POWER' && isCharging) {\\n        // Calculate impulse vector\\n        const impulseMagnitude = power * MAX_IMPULSE;\\n        const impulse: Vec3Tuple = [\\n          direction[0] * impulseMagnitude,\\n          0,\\n          direction[2] * impulseMagnitude,\\n        ];\\n\\n        // Apply impulse to the cue ball via physics API\\n        const cueApi = ballApis.get(0);\\n        if (cueApi) {\\n          cueApi.applyImpulse(impulse);\\n        }\\n\\n        // Transition store: POWER → SIMULATING (also takes snapshot internally)\\n        useGameStore.getState().shoot(impulse);\\n        useAimStore.getState().stopCharging();\\n      }\\n    };\\n\\n    // ── Mouse move: update aim direction during AIMING/POWER ─────────────\\n    const handleMouseMove = (e: MouseEvent) => {\\n      const { phase } = useGameStore.getState();\\n      if (phase !== 'AIMING' && phase !== 'POWER' && phase !== 'IDLE') return;\\n\\n      const aimDir = computeAimFromMouse(e);\\n      if (aimDir) {\\n        useAimStore.getState().setDirection(aimDir);\\n      }\\n    };\\n\\n    // ── Keyboard shortcuts ───────────────────────────────────────────────\\n    const handleKeyDown = (e: KeyboardEvent) => {\\n      // Undo (U)\\n      if (e.key === 'u' || e.key === 'U') {\\n        const snapshot = useGameStore.getState().undo();\\n        if (snapshot) {\\n          useGameStore.getState().restoreSnapshot(snapshot);\\n          useAimStore.getState().resetPower();\\n        }\\n      }\\n\\n      // Camera toggle (T)\\n      if (e.key === 't' || e.key === 'T') {\\n        useAimStore.getState().toggleCameraMode();\\n      }\\n\\n      // Reset game (R)\\n      if (e.key === 'r' || e.key === 'R') {\\n        useGameStore.getState().resetGame();\\n        useAimStore.getState().resetPower();\\n      }\\n    };\\n\\n    window.addEventListener('mousedown', handleMouseDown);\\n    window.addEventListener('mouseup', handleMouseUp);\\n    window.addEventListener('mousemove', handleMouseMove);\\n    window.addEventListener('keydown', handleKeyDown);\\n\\n    return () => {\\n      window.removeEventListener('mousedown', handleMouseDown);\\n      window.removeEventListener('mouseup', handleMouseUp);\\n      window.removeEventListener('mousemove', handleMouseMove);\\n      window.removeEventListener('keydown', handleKeyDown);\\n    };\\n  }, []);\\n}\",\"end_line\":302,\"start_line\":0,\"total_lines\":303}",
+      "tool_call_id": "call_6230b48dbf9146d79fad5c2f",
+      "name": "file_read"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_e11d15bd5e6c43008e7157fa",
+          "input": {
+            "command": "grep -rn \"cameraMode\\|__r3f_camera\" src/ --include='*.ts' --include='*.tsx'"
+          },
+          "name": "shell",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"error\":\"Tool 'shell' execution failed: Failed to execute 'grep -rn \\\"cameraMode\\\\|__r3f_camera\\\" src/ --include='*.ts' --include='*.tsx'': No such file or directory (os error 2)\"}",
+      "tool_call_id": "call_e11d15bd5e6c43008e7157fa",
+      "name": "shell"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_8e98b8b320534ca8a55f5498",
+          "input": {
+            "args": [
+              "-rn",
+              "cameraMode",
+              "src/",
+              "--include=*.ts",
+              "--include=*.tsx"
+            ],
+            "command": "grep"
+          },
+          "name": "shell",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"command\":\"grep\",\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"src/types/index.ts:102:  cameraMode: 'orbit' | 'topdown';\\nsrc/store/aimStore.ts:20:  cameraMode: 'orbit' | 'topdown';\\nsrc/store/aimStore.ts:42:  cameraMode: 'orbit',\\nsrc/store/aimStore.ts:51:    set((s) => ({ cameraMode: s.cameraMode === 'orbit' ? 'topdown' : 'orbit' })),\\nsrc/store/aimStore.ts:52:  setCameraMode: (mode) => set({ cameraMode: mode }),\\n\",\"success\":true,\"timeout_ms\":30000}",
+      "tool_call_id": "call_8e98b8b320534ca8a55f5498",
+      "name": "shell"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_90e244e82b434060aef0f209",
+          "input": {
+            "args": [
+              "install",
+              "@react-three/drei"
+            ],
+            "command": "npm",
+            "timeout_ms": 60000
+          },
+          "name": "shell",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"command\":\"npm\",\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"\\nup to date in 23s\\n\\n52 packages are looking for funding\\n  run `npm fund` for details\\n\",\"success\":true,\"timeout_ms\":60000}",
+      "tool_call_id": "call_90e244e82b434060aef0f209",
+      "name": "shell"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_fc6e11b0e3e74e3790f4958b",
+          "input": {
+            "args": [
+              "ls",
+              "-la",
+              "src/"
+            ],
+            "command": "ls"
+          },
+          "name": "shell",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"command\":\"ls\",\"exit_code\":1,\"stderr\":\"ls: -la: No such file or directory\\nls: ls: No such file or directory\\n\",\"stdout\":\"src/:\\nApp.tsx\\ncomponents\\nconstants\\ngame-logic\\nhooks\\nmain.tsx\\nphysics\\nstore\\ntypes\\nutils\\nvite-env.d.ts\\n\",\"success\":false,\"timeout_ms\":30000}",
+      "tool_call_id": "call_fc6e11b0e3e74e3790f4958b",
+      "name": "shell"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_1c98bd47a4fa408daba3dfdc",
+          "input": {
+            "content": "import { Canvas, useThree } from '@react-three/fiber';\nimport * as THREE from 'three';\nimport { OrbitControls } from '@react-three/drei';\nimport { useEffect, useMemo } from 'react';\nimport Table from './Table';\nimport Balls from './Balls';\nimport CueStick from './CueStick';\nimport AimLine from './AimLine';\nimport PhysicsWorld from '../physics/PhysicsWorld';\nimport useSettleDetector from '../hooks/useSettleDetector';\nimport useShotSequence from '../hooks/useShotSequence';\nimport { useAimStore } from '../store/aimStore';\nimport {\n  CAMERA_DEFAULT_POSITION,\n  CAMERA_FOV,\n  HALF_LENGTH,\n  HALF_WIDTH,\n  FLOOR_Y,\n} from '../constants/table';\n\n/**\n * Wrapper for game hooks that must run inside the Canvas/Physics context.\n */\nfunction GameHooks() {\n  useSettleDetector();\n  useShotSequence();\n  return null;\n}\n\n/**\n * Keeps the R3F camera reference on `window.__r3f_camera` so that\n * useShotSequence (which runs outside of `<Canvas>`) can access the\n * current camera for raycasting.\n */\nfunction CameraRefSync() {\n  const { camera } = useThree();\n  useEffect(() => {\n    (window as any).__r3f_camera = camera;\n  }, [camera]);\n  return null;\n}\n\n/**\n * When in top-down mode we need an orthographic camera that covers the\n * full table.  This component listens to `cameraMode` and imperatively\n * switches the R3F camera between the default perspective camera and a\n * suitable orthographic camera.\n */\nfunction CameraSwitcher() {\n  const cameraMode = useAimStore((s) => s.cameraMode);\n  const { camera, size, set } = useThree();\n\n  // Build the orthographic camera once (memoised).\n  const orthoCamera = useMemo(() => {\n    // We want the orthographic frustum to tightly fit the table with a\n    // small margin.  Because we are looking straight down the visible\n    // width corresponds to X (table short dimension) and visible height\n    // to Z (table long dimension).\n    const margin = 0.3;\n    const halfW = HALF_WIDTH + margin;\n    const halfH = HALF_LENGTH + margin;\n\n    // Compute frustum so that the table fills the viewport regardless of\n    // aspect ratio.  We base the ortho extents on the larger dimension.\n    const aspect = size.width / size.height;\n    let left: number, right: number, top: number, bottom: number;\n    if (aspect >= 1) {\n      // Landscape – width is ample, fit height to table length\n      bottom = -halfH;\n      top = halfH;\n      left = -halfH * aspect;\n      right = halfH * aspect;\n    } else {\n      // Portrait – fit width to table width\n      left = -halfW;\n      right = halfW;\n      bottom = -halfW / aspect;\n      top = halfW / aspect;\n    }\n\n    const cam = new THREE.OrthographicCamera(\n      left,\n      right,\n      top,\n      bottom,\n      0.01,\n      50,\n    );\n    cam.position.set(0, 3, 0); // well above the table\n    cam.lookAt(0, 0, 0);\n    return cam;\n  }, [size.width, size.height]);\n\n  useEffect(() => {\n    if (cameraMode === 'topdown') {\n      orthoCamera.position.set(0, 3, 0);\n      orthoCamera.lookAt(0, 0, 0);\n      orthoCamera.updateProjectionMatrix();\n      set({ camera: orthoCamera });\n    } else {\n      // Switch back to a fresh perspective camera matching the Canvas default\n      const perspCam = new THREE.PerspectiveCamera(\n        CAMERA_FOV,\n        size.width / size.height,\n        0.01,\n        50,\n      );\n      perspCam.position.set(\n        CAMERA_DEFAULT_POSITION[0],\n        CAMERA_DEFAULT_POSITION[1],\n        CAMERA_DEFAULT_POSITION[2],\n      );\n      perspCam.lookAt(0, 0, 0);\n      perspCam.updateProjectionMatrix();\n      set({ camera: perspCam });\n    }\n  }, [cameraMode, orthoCamera, set, size.width, size.height]);\n\n  return null;\n}\n\n/**\n * R3F Canvas with PCFSoftShadowMap (2048×2048), perspective camera (45 deg FOV)\n * positioned above the table at an angle, ambient + directional + point lights,\n * and OrbitControls constrained so the user cannot go below the table.\n *\n * Phase 8 (T25): shadow map upgraded to PCFSoftShadowMap for soft shadow edges,\n * directional light shadow camera covers the full table area, balls cast shadows\n * onto the felt surface.\n */\nexport default function Scene() {\n  const cameraMode = useAimStore((s) => s.cameraMode);\n  const orbitTarget: [number, number, number] = [0, 0, 0];\n\n  return (\n    <Canvas\n      shadows\n      gl={{\n        shadowMap: {\n          enabled: true,\n          type: THREE.PCFSoftShadowMap,\n        } as any,\n      }}\n      camera={{\n        position: CAMERA_DEFAULT_POSITION,\n        fov: CAMERA_FOV,\n        near: 0.01,\n        far: 50,\n      }}\n      style={{ width: '100%', height: '100%' }}\n    >\n      <color attach=\"background\" args={['#1a1a2e']} />\n\n      {/* Camera mode switcher & ref sync */}\n      <CameraSwitcher />\n      <CameraRefSync />\n\n      {/* Lighting */}\n      <ambientLight intensity={0.35} color=\"#ffffff\" />\n      <directionalLight\n        position={[0, 3, 0.5]}\n        intensity={1.2}\n        color=\"#fffbe6\"\n        castShadow\n        shadow-mapSize-width={2048}\n        shadow-mapSize-height={2048}\n        shadow-camera-near={0.5}\n        shadow-camera-far={8}\n        shadow-camera-left={-HALF_WIDTH - 0.3}\n        shadow-camera-right={HALF_WIDTH + 0.3}\n        shadow-camera-top={HALF_LENGTH + 0.3}\n        shadow-camera-bottom={-HALF_LENGTH - 0.3}\n        shadow-bias={-0.0005}\n        shadow-normalBias={0.02}\n      />\n      <pointLight\n        position={[-HALF_WIDTH * 0.4, 1.5, -HALF_LENGTH * 0.6]}\n        intensity={0.5}\n        color=\"#fff5e6\"\n        distance={5}\n        decay={2}\n      />\n      <pointLight\n        position={[HALF_WIDTH * 0.4, 1.5, HALF_LENGTH * 0.6]}\n        intensity={0.5}\n        color=\"#fff5e6\"\n        distance={5}\n        decay={2}\n      />\n\n      {/* Physics world wrapping all game objects */}\n      <PhysicsWorld>\n        <Table />\n        <Balls />\n        <CueStick />\n        <AimLine />\n        <GameHooks />\n      </PhysicsWorld>\n\n      {/* Camera controls — only enabled in orbit mode */}\n      {cameraMode === 'orbit' && (\n        <OrbitControls\n          target={orbitTarget}\n          enablePan={false}\n          enableDamping\n          dampingFactor={0.08}\n          minPolarAngle={0.2}\n          maxPolarAngle={Math.PI / 2.15}\n          minDistance={0.8}\n          maxDistance={4.5}\n        />\n      )}\n\n      {/* ── Dark floor plane beneath table (Phase 8, T25) ── */}\n      <mesh\n        rotation={[-Math.PI / 2, 0, 0]}\n        position={[0, FLOOR_Y, 0]}\n        receiveShadow\n      >\n        <planeGeometry args={[20, 20]} />\n        <meshStandardMaterial color=\"#0e0806\" roughness={0.95} metalness={0} />\n      </mesh>\n\n      <fog attach=\"fog\" args={['#1a1a2e', 6, 14]} />\n    </Canvas>\n  );\n}\n",
+            "path": "src/components/Scene.tsx"
+          },
+          "name": "file_write",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"bytes_written\":6653,\"path\":\"src/components/Scene.tsx\",\"success\":true}",
+      "tool_call_id": "call_1c98bd47a4fa408daba3dfdc",
+      "name": "file_write"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_90c36ace413d413abfe38e23",
+          "input": {
+            "path": "src/components/Scene.tsx"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"import { Canvas, useThree } from '@react-three/fiber';\\nimport * as THREE from 'three';\\nimport { OrbitControls } from '@react-three/drei';\\nimport { useEffect, useMemo } from 'react';\\nimport Table from './Table';\\nimport Balls from './Balls';\\nimport CueStick from './CueStick';\\nimport AimLine from './AimLine';\\nimport PhysicsWorld from '../physics/PhysicsWorld';\\nimport useSettleDetector from '../hooks/useSettleDetector';\\nimport useShotSequence from '../hooks/useShotSequence';\\nimport { useAimStore } from '../store/aimStore';\\nimport {\\n  CAMERA_DEFAULT_POSITION,\\n  CAMERA_FOV,\\n  HALF_LENGTH,\\n  HALF_WIDTH,\\n  FLOOR_Y,\\n} from '../constants/table';\\n\\n/**\\n * Wrapper for game hooks that must run inside the Canvas/Physics context.\\n */\\nfunction GameHooks() {\\n  useSettleDetector();\\n  useShotSequence();\\n  return null;\\n}\\n\\n/**\\n * Keeps the R3F camera reference on `window.__r3f_camera` so that\\n * useShotSequence (which runs outside of `<Canvas>`) can access the\\n * current camera for raycasting.\\n */\\nfunction CameraRefSync() {\\n  const { camera } = useThree();\\n  useEffect(() => {\\n    (window as any).__r3f_camera = camera;\\n  }, [camera]);\\n  return null;\\n}\\n\\n/**\\n * When in top-down mode we need an orthographic camera that covers the\\n * full table.  This component listens to `cameraMode` and imperatively\\n * switches the R3F camera between the default perspective camera and a\\n * suitable orthographic camera.\\n */\\nfunction CameraSwitcher() {\\n  const cameraMode = useAimStore((s) => s.cameraMode);\\n  const { camera, size, set } = useThree();\\n\\n  // Build the orthographic camera once (memoised).\\n  const orthoCamera = useMemo(() => {\\n    // We want the orthographic frustum to tightly fit the table with a\\n    // small margin.  Because we are looking straight down the visible\\n    // width corresponds to X (table short dimension) and visible height\\n    // to Z (table long dimension).\\n    const margin = 0.3;\\n    const halfW = HALF_WIDTH + margin;\\n    const halfH = HALF_LENGTH + margin;\\n\\n    // Compute frustum so that the table fills the viewport regardless of\\n    // aspect ratio.  We base the ortho extents on the larger dimension.\\n    const aspect = size.width / size.height;\\n    let left: number, right: number, top: number, bottom: number;\\n    if (aspect >= 1) {\\n      // Landscape – width is ample, fit height to table length\\n      bottom = -halfH;\\n      top = halfH;\\n      left = -halfH * aspect;\\n      right = halfH * aspect;\\n    } else {\\n      // Portrait – fit width to table width\\n      left = -halfW;\\n      right = halfW;\\n      bottom = -halfW / aspect;\\n      top = halfW / aspect;\\n    }\\n\\n    const cam = new THREE.OrthographicCamera(\\n      left,\\n      right,\\n      top,\\n      bottom,\\n      0.01,\\n      50,\\n    );\\n    cam.position.set(0, 3, 0); // well above the table\\n    cam.lookAt(0, 0, 0);\\n    return cam;\\n  }, [size.width, size.height]);\\n\\n  useEffect(() => {\\n    if (cameraMode === 'topdown') {\\n      orthoCamera.position.set(0, 3, 0);\\n      orthoCamera.lookAt(0, 0, 0);\\n      orthoCamera.updateProjectionMatrix();\\n      set({ camera: orthoCamera });\\n    } else {\\n      // Switch back to a fresh perspective camera matching the Canvas default\\n      const perspCam = new THREE.PerspectiveCamera(\\n        CAMERA_FOV,\\n        size.width / size.height,\\n        0.01,\\n        50,\\n      );\\n      perspCam.position.set(\\n        CAMERA_DEFAULT_POSITION[0],\\n        CAMERA_DEFAULT_POSITION[1],\\n        CAMERA_DEFAULT_POSITION[2],\\n      );\\n      perspCam.lookAt(0, 0, 0);\\n      perspCam.updateProjectionMatrix();\\n      set({ camera: perspCam });\\n    }\\n  }, [cameraMode, orthoCamera, set, size.width, size.height]);\\n\\n  return null;\\n}\\n\\n/**\\n * R3F Canvas with PCFSoftShadowMap (2048×2048), perspective camera (45 deg FOV)\\n * positioned above the table at an angle, ambient + directional + point lights,\\n * and OrbitControls constrained so the user cannot go below the table.\\n *\\n * Phase 8 (T25): shadow map upgraded to PCFSoftShadowMap for soft shadow edges,\\n * directional light shadow camera covers the full table area, balls cast shadows\\n * onto the felt surface.\\n */\\nexport default function Scene() {\\n  const cameraMode = useAimStore((s) => s.cameraMode);\\n  const orbitTarget: [number, number, number] = [0, 0, 0];\\n\\n  return (\\n    <Canvas\\n      shadows\\n      gl={{\\n        shadowMap: {\\n          enabled: true,\\n          type: THREE.PCFSoftShadowMap,\\n        } as any,\\n      }}\\n      camera={{\\n        position: CAMERA_DEFAULT_POSITION,\\n        fov: CAMERA_FOV,\\n        near: 0.01,\\n        far: 50,\\n      }}\\n      style={{ width: '100%', height: '100%' }}\\n    >\\n      <color attach=\\\"background\\\" args={['#1a1a2e']} />\\n\\n      {/* Camera mode switcher & ref sync */}\\n      <CameraSwitcher />\\n      <CameraRefSync />\\n\\n      {/* Lighting */}\\n      <ambientLight intensity={0.35} color=\\\"#ffffff\\\" />\\n      <directionalLight\\n        position={[0, 3, 0.5]}\\n        intensity={1.2}\\n        color=\\\"#fffbe6\\\"\\n        castShadow\\n        shadow-mapSize-width={2048}\\n        shadow-mapSize-height={2048}\\n        shadow-camera-near={0.5}\\n        shadow-camera-far={8}\\n        shadow-camera-left={-HALF_WIDTH - 0.3}\\n        shadow-camera-right={HALF_WIDTH + 0.3}\\n        shadow-camera-top={HALF_LENGTH + 0.3}\\n        shadow-camera-bottom={-HALF_LENGTH - 0.3}\\n        shadow-bias={-0.0005}\\n        shadow-normalBias={0.02}\\n      />\\n      <pointLight\\n        position={[-HALF_WIDTH * 0.4, 1.5, -HALF_LENGTH * 0.6]}\\n        intensity={0.5}\\n        color=\\\"#fff5e6\\\"\\n        distance={5}\\n        decay={2}\\n      />\\n      <pointLight\\n        position={[HALF_WIDTH * 0.4, 1.5, HALF_LENGTH * 0.6]}\\n        intensity={0.5}\\n        color=\\\"#fff5e6\\\"\\n        distance={5}\\n        decay={2}\\n      />\\n\\n      {/* Physics world wrapping all game objects */}\\n      <PhysicsWorld>\\n        <Table />\\n        <Balls />\\n        <CueStick />\\n        <AimLine />\\n        <GameHooks />\\n      </PhysicsWorld>\\n\\n      {/* Camera controls — only enabled in orbit mode */}\\n      {cameraMode === 'orbit' && (\\n        <OrbitControls\\n          target={orbitTarget}\\n          enablePan={false}\\n          enableDamping\\n          dampingFactor={0.08}\\n          minPolarAngle={0.2}\\n          maxPolarAngle={Math.PI / 2.15}\\n          minDistance={0.8}\\n          maxDistance={4.5}\\n        />\\n      )}\\n\\n      {/* ── Dark floor plane beneath table (Phase 8, T25) ── */}\\n      <mesh\\n        rotation={[-Math.PI / 2, 0, 0]}\\n        position={[0, FLOOR_Y, 0]}\\n        receiveShadow\\n      >\\n        <planeGeometry args={[20, 20]} />\\n        <meshStandardMaterial color=\\\"#0e0806\\\" roughness={0.95} metalness={0} />\\n      </mesh>\\n\\n      <fog attach=\\\"fog\\\" args={['#1a1a2e', 6, 14]} />\\n    </Canvas>\\n  );\\n}\",\"end_line\":226,\"start_line\":0,\"total_lines\":227}",
+      "tool_call_id": "call_90c36ace413d413abfe38e23",
+      "name": "file_read"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_777ec6577aee480280c74ee8",
+          "input": {
+            "args": [
+              "run",
+              "build"
+            ],
+            "command": "npm",
+            "timeout_ms": 60000
+          },
+          "name": "shell",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"command\":\"npm\",\"exit_code\":2,\"stderr\":\"\",\"stdout\":\"\\n> pool-game-src@0.0.0 build\\n> tsc -b && vite build\\n\\nsrc/components/Scene.tsx(51,11): error TS6133: 'camera' is declared but its value is never read.\\n\",\"success\":false,\"timeout_ms\":60000}",
+      "tool_call_id": "call_777ec6577aee480280c74ee8",
+      "name": "shell"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_8b4e3e5451bb4dd5a8d8f782",
+          "input": {
+            "new_text": "  const { size, set } = useThree();",
+            "old_text": "  const { camera, size, set } = useThree();",
+            "path": "src/components/Scene.tsx"
+          },
+          "name": "file_edit",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"path\":\"src/components/Scene.tsx\",\"replacements\":1,\"success\":true}",
+      "tool_call_id": "call_8b4e3e5451bb4dd5a8d8f782",
+      "name": "file_edit"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_67b04927d865420aa22e1331",
+          "input": {
+            "path": "src/components/Scene.tsx"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"import { Canvas, useThree } from '@react-three/fiber';\\nimport * as THREE from 'three';\\nimport { OrbitControls } from '@react-three/drei';\\nimport { useEffect, useMemo } from 'react';\\nimport Table from './Table';\\nimport Balls from './Balls';\\nimport CueStick from './CueStick';\\nimport AimLine from './AimLine';\\nimport PhysicsWorld from '../physics/PhysicsWorld';\\nimport useSettleDetector from '../hooks/useSettleDetector';\\nimport useShotSequence from '../hooks/useShotSequence';\\nimport { useAimStore } from '../store/aimStore';\\nimport {\\n  CAMERA_DEFAULT_POSITION,\\n  CAMERA_FOV,\\n  HALF_LENGTH,\\n  HALF_WIDTH,\\n  FLOOR_Y,\\n} from '../constants/table';\\n\\n/**\\n * Wrapper for game hooks that must run inside the Canvas/Physics context.\\n */\\nfunction GameHooks() {\\n  useSettleDetector();\\n  useShotSequence();\\n  return null;\\n}\\n\\n/**\\n * Keeps the R3F camera reference on `window.__r3f_camera` so that\\n * useShotSequence (which runs outside of `<Canvas>`) can access the\\n * current camera for raycasting.\\n */\\nfunction CameraRefSync() {\\n  const { camera } = useThree();\\n  useEffect(() => {\\n    (window as any).__r3f_camera = camera;\\n  }, [camera]);\\n  return null;\\n}\\n\\n/**\\n * When in top-down mode we need an orthographic camera that covers the\\n * full table.  This component listens to `cameraMode` and imperatively\\n * switches the R3F camera between the default perspective camera and a\\n * suitable orthographic camera.\\n */\\nfunction CameraSwitcher() {\\n  const cameraMode = useAimStore((s) => s.cameraMode);\\n  const { size, set } = useThree();\\n\\n  // Build the orthographic camera once (memoised).\\n  const orthoCamera = useMemo(() => {\\n    // We want the orthographic frustum to tightly fit the table with a\\n    // small margin.  Because we are looking straight down the visible\\n    // width corresponds to X (table short dimension) and visible height\\n    // to Z (table long dimension).\\n    const margin = 0.3;\\n    const halfW = HALF_WIDTH + margin;\\n    const halfH = HALF_LENGTH + margin;\\n\\n    // Compute frustum so that the table fills the viewport regardless of\\n    // aspect ratio.  We base the ortho extents on the larger dimension.\\n    const aspect = size.width / size.height;\\n    let left: number, right: number, top: number, bottom: number;\\n    if (aspect >= 1) {\\n      // Landscape – width is ample, fit height to table length\\n      bottom = -halfH;\\n      top = halfH;\\n      left = -halfH * aspect;\\n      right = halfH * aspect;\\n    } else {\\n      // Portrait – fit width to table width\\n      left = -halfW;\\n      right = halfW;\\n      bottom = -halfW / aspect;\\n      top = halfW / aspect;\\n    }\\n\\n    const cam = new THREE.OrthographicCamera(\\n      left,\\n      right,\\n      top,\\n      bottom,\\n      0.01,\\n      50,\\n    );\\n    cam.position.set(0, 3, 0); // well above the table\\n    cam.lookAt(0, 0, 0);\\n    return cam;\\n  }, [size.width, size.height]);\\n\\n  useEffect(() => {\\n    if (cameraMode === 'topdown') {\\n      orthoCamera.position.set(0, 3, 0);\\n      orthoCamera.lookAt(0, 0, 0);\\n      orthoCamera.updateProjectionMatrix();\\n      set({ camera: orthoCamera });\\n    } else {\\n      // Switch back to a fresh perspective camera matching the Canvas default\\n      const perspCam = new THREE.PerspectiveCamera(\\n        CAMERA_FOV,\\n        size.width / size.height,\\n        0.01,\\n        50,\\n      );\\n      perspCam.position.set(\\n        CAMERA_DEFAULT_POSITION[0],\\n        CAMERA_DEFAULT_POSITION[1],\\n        CAMERA_DEFAULT_POSITION[2],\\n      );\\n      perspCam.lookAt(0, 0, 0);\\n      perspCam.updateProjectionMatrix();\\n      set({ camera: perspCam });\\n    }\\n  }, [cameraMode, orthoCamera, set, size.width, size.height]);\\n\\n  return null;\\n}\\n\\n/**\\n * R3F Canvas with PCFSoftShadowMap (2048×2048), perspective camera (45 deg FOV)\\n * positioned above the table at an angle, ambient + directional + point lights,\\n * and OrbitControls constrained so the user cannot go below the table.\\n *\\n * Phase 8 (T25): shadow map upgraded to PCFSoftShadowMap for soft shadow edges,\\n * directional light shadow camera covers the full table area, balls cast shadows\\n * onto the felt surface.\\n */\\nexport default function Scene() {\\n  const cameraMode = useAimStore((s) => s.cameraMode);\\n  const orbitTarget: [number, number, number] = [0, 0, 0];\\n\\n  return (\\n    <Canvas\\n      shadows\\n      gl={{\\n        shadowMap: {\\n          enabled: true,\\n          type: THREE.PCFSoftShadowMap,\\n        } as any,\\n      }}\\n      camera={{\\n        position: CAMERA_DEFAULT_POSITION,\\n        fov: CAMERA_FOV,\\n        near: 0.01,\\n        far: 50,\\n      }}\\n      style={{ width: '100%', height: '100%' }}\\n    >\\n      <color attach=\\\"background\\\" args={['#1a1a2e']} />\\n\\n      {/* Camera mode switcher & ref sync */}\\n      <CameraSwitcher />\\n      <CameraRefSync />\\n\\n      {/* Lighting */}\\n      <ambientLight intensity={0.35} color=\\\"#ffffff\\\" />\\n      <directionalLight\\n        position={[0, 3, 0.5]}\\n        intensity={1.2}\\n        color=\\\"#fffbe6\\\"\\n        castShadow\\n        shadow-mapSize-width={2048}\\n        shadow-mapSize-height={2048}\\n        shadow-camera-near={0.5}\\n        shadow-camera-far={8}\\n        shadow-camera-left={-HALF_WIDTH - 0.3}\\n        shadow-camera-right={HALF_WIDTH + 0.3}\\n        shadow-camera-top={HALF_LENGTH + 0.3}\\n        shadow-camera-bottom={-HALF_LENGTH - 0.3}\\n        shadow-bias={-0.0005}\\n        shadow-normalBias={0.02}\\n      />\\n      <pointLight\\n        position={[-HALF_WIDTH * 0.4, 1.5, -HALF_LENGTH * 0.6]}\\n        intensity={0.5}\\n        color=\\\"#fff5e6\\\"\\n        distance={5}\\n        decay={2}\\n      />\\n      <pointLight\\n        position={[HALF_WIDTH * 0.4, 1.5, HALF_LENGTH * 0.6]}\\n        intensity={0.5}\\n        color=\\\"#fff5e6\\\"\\n        distance={5}\\n        decay={2}\\n      />\\n\\n      {/* Physics world wrapping all game objects */}\\n      <PhysicsWorld>\\n        <Table />\\n        <Balls />\\n        <CueStick />\\n        <AimLine />\\n        <GameHooks />\\n      </PhysicsWorld>\\n\\n      {/* Camera controls — only enabled in orbit mode */}\\n      {cameraMode === 'orbit' && (\\n        <OrbitControls\\n          target={orbitTarget}\\n          enablePan={false}\\n          enableDamping\\n          dampingFactor={0.08}\\n          minPolarAngle={0.2}\\n          maxPolarAngle={Math.PI / 2.15}\\n          minDistance={0.8}\\n          maxDistance={4.5}\\n        />\\n      )}\\n\\n      {/* ── Dark floor plane beneath table (Phase 8, T25) ── */}\\n      <mesh\\n        rotation={[-Math.PI / 2, 0, 0]}\\n        position={[0, FLOOR_Y, 0]}\\n        receiveShadow\\n      >\\n        <planeGeometry args={[20, 20]} />\\n        <meshStandardMaterial color=\\\"#0e0806\\\" roughness={0.95} metalness={0} />\\n      </mesh>\\n\\n      <fog attach=\\\"fog\\\" args={['#1a1a2e', 6, 14]} />\\n    </Canvas>\\n  );\\n}\",\"end_line\":226,\"start_line\":0,\"total_lines\":227}",
+      "tool_call_id": "call_67b04927d865420aa22e1331",
+      "name": "file_read"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_36ed8e89782d46f98a808aa8",
+          "input": {
+            "args": [
+              "run",
+              "build"
+            ],
+            "command": "npm",
+            "timeout_ms": 60000
+          },
+          "name": "shell",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"command\":\"npm\",\"exit_code\":0,\"stderr\":\"\\u001b[33m[INEFFECTIVE_DYNAMIC_IMPORT] Warning:\\u001b[0m node_modules/three/build/three.module.js is dynamically imported by src/hooks/useShotSequence.ts but also statically imported by node_modules/@monogrid/gainmap-js/dist/Loader-DLI-_JDP.js, node_modules/@monogrid/gainmap-js/dist/QuadRenderer-Bj1xl_EK.js, node_modules/@monogrid/gainmap-js/dist/decode.js, node_modules/@react-three/cannon/dist/index.js, node_modules/@react-three/drei/core/AccumulativeShadows.js, ..., dynamic import will not move module into another chunk.\\n\\n[plugin builtin:vite-reporter] \\n(!) Some chunks are larger than 500 kB after minification. Consider:\\n- Using dynamic import() to code-split the application\\n- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting\\n- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.\\n\",\"stdout\":\"\\n> pool-game-src@0.0.0 build\\n> tsc -b && vite build\\n\\nvite v8.0.3 building client environment for production...\\n\\u001b[2K\\rtransforming...✓ 588 modules transformed.\\nrendering chunks...\\ncomputing gzip size...\\ndist/index.html                    0.38 kB │ gzip:   0.26 kB\\ndist/assets/index-Bd4oy2Ib.js  1,687.60 kB │ gzip: 452.33 kB\\n\\n✓ built in 1.23s\\n\",\"success\":true,\"timeout_ms\":60000}",
+      "tool_call_id": "call_36ed8e89782d46f98a808aa8",
+      "name": "shell"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_6769fa7cd0df444aa606b878",
+          "input": {
+            "path": "src/components/Scene.tsx"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"import { Canvas, useThree } from '@react-three/fiber';\\nimport * as THREE from 'three';\\nimport { OrbitControls } from '@react-three/drei';\\nimport { useEffect, useMemo } from 'react';\\nimport Table from './Table';\\nimport Balls from './Balls';\\nimport CueStick from './CueStick';\\nimport AimLine from './AimLine';\\nimport PhysicsWorld from '../physics/PhysicsWorld';\\nimport useSettleDetector from '../hooks/useSettleDetector';\\nimport useShotSequence from '../hooks/useShotSequence';\\nimport { useAimStore } from '../store/aimStore';\\nimport {\\n  CAMERA_DEFAULT_POSITION,\\n  CAMERA_FOV,\\n  HALF_LENGTH,\\n  HALF_WIDTH,\\n  FLOOR_Y,\\n} from '../constants/table';\\n\\n/**\\n * Wrapper for game hooks that must run inside the Canvas/Physics context.\\n */\\nfunction GameHooks() {\\n  useSettleDetector();\\n  useShotSequence();\\n  return null;\\n}\\n\\n/**\\n * Keeps the R3F camera reference on `window.__r3f_camera` so that\\n * useShotSequence (which runs outside of `<Canvas>`) can access the\\n * current camera for raycasting.\\n */\\nfunction CameraRefSync() {\\n  const { camera } = useThree();\\n  useEffect(() => {\\n    (window as any).__r3f_camera = camera;\\n  }, [camera]);\\n  return null;\\n}\\n\\n/**\\n * When in top-down mode we need an orthographic camera that covers the\\n * full table.  This component listens to `cameraMode` and imperatively\\n * switches the R3F camera between the default perspective camera and a\\n * suitable orthographic camera.\\n */\\nfunction CameraSwitcher() {\\n  const cameraMode = useAimStore((s) => s.cameraMode);\\n  const { size, set } = useThree();\\n\\n  // Build the orthographic camera once (memoised).\\n  const orthoCamera = useMemo(() => {\\n    // We want the orthographic frustum to tightly fit the table with a\\n    // small margin.  Because we are looking straight down the visible\\n    // width corresponds to X (table short dimension) and visible height\\n    // to Z (table long dimension).\\n    const margin = 0.3;\\n    const halfW = HALF_WIDTH + margin;\\n    const halfH = HALF_LENGTH + margin;\\n\\n    // Compute frustum so that the table fills the viewport regardless of\\n    // aspect ratio.  We base the ortho extents on the larger dimension.\\n    const aspect = size.width / size.height;\\n    let left: number, right: number, top: number, bottom: number;\\n    if (aspect >= 1) {\\n      // Landscape – width is ample, fit height to table length\\n      bottom = -halfH;\\n      top = halfH;\\n      left = -halfH * aspect;\\n      right = halfH * aspect;\\n    } else {\\n      // Portrait – fit width to table width\\n      left = -halfW;\\n      right = halfW;\\n      bottom = -halfW / aspect;\\n      top = halfW / aspect;\\n    }\\n\\n    const cam = new THREE.OrthographicCamera(\\n      left,\\n      right,\\n      top,\\n      bottom,\\n      0.01,\\n      50,\\n    );\\n    cam.position.set(0, 3, 0); // well above the table\\n    cam.lookAt(0, 0, 0);\\n    return cam;\\n  }, [size.width, size.height]);\\n\\n  useEffect(() => {\\n    if (cameraMode === 'topdown') {\\n      orthoCamera.position.set(0, 3, 0);\\n      orthoCamera.lookAt(0, 0, 0);\\n      orthoCamera.updateProjectionMatrix();\\n      set({ camera: orthoCamera });\\n    } else {\\n      // Switch back to a fresh perspective camera matching the Canvas default\\n      const perspCam = new THREE.PerspectiveCamera(\\n        CAMERA_FOV,\\n        size.width / size.height,\\n        0.01,\\n        50,\\n      );\\n      perspCam.position.set(\\n        CAMERA_DEFAULT_POSITION[0],\\n        CAMERA_DEFAULT_POSITION[1],\\n        CAMERA_DEFAULT_POSITION[2],\\n      );\\n      perspCam.lookAt(0, 0, 0);\\n      perspCam.updateProjectionMatrix();\\n      set({ camera: perspCam });\\n    }\\n  }, [cameraMode, orthoCamera, set, size.width, size.height]);\\n\\n  return null;\\n}\\n\\n/**\\n * R3F Canvas with PCFSoftShadowMap (2048×2048), perspective camera (45 deg FOV)\\n * positioned above the table at an angle, ambient + directional + point lights,\\n * and OrbitControls constrained so the user cannot go below the table.\\n *\\n * Phase 8 (T25): shadow map upgraded to PCFSoftShadowMap for soft shadow edges,\\n * directional light shadow camera covers the full table area, balls cast shadows\\n * onto the felt surface.\\n */\\nexport default function Scene() {\\n  const cameraMode = useAimStore((s) => s.cameraMode);\\n  const orbitTarget: [number, number, number] = [0, 0, 0];\\n\\n  return (\\n    <Canvas\\n      shadows\\n      gl={{\\n        shadowMap: {\\n          enabled: true,\\n          type: THREE.PCFSoftShadowMap,\\n        } as any,\\n      }}\\n      camera={{\\n        position: CAMERA_DEFAULT_POSITION,\\n        fov: CAMERA_FOV,\\n        near: 0.01,\\n        far: 50,\\n      }}\\n      style={{ width: '100%', height: '100%' }}\\n    >\\n      <color attach=\\\"background\\\" args={['#1a1a2e']} />\\n\\n      {/* Camera mode switcher & ref sync */}\\n      <CameraSwitcher />\\n      <CameraRefSync />\\n\\n      {/* Lighting */}\\n      <ambientLight intensity={0.35} color=\\\"#ffffff\\\" />\\n      <directionalLight\\n        position={[0, 3, 0.5]}\\n        intensity={1.2}\\n        color=\\\"#fffbe6\\\"\\n        castShadow\\n        shadow-mapSize-width={2048}\\n        shadow-mapSize-height={2048}\\n        shadow-camera-near={0.5}\\n        shadow-camera-far={8}\\n        shadow-camera-left={-HALF_WIDTH - 0.3}\\n        shadow-camera-right={HALF_WIDTH + 0.3}\\n        shadow-camera-top={HALF_LENGTH + 0.3}\\n        shadow-camera-bottom={-HALF_LENGTH - 0.3}\\n        shadow-bias={-0.0005}\\n        shadow-normalBias={0.02}\\n      />\\n      <pointLight\\n        position={[-HALF_WIDTH * 0.4, 1.5, -HALF_LENGTH * 0.6]}\\n        intensity={0.5}\\n        color=\\\"#fff5e6\\\"\\n        distance={5}\\n        decay={2}\\n      />\\n      <pointLight\\n        position={[HALF_WIDTH * 0.4, 1.5, HALF_LENGTH * 0.6]}\\n        intensity={0.5}\\n        color=\\\"#fff5e6\\\"\\n        distance={5}\\n        decay={2}\\n      />\\n\\n      {/* Physics world wrapping all game objects */}\\n      <PhysicsWorld>\\n        <Table />\\n        <Balls />\\n        <CueStick />\\n        <AimLine />\\n        <GameHooks />\\n      </PhysicsWorld>\\n\\n      {/* Camera controls — only enabled in orbit mode */}\\n      {cameraMode === 'orbit' && (\\n        <OrbitControls\\n          target={orbitTarget}\\n          enablePan={false}\\n          enableDamping\\n          dampingFactor={0.08}\\n          minPolarAngle={0.2}\\n          maxPolarAngle={Math.PI / 2.15}\\n          minDistance={0.8}\\n          maxDistance={4.5}\\n        />\\n      )}\\n\\n      {/* ── Dark floor plane beneath table (Phase 8, T25) ── */}\\n      <mesh\\n        rotation={[-Math.PI / 2, 0, 0]}\\n        position={[0, FLOOR_Y, 0]}\\n        receiveShadow\\n      >\\n        <planeGeometry args={[20, 20]} />\\n        <meshStandardMaterial color=\\\"#0e0806\\\" roughness={0.95} metalness={0} />\\n      </mesh>\\n\\n      <fog attach=\\\"fog\\\" args={['#1a1a2e', 6, 14]} />\\n    </Canvas>\\n  );\\n}\",\"end_line\":226,\"start_line\":0,\"total_lines\":227}",
+      "tool_call_id": "call_6769fa7cd0df444aa606b878",
+      "name": "file_read"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_9baf39eccfbe4a348791be9a",
+          "input": {
+            "path": "src/components/Scene.tsx"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"import { Canvas, useThree } from '@react-three/fiber';\\nimport * as THREE from 'three';\\nimport { OrbitControls } from '@react-three/drei';\\nimport { useEffect, useMemo } from 'react';\\nimport Table from './Table';\\nimport Balls from './Balls';\\nimport CueStick from './CueStick';\\nimport AimLine from './AimLine';\\nimport PhysicsWorld from '../physics/PhysicsWorld';\\nimport useSettleDetector from '../hooks/useSettleDetector';\\nimport useShotSequence from '../hooks/useShotSequence';\\nimport { useAimStore } from '../store/aimStore';\\nimport {\\n  CAMERA_DEFAULT_POSITION,\\n  CAMERA_FOV,\\n  HALF_LENGTH,\\n  HALF_WIDTH,\\n  FLOOR_Y,\\n} from '../constants/table';\\n\\n/**\\n * Wrapper for game hooks that must run inside the Canvas/Physics context.\\n */\\nfunction GameHooks() {\\n  useSettleDetector();\\n  useShotSequence();\\n  return null;\\n}\\n\\n/**\\n * Keeps the R3F camera reference on `window.__r3f_camera` so that\\n * useShotSequence (which runs outside of `<Canvas>`) can access the\\n * current camera for raycasting.\\n */\\nfunction CameraRefSync() {\\n  const { camera } = useThree();\\n  useEffect(() => {\\n    (window as any).__r3f_camera = camera;\\n  }, [camera]);\\n  return null;\\n}\\n\\n/**\\n * When in top-down mode we need an orthographic camera that covers the\\n * full table.  This component listens to `cameraMode` and imperatively\\n * switches the R3F camera between the default perspective camera and a\\n * suitable orthographic camera.\\n */\\nfunction CameraSwitcher() {\\n  const cameraMode = useAimStore((s) => s.cameraMode);\\n  const { size, set } = useThree();\\n\\n  // Build the orthographic camera once (memoised).\\n  const orthoCamera = useMemo(() => {\\n    // We want the orthographic frustum to tightly fit the table with a\\n    // small margin.  Because we are looking straight down the visible\\n    // width corresponds to X (table short dimension) and visible height\\n    // to Z (table long dimension).\\n    const margin = 0.3;\\n    const halfW = HALF_WIDTH + margin;\\n    const halfH = HALF_LENGTH + margin;\\n\\n    // Compute frustum so that the table fills the viewport regardless of\\n    // aspect ratio.  We base the ortho extents on the larger dimension.\\n    const aspect = size.width / size.height;\\n    let left: number, right: number, top: number, bottom: number;\\n    if (aspect >= 1) {\\n      // Landscape – width is ample, fit height to table length\\n      bottom = -halfH;\\n      top = halfH;\\n      left = -halfH * aspect;\\n      right = halfH * aspect;\\n    } else {\\n      // Portrait – fit width to table width\\n      left = -halfW;\\n      right = halfW;\\n      bottom = -halfW / aspect;\\n      top = halfW / aspect;\\n    }\\n\\n    const cam = new THREE.OrthographicCamera(\\n      left,\\n      right,\\n      top,\\n      bottom,\\n      0.01,\\n      50,\\n    );\\n    cam.position.set(0, 3, 0); // well above the table\\n    cam.lookAt(0, 0, 0);\\n    return cam;\\n  }, [size.width, size.height]);\\n\\n  useEffect(() => {\\n    if (cameraMode === 'topdown') {\\n      orthoCamera.position.set(0, 3, 0);\\n      orthoCamera.lookAt(0, 0, 0);\\n      orthoCamera.updateProjectionMatrix();\\n      set({ camera: orthoCamera });\\n    } else {\\n      // Switch back to a fresh perspective camera matching the Canvas default\\n      const perspCam = new THREE.PerspectiveCamera(\\n        CAMERA_FOV,\\n        size.width / size.height,\\n        0.01,\\n        50,\\n      );\\n      perspCam.position.set(\\n        CAMERA_DEFAULT_POSITION[0],\\n        CAMERA_DEFAULT_POSITION[1],\\n        CAMERA_DEFAULT_POSITION[2],\\n      );\\n      perspCam.lookAt(0, 0, 0);\\n      perspCam.updateProjectionMatrix();\\n      set({ camera: perspCam });\\n    }\\n  }, [cameraMode, orthoCamera, set, size.width, size.height]);\\n\\n  return null;\\n}\\n\\n/**\\n * R3F Canvas with PCFSoftShadowMap (2048×2048), perspective camera (45 deg FOV)\\n * positioned above the table at an angle, ambient + directional + point lights,\\n * and OrbitControls constrained so the user cannot go below the table.\\n *\\n * Phase 8 (T25): shadow map upgraded to PCFSoftShadowMap for soft shadow edges,\\n * directional light shadow camera covers the full table area, balls cast shadows\\n * onto the felt surface.\\n */\\nexport default function Scene() {\\n  const cameraMode = useAimStore((s) => s.cameraMode);\\n  const orbitTarget: [number, number, number] = [0, 0, 0];\\n\\n  return (\\n    <Canvas\\n      shadows\\n      gl={{\\n        shadowMap: {\\n          enabled: true,\\n          type: THREE.PCFSoftShadowMap,\\n        } as any,\\n      }}\\n      camera={{\\n        position: CAMERA_DEFAULT_POSITION,\\n        fov: CAMERA_FOV,\\n        near: 0.01,\\n        far: 50,\\n      }}\\n      style={{ width: '100%', height: '100%' }}\\n    >\\n      <color attach=\\\"background\\\" args={['#1a1a2e']} />\\n\\n      {/* Camera mode switcher & ref sync */}\\n      <CameraSwitcher />\\n      <CameraRefSync />\\n\\n      {/* Lighting */}\\n      <ambientLight intensity={0.35} color=\\\"#ffffff\\\" />\\n      <directionalLight\\n        position={[0, 3, 0.5]}\\n        intensity={1.2}\\n        color=\\\"#fffbe6\\\"\\n        castShadow\\n        shadow-mapSize-width={2048}\\n        shadow-mapSize-height={2048}\\n        shadow-camera-near={0.5}\\n        shadow-camera-far={8}\\n        shadow-camera-left={-HALF_WIDTH - 0.3}\\n        shadow-camera-right={HALF_WIDTH + 0.3}\\n        shadow-camera-top={HALF_LENGTH + 0.3}\\n        shadow-camera-bottom={-HALF_LENGTH - 0.3}\\n        shadow-bias={-0.0005}\\n        shadow-normalBias={0.02}\\n      />\\n      <pointLight\\n        position={[-HALF_WIDTH * 0.4, 1.5, -HALF_LENGTH * 0.6]}\\n        intensity={0.5}\\n        color=\\\"#fff5e6\\\"\\n        distance={5}\\n        decay={2}\\n      />\\n      <pointLight\\n        position={[HALF_WIDTH * 0.4, 1.5, HALF_LENGTH * 0.6]}\\n        intensity={0.5}\\n        color=\\\"#fff5e6\\\"\\n        distance={5}\\n        decay={2}\\n      />\\n\\n      {/* Physics world wrapping all game objects */}\\n      <PhysicsWorld>\\n        <Table />\\n        <Balls />\\n        <CueStick />\\n        <AimLine />\\n        <GameHooks />\\n      </PhysicsWorld>\\n\\n      {/* Camera controls — only enabled in orbit mode */}\\n      {cameraMode === 'orbit' && (\\n        <OrbitControls\\n          target={orbitTarget}\\n          enablePan={false}\\n          enableDamping\\n          dampingFactor={0.08}\\n          minPolarAngle={0.2}\\n          maxPolarAngle={Math.PI / 2.15}\\n          minDistance={0.8}\\n          maxDistance={4.5}\\n        />\\n      )}\\n\\n      {/* ── Dark floor plane beneath table (Phase 8, T25) ── */}\\n      <mesh\\n        rotation={[-Math.PI / 2, 0, 0]}\\n        position={[0, FLOOR_Y, 0]}\\n        receiveShadow\\n      >\\n        <planeGeometry args={[20, 20]} />\\n        <meshStandardMaterial color=\\\"#0e0806\\\" roughness={0.95} metalness={0} />\\n      </mesh>\\n\\n      <fog attach=\\\"fog\\\" args={['#1a1a2e', 6, 14]} />\\n    </Canvas>\\n  );\\n}\",\"end_line\":226,\"start_line\":0,\"total_lines\":227}",
+      "tool_call_id": "call_9baf39eccfbe4a348791be9a",
+      "name": "file_read"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_5c86af03b3f8434f8c11d320",
+          "input": {
+            "path": "src/components/Scene.tsx"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"import { Canvas, useThree } from '@react-three/fiber';\\nimport * as THREE from 'three';\\nimport { OrbitControls } from '@react-three/drei';\\nimport { useEffect, useMemo } from 'react';\\nimport Table from './Table';\\nimport Balls from './Balls';\\nimport CueStick from './CueStick';\\nimport AimLine from './AimLine';\\nimport PhysicsWorld from '../physics/PhysicsWorld';\\nimport useSettleDetector from '../hooks/useSettleDetector';\\nimport useShotSequence from '../hooks/useShotSequence';\\nimport { useAimStore } from '../store/aimStore';\\nimport {\\n  CAMERA_DEFAULT_POSITION,\\n  CAMERA_FOV,\\n  HALF_LENGTH,\\n  HALF_WIDTH,\\n  FLOOR_Y,\\n} from '../constants/table';\\n\\n/**\\n * Wrapper for game hooks that must run inside the Canvas/Physics context.\\n */\\nfunction GameHooks() {\\n  useSettleDetector();\\n  useShotSequence();\\n  return null;\\n}\\n\\n/**\\n * Keeps the R3F camera reference on `window.__r3f_camera` so that\\n * useShotSequence (which runs outside of `<Canvas>`) can access the\\n * current camera for raycasting.\\n */\\nfunction CameraRefSync() {\\n  const { camera } = useThree();\\n  useEffect(() => {\\n    (window as any).__r3f_camera = camera;\\n  }, [camera]);\\n  return null;\\n}\\n\\n/**\\n * When in top-down mode we need an orthographic camera that covers the\\n * full table.  This component listens to `cameraMode` and imperatively\\n * switches the R3F camera between the default perspective camera and a\\n * suitable orthographic camera.\\n */\\nfunction CameraSwitcher() {\\n  const cameraMode = useAimStore((s) => s.cameraMode);\\n  const { size, set } = useThree();\\n\\n  // Build the orthographic camera once (memoised).\\n  const orthoCamera = useMemo(() => {\\n    // We want the orthographic frustum to tightly fit the table with a\\n    // small margin.  Because we are looking straight down the visible\\n    // width corresponds to X (table short dimension) and visible height\\n    // to Z (table long dimension).\\n    const margin = 0.3;\\n    const halfW = HALF_WIDTH + margin;\\n    const halfH = HALF_LENGTH + margin;\\n\\n    // Compute frustum so that the table fills the viewport regardless of\\n    // aspect ratio.  We base the ortho extents on the larger dimension.\\n    const aspect = size.width / size.height;\\n    let left: number, right: number, top: number, bottom: number;\\n    if (aspect >= 1) {\\n      // Landscape – width is ample, fit height to table length\\n      bottom = -halfH;\\n      top = halfH;\\n      left = -halfH * aspect;\\n      right = halfH * aspect;\\n    } else {\\n      // Portrait – fit width to table width\\n      left = -halfW;\\n      right = halfW;\\n      bottom = -halfW / aspect;\\n      top = halfW / aspect;\\n    }\\n\\n    const cam = new THREE.OrthographicCamera(\\n      left,\\n      right,\\n      top,\\n      bottom,\\n      0.01,\\n      50,\\n    );\\n    cam.position.set(0, 3, 0); // well above the table\\n    cam.lookAt(0, 0, 0);\\n    return cam;\\n  }, [size.width, size.height]);\\n\\n  useEffect(() => {\\n    if (cameraMode === 'topdown') {\\n      orthoCamera.position.set(0, 3, 0);\\n      orthoCamera.lookAt(0, 0, 0);\\n      orthoCamera.updateProjectionMatrix();\\n      set({ camera: orthoCamera });\\n    } else {\\n      // Switch back to a fresh perspective camera matching the Canvas default\\n      const perspCam = new THREE.PerspectiveCamera(\\n        CAMERA_FOV,\\n        size.width / size.height,\\n        0.01,\\n        50,\\n      );\\n      perspCam.position.set(\\n        CAMERA_DEFAULT_POSITION[0],\\n        CAMERA_DEFAULT_POSITION[1],\\n        CAMERA_DEFAULT_POSITION[2],\\n      );\\n      perspCam.lookAt(0, 0, 0);\\n      perspCam.updateProjectionMatrix();\\n      set({ camera: perspCam });\\n    }\\n  }, [cameraMode, orthoCamera, set, size.width, size.height]);\\n\\n  return null;\\n}\\n\\n/**\\n * R3F Canvas with PCFSoftShadowMap (2048×2048), perspective camera (45 deg FOV)\\n * positioned above the table at an angle, ambient + directional + point lights,\\n * and OrbitControls constrained so the user cannot go below the table.\\n *\\n * Phase 8 (T25): shadow map upgraded to PCFSoftShadowMap for soft shadow edges,\\n * directional light shadow camera covers the full table area, balls cast shadows\\n * onto the felt surface.\\n */\\nexport default function Scene() {\\n  const cameraMode = useAimStore((s) => s.cameraMode);\\n  const orbitTarget: [number, number, number] = [0, 0, 0];\\n\\n  return (\\n    <Canvas\\n      shadows\\n      gl={{\\n        shadowMap: {\\n          enabled: true,\\n          type: THREE.PCFSoftShadowMap,\\n        } as any,\\n      }}\\n      camera={{\\n        position: CAMERA_DEFAULT_POSITION,\\n        fov: CAMERA_FOV,\\n        near: 0.01,\\n        far: 50,\\n      }}\\n      style={{ width: '100%', height: '100%' }}\\n    >\\n      <color attach=\\\"background\\\" args={['#1a1a2e']} />\\n\\n      {/* Camera mode switcher & ref sync */}\\n      <CameraSwitcher />\\n      <CameraRefSync />\\n\\n      {/* Lighting */}\\n      <ambientLight intensity={0.35} color=\\\"#ffffff\\\" />\\n      <directionalLight\\n        position={[0, 3, 0.5]}\\n        intensity={1.2}\\n        color=\\\"#fffbe6\\\"\\n        castShadow\\n        shadow-mapSize-width={2048}\\n        shadow-mapSize-height={2048}\\n        shadow-camera-near={0.5}\\n        shadow-camera-far={8}\\n        shadow-camera-left={-HALF_WIDTH - 0.3}\\n        shadow-camera-right={HALF_WIDTH + 0.3}\\n        shadow-camera-top={HALF_LENGTH + 0.3}\\n        shadow-camera-bottom={-HALF_LENGTH - 0.3}\\n        shadow-bias={-0.0005}\\n        shadow-normalBias={0.02}\\n      />\\n      <pointLight\\n        position={[-HALF_WIDTH * 0.4, 1.5, -HALF_LENGTH * 0.6]}\\n        intensity={0.5}\\n        color=\\\"#fff5e6\\\"\\n        distance={5}\\n        decay={2}\\n      />\\n      <pointLight\\n        position={[HALF_WIDTH * 0.4, 1.5, HALF_LENGTH * 0.6]}\\n        intensity={0.5}\\n        color=\\\"#fff5e6\\\"\\n        distance={5}\\n        decay={2}\\n      />\\n\\n      {/* Physics world wrapping all game objects */}\\n      <PhysicsWorld>\\n        <Table />\\n        <Balls />\\n        <CueStick />\\n        <AimLine />\\n        <GameHooks />\\n      </PhysicsWorld>\\n\\n      {/* Camera controls — only enabled in orbit mode */}\\n      {cameraMode === 'orbit' && (\\n        <OrbitControls\\n          target={orbitTarget}\\n          enablePan={false}\\n          enableDamping\\n          dampingFactor={0.08}\\n          minPolarAngle={0.2}\\n          maxPolarAngle={Math.PI / 2.15}\\n          minDistance={0.8}\\n          maxDistance={4.5}\\n        />\\n      )}\\n\\n      {/* ── Dark floor plane beneath table (Phase 8, T25) ── */}\\n      <mesh\\n        rotation={[-Math.PI / 2, 0, 0]}\\n        position={[0, FLOOR_Y, 0]}\\n        receiveShadow\\n      >\\n        <planeGeometry args={[20, 20]} />\\n        <meshStandardMaterial color=\\\"#0e0806\\\" roughness={0.95} metalness={0} />\\n      </mesh>\\n\\n      <fog attach=\\\"fog\\\" args={['#1a1a2e', 6, 14]} />\\n    </Canvas>\\n  );\\n}\",\"end_line\":226,\"start_line\":0,\"total_lines\":227}",
+      "tool_call_id": "call_5c86af03b3f8434f8c11d320",
+      "name": "file_read"
+    },
+    {
+      "role": "assistant",
+      "content": "The fix is complete. Here's a summary of what was changed in `src/components/Scene.tsx`:\n\n### Changes Made\n\n1. **Added new imports**: `useThree` from `@react-three/fiber`, `useEffect`/`useMemo` from React, and `useAimStore` from the store.\n\n2. **Added `CameraRefSync` component** — Keeps `window.__r3f_camera` in sync with the current R3F camera so that `useShotSequence` (which runs outside `<Canvas>`) can always access the active camera for raycasting, regardless of which camera type is active.\n\n3. **Added `CameraSwitcher` component** — Listens to `cameraMode` from `useAimStore` and imperatively swaps the R3F camera:\n   - **`'topdown'`**: Creates an `OrthographicCamera` at position `(0, 3, 0)` looking straight down at `(0, 0, 0)`, with frustum extents calculated to fit the full table (with 0.3m margin) regardless of viewport aspect ratio.\n   - **`'orbit'`**: Creates a fresh `PerspectiveCamera` at the default position `[0, 1.8, 1.6]` with the original 45° FOV, and sets it as the active camera.\n\n4. **Modified `Scene` component**:\n   - Reads `cameraMode` from `useAimStore` via `const cameraMode = useAimStore((s) => s.cameraMode)`.\n   - Renders `<CameraSwitcher />` and `<CameraRefSync />` inside the Canvas.\n   - Conditionally renders `<OrbitControls>` only when `cameraMode === 'orbit'` — so in top-down mode the user gets a clean, fixed orthographic view.\n\n5. **All existing elements preserved** — Lighting (ambient, directional, 2× point lights), shadows (PCFSoftShadowMap 2048²), physics world, table, balls, cue stick, aim line, fog, and dark floor plane are all unchanged.\n\n### Build result\n- TypeScript compilation: ✅ clean\n- Vite production build: ✅ successful (1,687 kB bundle)"
+    }
+  ],
+  "result": "The fix is complete. Here's a summary of what was changed in `src/components/Scene.tsx`:\n\n### Changes Made\n\n1. **Added new imports**: `useThree` from `@react-three/fiber`, `useEffect`/`useMemo` from React, and `useAimStore` from the store.\n\n2. **Added `CameraRefSync` component** — Keeps `window.__r3f_camera` in sync with the current R3F camera so that `useShotSequence` (which runs outside `<Canvas>`) can always access the active camera for raycasting, regardless of which camera type is active.\n\n3. **Added `CameraSwitcher` component** — Listens to `cameraMode` from `useAimStore` and imperatively swaps the R3F camera:\n   - **`'topdown'`**: Creates an `OrthographicCamera` at position `(0, 3, 0)` looking straight down at `(0, 0, 0)`, with frustum extents calculated to fit the full table (with 0.3m margin) regardless of viewport aspect ratio.\n   - **`'orbit'`**: Creates a fresh `PerspectiveCamera` at the default position `[0, 1.8, 1.6]` with the original 45° FOV, and sets it as the active camera.\n\n4. **Modified `Scene` component**:\n   - Reads `cameraMode` from `useAimStore` via `const cameraMode = useAimStore((s) => s.cameraMode)`.\n   - Renders `<CameraSwitcher />` and `<CameraRefSync />` inside the Canvas.\n   - Conditionally renders `<OrbitControls>` only when `cameraMode === 'orbit'` — so in top-down mode the user gets a clean, fixed orthographic view.\n\n5. **All existing elements preserved** — Lighting (ambient, directional, 2× point lights), shadows (PCFSoftShadowMap 2048²), physics world, table, balls, cue stick, aim line, fog, and dark floor plane are all unchanged.\n\n### Build result\n- TypeScript compilation: ✅ clean\n- Vite production build: ✅ successful (1,687 kB bundle)",
+  "error": null
+}

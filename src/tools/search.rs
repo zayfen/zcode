@@ -1,15 +1,51 @@
 //! Search tools for zcode
 //!
-//! Provides ripgrep-style content search and glob pattern matching.
-
-use serde_json::Value;
-use std::future::Future;
-use std::pin::Pin;
+//! This module provides grep-style search capabilities using regex.
 
 use crate::error::ZcodeError;
-use super::{Tool, ToolResult};
+use crate::tools::{Tool, ToolResult};
+use regex::Regex;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::fs;
+use std::path::Path;
+use walkdir::WalkDir;
 
-/// Tool for searching file contents (ripgrep-style)
+// ─── SearchTool ────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+struct SearchInput {
+    pattern: String,
+    path: String,
+    /// Optional glob-style file extension filter (e.g. ".rs", ".py")
+    #[serde(default)]
+    file_extension: Option<String>,
+    /// Whether search is case-sensitive (default: false = case-insensitive)
+    #[serde(default)]
+    case_sensitive: bool,
+    /// Number of context lines to include before/after each match
+    #[serde(default)]
+    context_lines: usize,
+    /// Maximum number of matches to return (default: 100)
+    #[serde(default = "default_max_matches")]
+    max_matches: usize,
+}
+
+fn default_max_matches() -> usize {
+    100
+}
+
+#[derive(Debug, Serialize)]
+struct SearchMatch {
+    file: String,
+    line: usize,
+    column: usize,
+    text: String,
+    context_before: Vec<String>,
+    context_after: Vec<String>,
+}
+
+/// Grep-style search tool with regex support
 pub struct SearchTool;
 
 impl Tool for SearchTool {
@@ -18,289 +54,333 @@ impl Tool for SearchTool {
     }
 
     fn description(&self) -> &str {
-        "Search file contents for a pattern (ripgrep-style). \
-         Input: {\"pattern\": \"<regex>\", \"path\": \"<dir>\" (default: \".\"), \"glob\": \"<file_pattern>\" (optional)}"
+        "Search for a regex pattern in files, with optional context lines, file extension filter, and case sensitivity"
     }
 
-    fn input_schema(&self) -> Value {
+    fn anthropic_schema(&self) -> Value {
         serde_json::json!({
-            "type": "object",
-            "properties": {
-                "pattern": {"type": "string", "description": "Regex pattern to search for"},
-                "path": {"type": "string", "description": "Directory to search in (default: current directory)"},
-                "glob": {"type": "string", "description": "Optional file glob filter (e.g. \"*.rs\")"}
-            },
-            "required": ["pattern"]
+            "name": self.name(),
+            "description": self.description(),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Regex pattern to search for"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Directory or file path to search within"
+                    },
+                    "file_extension": {
+                        "type": "string",
+                        "description": "Optional file extension to filter by (e.g., '.rs', '.py')"
+                    },
+                    "case_sensitive": {
+                        "type": "boolean",
+                        "description": "Whether the search should be case sensitive (default: false)"
+                    },
+                    "context_lines": {
+                        "type": "integer",
+                        "description": "Number of context lines to return before and after each match (default: 0)"
+                    },
+                    "max_matches": {
+                        "type": "integer",
+                        "description": "Maximum number of matches to return (default: 100)"
+                    }
+                },
+                "required": ["pattern", "path"]
+            }
         })
     }
 
-    fn execute(&self, input: Value) -> Pin<Box<dyn Future<Output = ToolResult<Value>> + Send + '_>> {
-        Box::pin(async move {
-            let pattern = input
-                .get("pattern")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    ZcodeError::InvalidToolInput("Missing 'pattern' field".to_string())
-                })?;
+    fn execute(&self, input: Value) -> ToolResult<Value> {
+        let params: SearchInput = serde_json::from_value(input)
+            .map_err(|e| ZcodeError::InvalidToolInput(e.to_string()))?;
 
-            let search_path = input
-                .get("path")
-                .and_then(|v| v.as_str())
-                .unwrap_or(".");
+        let pattern = build_regex(&params.pattern, params.case_sensitive)?;
+        let path = Path::new(&params.path);
+        let mut matches: Vec<SearchMatch> = Vec::new();
 
-            let glob_filter = input.get("glob").and_then(|v| v.as_str());
-
-            let regex = regex::Regex::new(pattern).map_err(|e| {
-                ZcodeError::InvalidToolInput(format!("Invalid regex: {}", e))
-            })?;
-
-            let mut results: Vec<Value> = Vec::new();
-            let max_results = 100;
-
-            for entry in walkdir::WalkDir::new(search_path)
-                .follow_links(false)
+        if path.is_file() {
+            search_file(path, &pattern, &params, &mut matches);
+        } else if path.is_dir() {
+            for entry in WalkDir::new(path)
                 .into_iter()
                 .filter_map(|e| e.ok())
+                .filter(|e| e.path().is_file())
             {
-                if results.len() >= max_results {
+                if matches.len() >= params.max_matches {
                     break;
                 }
-
-                let path = entry.path();
-
-                if !path.is_file() {
-                    continue;
-                }
-
-                // Skip binary files (check extension)
-                if let Some("png" | "jpg" | "jpeg" | "gif" | "bmp" | "ico" | "pdf"
-                        | "zip" | "tar" | "gz" | "exe" | "dll" | "so" | "dylib") = path.extension().and_then(|e| e.to_str()) {
-                    continue;
-                }
-
-                // Apply glob filter if provided
-                if let Some(glob_pattern) = glob_filter {
-                    let pat = glob::Pattern::new(glob_pattern).map_err(|e| {
-                        ZcodeError::InvalidToolInput(format!("Invalid glob: {}", e))
-                    })?;
-                    if !pat.matches_path(path) {
+                if let Some(ref ext) = params.file_extension {
+                    let path_str = entry.path().to_string_lossy();
+                    if !path_str.ends_with(ext.as_str()) {
                         continue;
                     }
                 }
-
-                // Try to read file, skip on error (binary, permissions, etc.)
-                let content = match tokio::fs::read_to_string(path).await {
-                    Ok(c) => c,
-                    Err(_) => continue,
-                };
-
-                for (line_num, line) in content.lines().enumerate() {
-                    if results.len() >= max_results {
-                        break;
-                    }
-                    if regex.is_match(line) {
-                        results.push(serde_json::json!({
-                            "path": path.to_string_lossy(),
-                            "line_number": line_num + 1,
-                            "line": line.trim(),
-                        }));
-                    }
-                }
+                search_file(entry.path(), &pattern, &params, &mut matches);
             }
+        } else {
+            return Err(ZcodeError::FileNotFound {
+                path: params.path.clone(),
+            });
+        }
 
-            Ok(serde_json::json!({
-                "matches": results,
-                "total": results.len(),
-                "truncated": results.len() >= max_results,
-            }))
-        })
+        let total = matches.len();
+        Ok(serde_json::json!({
+            "matches": matches,
+            "total": total
+        }))
     }
 }
 
-/// Tool for finding files by glob pattern
-pub struct GlobTool;
+fn build_regex(pattern: &str, case_sensitive: bool) -> ToolResult<Regex> {
+    let pat = if case_sensitive {
+        pattern.to_string()
+    } else {
+        format!("(?i){}", pattern)
+    };
+    Regex::new(&pat)
+        .map_err(|e| ZcodeError::InvalidToolInput(format!("Invalid regex pattern: {}", e)))
+}
 
-impl Tool for GlobTool {
-    fn name(&self) -> &str {
-        "glob"
-    }
+fn search_file(
+    path: &Path,
+    pattern: &Regex,
+    params: &SearchInput,
+    matches: &mut Vec<SearchMatch>,
+) {
+    let content = match fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return, // Skip binary or unreadable files
+    };
 
-    fn description(&self) -> &str {
-        "Find files matching a glob pattern. \
-         Input: {\"pattern\": \"<glob>\", \"path\": \"<dir>\" (default: \".\")}"
-    }
+    let lines: Vec<&str> = content.lines().collect();
 
-    fn input_schema(&self) -> Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "pattern": {"type": "string", "description": "Glob pattern to match files (e.g. \"**/*.rs\")"},
-                "path": {"type": "string", "description": "Directory to search in (default: current directory)"}
-            },
-            "required": ["pattern"]
-        })
-    }
+    for (idx, line) in lines.iter().enumerate() {
+        if matches.len() >= params.max_matches {
+            break;
+        }
+        if let Some(mat) = pattern.find(line) {
+            let ctx_start = idx.saturating_sub(params.context_lines);
+            let context_before: Vec<String> = lines[ctx_start..idx]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
 
-    fn execute(&self, input: Value) -> Pin<Box<dyn Future<Output = ToolResult<Value>> + Send + '_>> {
-        Box::pin(async move {
-            let pattern = input
-                .get("pattern")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    ZcodeError::InvalidToolInput("Missing 'pattern' field".to_string())
-                })?;
+            let ctx_end = (idx + 1 + params.context_lines).min(lines.len());
+            let context_after: Vec<String> = lines[(idx + 1)..ctx_end]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
 
-            let search_path = input
-                .get("path")
-                .and_then(|v| v.as_str())
-                .unwrap_or(".");
-
-            let glob_pattern = glob::Pattern::new(pattern).map_err(|e| {
-                ZcodeError::InvalidToolInput(format!("Invalid glob pattern: {}", e))
-            })?;
-
-            let mut files: Vec<String> = Vec::new();
-            let max_results = 500;
-
-            for entry in walkdir::WalkDir::new(search_path)
-                .follow_links(false)
-                .into_iter()
-                .filter_map(|e| e.ok())
-            {
-                if files.len() >= max_results {
-                    break;
-                }
-
-                let path = entry.path();
-
-                if !path.is_file() {
-                    continue;
-                }
-
-                let matched = glob_pattern.matches_path(path);
-                if matched {
-                    files.push(path.to_string_lossy().to_string());
-                }
-            }
-
-            files.sort();
-
-            Ok(serde_json::json!({
-                "files": files,
-                "total": files.len(),
-                "truncated": files.len() >= max_results,
-            }))
-        })
+            matches.push(SearchMatch {
+                file: path.to_string_lossy().to_string(),
+                line: idx + 1,
+                column: mat.start() + 1,
+                text: line.to_string(),
+                context_before,
+                context_after,
+            });
+        }
     }
 }
+
+// ─── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::TempDir;
 
-    #[tokio::test]
-    async fn test_search_finds_pattern() {
-        let tmp = tempfile::tempdir().unwrap();
-        let file_path = tmp.path().join("test.txt");
-        std::fs::write(&file_path, "hello world\nfoo bar\nhello again\n").unwrap();
+    #[test]
+    fn test_search_basic() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.rs");
+        fs::write(&path, "fn hello() {}\nfn world() {}\nfn hello_world() {}").unwrap();
 
-        let tool = SearchTool;
-        let input = serde_json::json!({
+        let result = SearchTool.execute(serde_json::json!({
             "pattern": "hello",
-            "path": tmp.path().to_str().unwrap()
-        });
-        let result = tool.execute(input).await.unwrap();
+            "path": path.to_str().unwrap()
+        })).unwrap();
+
         let matches = result["matches"].as_array().unwrap();
-        assert_eq!(matches.len(), 2);
-        assert_eq!(matches[0]["line_number"], 1);
-        assert_eq!(matches[1]["line_number"], 3);
+        assert!(matches.len() >= 2);
     }
 
-    #[tokio::test]
-    async fn test_search_no_matches() {
-        let tmp = tempfile::tempdir().unwrap();
-        let file_path = tmp.path().join("test.txt");
-        std::fs::write(&file_path, "nothing here\n").unwrap();
+    #[test]
+    fn test_search_case_insensitive_default() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.txt");
+        fs::write(&path, "HELLO\nhello\nHeLLo").unwrap();
 
-        let tool = SearchTool;
-        let input = serde_json::json!({
-            "pattern": "missing",
-            "path": tmp.path().to_str().unwrap()
-        });
-        let result = tool.execute(input).await.unwrap();
-        assert_eq!(result["matches"].as_array().unwrap().len(), 0);
+        let result = SearchTool.execute(serde_json::json!({
+            "pattern": "hello",
+            "path": path.to_str().unwrap()
+        })).unwrap();
+
+        let matches = result["matches"].as_array().unwrap();
+        assert_eq!(matches.len(), 3);
     }
 
-    #[tokio::test]
-    async fn test_search_missing_pattern() {
-        let tool = SearchTool;
-        let result = tool.execute(serde_json::json!({})).await;
-        assert!(result.is_err());
-    }
+    #[test]
+    fn test_search_case_sensitive() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.txt");
+        fs::write(&path, "HELLO\nhello\nHeLLo").unwrap();
 
-    #[tokio::test]
-    async fn test_search_with_glob_filter() {
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("a.rs"), "fn main() {}\n").unwrap();
-        std::fs::write(tmp.path().join("b.txt"), "fn main() {}\n").unwrap();
+        let result = SearchTool.execute(serde_json::json!({
+            "pattern": "hello",
+            "path": path.to_str().unwrap(),
+            "case_sensitive": true
+        })).unwrap();
 
-        let tool = SearchTool;
-        let input = serde_json::json!({
-            "pattern": "fn main",
-            "path": tmp.path().to_str().unwrap(),
-            "glob": "*.rs"
-        });
-        let result = tool.execute(input).await.unwrap();
         let matches = result["matches"].as_array().unwrap();
         assert_eq!(matches.len(), 1);
-        assert!(matches[0]["path"].as_str().unwrap().ends_with(".rs"));
+        assert_eq!(matches[0]["line"], 2);
     }
 
-    #[tokio::test]
-    async fn test_search_invalid_regex() {
-        let tool = SearchTool;
-        let input = serde_json::json!({"pattern": "[invalid"});
-        let result = tool.execute(input).await;
+    #[test]
+    fn test_search_with_context_lines() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("ctx.txt");
+        fs::write(&path, "Line 1\nLine 2\nTARGET\nLine 4\nLine 5").unwrap();
+
+        let result = SearchTool.execute(serde_json::json!({
+            "pattern": "TARGET",
+            "path": path.to_str().unwrap(),
+            "context_lines": 1
+        })).unwrap();
+
+        let matches = result["matches"].as_array().unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0]["context_before"].as_array().unwrap().len(), 1);
+        assert_eq!(matches[0]["context_after"].as_array().unwrap().len(), 1);
+        assert_eq!(matches[0]["context_before"][0], "Line 2");
+        assert_eq!(matches[0]["context_after"][0], "Line 4");
+    }
+
+    #[test]
+    fn test_search_directory() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("a.rs"), "fn foo() {}").unwrap();
+        fs::write(dir.path().join("b.rs"), "fn bar() {}\nfn foo_helper() {}").unwrap();
+        fs::write(dir.path().join("c.txt"), "no match here").unwrap();
+
+        let result = SearchTool.execute(serde_json::json!({
+            "pattern": "foo",
+            "path": dir.path().to_str().unwrap()
+        })).unwrap();
+
+        let matches = result["matches"].as_array().unwrap();
+        assert!(matches.len() >= 2);
+    }
+
+    #[test]
+    fn test_search_with_file_extension_filter() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("match.rs"), "fn foo() {}").unwrap();
+        fs::write(dir.path().join("no_match.txt"), "fn foo() {}").unwrap();
+
+        let result = SearchTool.execute(serde_json::json!({
+            "pattern": "foo",
+            "path": dir.path().to_str().unwrap(),
+            "file_extension": ".rs"
+        })).unwrap();
+
+        let matches = result["matches"].as_array().unwrap();
+        assert_eq!(matches.len(), 1);
+        assert!(matches[0]["file"].as_str().unwrap().ends_with(".rs"));
+    }
+
+    #[test]
+    fn test_search_no_matches() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.txt");
+        fs::write(&path, "Hello World").unwrap();
+
+        let result = SearchTool.execute(serde_json::json!({
+            "pattern": "nonexistent_pattern_xyz",
+            "path": path.to_str().unwrap()
+        })).unwrap();
+
+        let matches = result["matches"].as_array().unwrap();
+        assert!(matches.is_empty());
+        assert_eq!(result["total"], 0);
+    }
+
+    #[test]
+    fn test_search_regex_pattern() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("code.rs");
+        fs::write(&path, "let x = 42;\nlet y = 100;\nlet z = \"hello\";").unwrap();
+
+        let result = SearchTool.execute(serde_json::json!({
+            "pattern": r"let \w+ = \d+",
+            "path": path.to_str().unwrap(),
+            "case_sensitive": true
+        })).unwrap();
+
+        let matches = result["matches"].as_array().unwrap();
+        assert_eq!(matches.len(), 2); // x and y, not z (string)
+    }
+
+    #[test]
+    fn test_search_invalid_regex() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.txt");
+        fs::write(&path, "content").unwrap();
+
+        let result = SearchTool.execute(serde_json::json!({
+            "pattern": "[invalid regex",
+            "path": path.to_str().unwrap()
+        }));
+
         assert!(result.is_err());
     }
 
-    #[tokio::test]
-    async fn test_glob_finds_files() {
-        let tmp = tempfile::tempdir().unwrap();
-        let sub = tmp.path().join("sub");
-        std::fs::create_dir(&sub).unwrap();
-        std::fs::write(sub.join("a.rs"), "").unwrap();
-        std::fs::write(sub.join("b.rs"), "").unwrap();
-        std::fs::write(tmp.path().join("c.txt"), "").unwrap();
+    #[test]
+    fn test_search_line_and_column_numbers() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.txt");
+        fs::write(&path, "first line\nsecond TARGET line").unwrap();
 
-        let tool = GlobTool;
-        let input = serde_json::json!({
-            "pattern": "**/*.rs",
-            "path": tmp.path().to_str().unwrap()
-        });
-        let result = tool.execute(input).await.unwrap();
-        let files = result["files"].as_array().unwrap();
-        assert_eq!(files.len(), 2);
+        let result = SearchTool.execute(serde_json::json!({
+            "pattern": "TARGET",
+            "path": path.to_str().unwrap(),
+            "case_sensitive": true
+        })).unwrap();
+
+        let matches = result["matches"].as_array().unwrap();
+        assert_eq!(matches[0]["line"], 2);
+        assert_eq!(matches[0]["column"].as_u64().unwrap(), 8); // 1-indexed
     }
 
-    #[tokio::test]
-    async fn test_glob_no_matches() {
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("a.txt"), "").unwrap();
-
-        let tool = GlobTool;
-        let input = serde_json::json!({
-            "pattern": "**/*.rs",
-            "path": tmp.path().to_str().unwrap()
-        });
-        let result = tool.execute(input).await.unwrap();
-        assert_eq!(result["files"].as_array().unwrap().len(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_glob_missing_pattern() {
-        let tool = GlobTool;
-        let result = tool.execute(serde_json::json!({})).await;
+    #[test]
+    fn test_search_nonexistent_path() {
+        let result = SearchTool.execute(serde_json::json!({
+            "pattern": "foo",
+            "path": "/nonexistent/path"
+        }));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_search_max_matches() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("many.txt");
+        let content: String = (0..200).map(|i| format!("line with pattern {}\n", i)).collect();
+        fs::write(&path, &content).unwrap();
+
+        let result = SearchTool.execute(serde_json::json!({
+            "pattern": "pattern",
+            "path": path.to_str().unwrap(),
+            "max_matches": 10
+        })).unwrap();
+
+        let matches = result["matches"].as_array().unwrap();
+        assert_eq!(matches.len(), 10);
     }
 }

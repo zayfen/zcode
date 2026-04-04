@@ -1,0 +1,11 @@
+{
+  "id": "69c8d4f5",
+  "task": "Implement T01-T03: Set up the pool game project. The Vite+React+TS project is already scaffolded at examples/pool-game/ with deps installed. Create the directory structure under src/: types/, constants/, store/, components/, physics/, game-logic/, hooks/, utils/. Create src/types/index.ts with all TypeScript types (BallId, BallGroup, GamePhase, Player, FoulType, BallState, ShotResult, GameState, AimState). Create src/main.tsx and src/App.tsx as minimal entry points. Reference docs at docs/specs/pool-game.spec.md and docs/tasks/001-pool-game.tasks.md for details.",
+  "status": "failed",
+  "created_at": 1774769397,
+  "updated_at": 1774770035,
+  "iteration": 0,
+  "history": [],
+  "result": null,
+  "error": "LLM API error: Anthropic request failed: error sending request for url (https://open.bigmodel.cn/api/anthropic/v1/messages)"
+}

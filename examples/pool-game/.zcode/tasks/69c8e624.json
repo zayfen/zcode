@@ -1,0 +1,11 @@
+{
+  "id": "69c8e624",
+  "task": "Implement Phase 9 (T27-T29): Final integration. Wire all systems for complete game flow: break shot → turn alternation → group assignment → 8-ball shot → win/loss detection. Add undo support (U key): snapshot ball positions and game state before each shot, restore on undo press, limit to 1 step. Add smooth animations: cue stick strike animation, ball sink animation when pocketed (drop below table surface, fade out). Clean up any console warnings. Write README.md with project overview, tech stack, setup instructions (npm install, npm run dev), controls reference table, and development notes. Then run npm run build and fix any build errors.",
+  "status": "failed",
+  "created_at": 1774773796,
+  "updated_at": 1774774321,
+  "iteration": 0,
+  "history": [],
+  "result": null,
+  "error": "LLM API error: Anthropic request failed: error sending request for url (https://open.bigmodel.cn/api/anthropic/v1/messages)"
+}

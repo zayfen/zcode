@@ -1,0 +1,110 @@
+{
+  "id": "69ca8be9",
+  "task": "Fix the undo handler in useShotSequence.ts. Currently when user presses U key, the handler calls undo() to get a snapshot but then manually sets partial state with setState. It should instead call useGameStore.getState().restoreSnapshot(snapshot) which properly restores all fields (ballStates, positions, pocketed status, player groups, etc). Find the U key handler in src/hooks/useShotSequence.ts and replace the manual setState call with: if (snapshot) { useGameStore.getState().restoreSnapshot(snapshot); useAimStore.getState().resetPower(); }",
+  "status": "completed",
+  "created_at": 1774881769,
+  "updated_at": 1774881804,
+  "iteration": 5,
+  "history": [
+    {
+      "role": "system",
+      "content": "You are zcode, a senior AI coding agent using model glm-5.1. You have access to tools for reading/writing files, running shell commands, and searching code. Execute the user's task completely and report results."
+    },
+    {
+      "role": "user",
+      "content": "Fix the undo handler in useShotSequence.ts. Currently when user presses U key, the handler calls undo() to get a snapshot but then manually sets partial state with setState. It should instead call useGameStore.getState().restoreSnapshot(snapshot) which properly restores all fields (ballStates, positions, pocketed status, player groups, etc). Find the U key handler in src/hooks/useShotSequence.ts and replace the manual setState call with: if (snapshot) { useGameStore.getState().restoreSnapshot(snapshot); useAimStore.getState().resetPower(); }"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_320ea4372f5a435e81a1e18a",
+          "input": {
+            "path": "src/hooks/useShotSequence.ts"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"import { useEffect, useRef } from 'react';\\nimport { useGameStore } from '../store/gameStore';\\nimport { useAimStore } from '../store/aimStore';\\nimport { evaluateShotResult } from '../game-logic/rules';\\nimport type { ShotEvaluationInput } from '../game-logic/rules';\\nimport type { Vec3Tuple } from '../types';\\nimport { MAX_IMPULSE } from '../constants/physics';\\n\\n// ─────────────────────────────────────────────────────────────────────────────\\n// Ball API registry — physics bodies register their cannon-es API handles\\n// here so the shot sequence can apply impulses to the cue ball.\\n// ─────────────────────────────────────────────────────────────────────────────\\n\\nexport interface BallPhysicsApi {\\n  applyImpulse: (impulse: Vec3Tuple) => void;\\n  position: { subscribe: (cb: (v: Vec3Tuple) => void) => () => void };\\n  velocity: { subscribe: (cb: (v: Vec3Tuple) => void) => () => void };\\n}\\n\\nconst ballApis = new Map<number, BallPhysicsApi>();\\n\\nexport function registerBallApi(id: number, api: BallPhysicsApi): void {\\n  ballApis.set(id, api);\\n}\\n\\nexport function unregisterBallApi(id: number): void {\\n  ballApis.delete(id);\\n}\\n\\n/**\\n * Get the physics API for a ball (used by other systems).\\n */\\nexport function getBallApi(id: number): BallPhysicsApi | undefined {\\n  return ballApis.get(id);\\n}\\n\\n// ─────────────────────────────────────────────────────────────────────────────\\n// Shot sequence orchestrator\\n// ─────────────────────────────────────────────────────────────────────────────\\n\\n/**\\n * Hook that orchestrates the full shot lifecycle:\\n *\\n * 1. Listens for mouse/keyboard input to drive phase transitions\\n *    (IDLE → AIMING → POWER → SIMULATING)\\n * 2. Applies the cue-ball impulse on shoot\\n * 3. After settle detection transitions to EVALUATING, runs the rules engine\\n * 4. Applies evaluation results (fouls, group assignment, game over, next turn)\\n *\\n * Also integrates the useAim hook for camera-based raycasting on mousemove.\\n */\\nexport default function useShotSequence(): void {\\n  const evaluatedRef = useRef(false);\\n\\n  // ── Watch for EVALUATING phase and run rules ────────────────────────────\\n  useEffect(() => {\\n    let frameId: ReturnType<typeof requestAnimationFrame>;\\n\\n    const tick = () => {\\n      const state = useGameStore.getState();\\n\\n      if (state.phase === 'EVALUATING' && !evaluatedRef.current) {\\n        evaluatedRef.current = true;\\n\\n        // Determine if this is the break shot\\n        const isBreak = state.pocketedBalls.length === 0 && state.shotHistory.length === 0;\\n\\n        // Build evaluation input using current store state\\n        // allPocketedBalls: balls pocketed BEFORE this shot\\n        const allPocketedBeforeShot = state.shotHistory.length > 0\\n          ? state.shotHistory[0].state.pocketedBalls\\n          : [];\\n\\n        const input: ShotEvaluationInput = {\\n          currentPlayer: state.currentPlayer,\\n          playerGroups: { ...state.playerGroups },\\n          pocketedThisShot: [...state.ballsPocketedThisShot],\\n          firstContact: state.firstContact,\\n          railContact: state.railContacted,\\n          allPocketedBalls: allPocketedBeforeShot,\\n          isBreak,\\n        };\\n\\n        const result = evaluateShotResult(input);\\n\\n        // ── Apply results to store ────────────────────────────────────────\\n\\n        // Foul\\n        if (result.foul) {\\n          useGameStore.getState().setFoul(result.foul);\\n        }\\n\\n        // Group assignment\\n        if (result.assignGroup) {\\n          useGameStore.getState().assignGroups(\\n            result.assignGroup.player,\\n            result.assignGroup.group,\\n          );\\n        }\\n\\n        // Game over\\n        if (result.gameOver && result.winner !== null) {\\n          useGameStore.getState().setGameOver(result.winner);\\n          evaluatedRef.current = false;\\n          return; // stop processing\\n        }\\n\\n        // Ball-in-hand\\n        if (result.ballInHand) {\\n          useGameStore.getState().setBallInHand(true);\\n        }\\n\\n        // Transition to next turn\\n        useGameStore.getState().nextTurn(result.nextPlayer);\\n\\n        // Reset aim power for next shot\\n        useAimStore.getState().resetPower();\\n\\n        // Reset evaluation guard after a short delay to allow state to settle\\n        setTimeout(() => {\\n          evaluatedRef.current = false;\\n        }, 100);\\n      }\\n\\n      frameId = requestAnimationFrame(tick);\\n    };\\n\\n    frameId = requestAnimationFrame(tick);\\n    return () => cancelAnimationFrame(frameId);\\n  }, []);\\n\\n  // ── Input handling: mouse & keyboard ────────────────────────────────────\\n  useEffect(() => {\\n    const canvas = document.querySelector('canvas');\\n    if (!canvas) return;\\n\\n    // ── Helpers for raycasting from camera to Y=0 plane ──────────────────\\n    // We lazily import THREE to avoid requiring it at module level in this hook\\n    let raycaster: any = null;\\n    let plane: any = null;\\n    let vec2: any = null;\\n    let vec3: any = null;\\n\\n    const getThreeObjects = async () => {\\n      if (raycaster) return;\\n      const THREE = await import('three');\\n      raycaster = new THREE.Raycaster();\\n      plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);\\n      vec2 = new THREE.Vector2();\\n      vec3 = new THREE.Vector3();\\n    };\\n\\n    // Pre-initialize\\n    getThreeObjects();\\n\\n    /**\\n     * Compute aim direction from mouse position via camera raycasting.\\n     * Falls back to simple NDC-based mapping if Three.js not ready.\\n     */\\n    const computeAimFromMouse = (e: MouseEvent): Vec3Tuple | null => {\\n      const rect = canvas.getBoundingClientRect();\\n      const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;\\n      const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;\\n\\n      const store = useGameStore.getState();\\n      const cuePos = store.cueBallPosition;\\n\\n      if (raycaster && plane) {\\n        // Camera-based raycasting onto Y=0 table plane\\n        vec2.set(ndcX, ndcY);\\n\\n        // Get camera from the R3F store — we access it through a global reference\\n        // set by the Scene component\\n        const camera = (window as any).__r3f_camera;\\n        if (camera) {\\n          raycaster.setFromCamera(vec2, camera);\\n          const hit = raycaster.ray.intersectPlane(plane, vec3);\\n          if (hit) {\\n            const dx = hit.x - cuePos[0];\\n            const dz = hit.z - cuePos[2];\\n            const len = Math.sqrt(dx * dx + dz * dz);\\n            if (len > 0.001) {\\n              return [dx / len, 0, dz / len];\\n            }\\n          }\\n        }\\n      }\\n\\n      // Fallback: simple NDC angle-based aim\\n      const angle = ndcX * Math.PI;\\n      return [Math.sin(angle), 0, Math.cos(angle)];\\n    };\\n\\n    // ── Mouse down ───────────────────────────────────────────────────────\\n    const handleMouseDown = (e: MouseEvent) => {\\n      // Ignore right-click\\n      if (e.button !== 0) return;\\n\\n      const { phase, ballInHand } = useGameStore.getState();\\n\\n      // Ball-in-hand placement\\n      if (ballInHand && phase === 'IDLE') {\\n        const rect = canvas.getBoundingClientRect();\\n        const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;\\n        const ndcY = -((e.clientY - rect.top) / rect.height) * 2 + 1;\\n\\n        // Map NDC to approximate table coordinates\\n        const x = ndcX * 0.56; // HALF_WIDTH\\n        const z = -ndcY * 1.12; // HALF_LENGTH\\n\\n        useGameStore.getState().placeBallInHand([x, 0.0285, z]);\\n        return;\\n      }\\n\\n      if (phase === 'IDLE') {\\n        // IDLE → AIMING\\n        const aimDir = computeAimFromMouse(e);\\n        if (aimDir) {\\n          useAimStore.getState().setDirection(aimDir);\\n        }\\n        useGameStore.getState().startAiming();\\n      } else if (phase === 'AIMING') {\\n        // AIMING → POWER (start charging)\\n        useGameStore.getState().startPower();\\n        useAimStore.getState().startCharging();\\n      }\\n    };\\n\\n    // ── Mouse up ─────────────────────────────────────────────────────────\\n    const handleMouseUp = (e: MouseEvent) => {\\n      if (e.button !== 0) return;\\n\\n      const { phase } = useGameStore.getState();\\n      const { power, direction, isCharging } = useAimStore.getState();\\n\\n      if (phase === 'POWER' && isCharging) {\\n        // Calculate impulse vector\\n        const impulseMagnitude = power * MAX_IMPULSE;\\n        const impulse: Vec3Tuple = [\\n          direction[0] * impulseMagnitude,\\n          0,\\n          direction[2] * impulseMagnitude,\\n        ];\\n\\n        // Apply impulse to the cue ball via physics API\\n        const cueApi = ballApis.get(0);\\n        if (cueApi) {\\n          cueApi.applyImpulse(impulse);\\n        }\\n\\n        // Transition store: POWER → SIMULATING (also takes snapshot internally)\\n        useGameStore.getState().shoot(impulse);\\n        useAimStore.getState().stopCharging();\\n      }\\n    };\\n\\n    // ── Mouse move: update aim direction during AIMING/POWER ─────────────\\n    const handleMouseMove = (e: MouseEvent) => {\\n      const { phase } = useGameStore.getState();\\n      if (phase !== 'AIMING' && phase !== 'POWER' && phase !== 'IDLE') return;\\n\\n      const aimDir = computeAimFromMouse(e);\\n      if (aimDir) {\\n        useAimStore.getState().setDirection(aimDir);\\n      }\\n    };\\n\\n    // ── Keyboard shortcuts ───────────────────────────────────────────────\\n    const handleKeyDown = (e: KeyboardEvent) => {\\n      // Undo (U)\\n      if (e.key === 'u' || e.key === 'U') {\\n        const snapshot = useGameStore.getState().undo();\\n        if (snapshot) {\\n          useGameStore.setState({\\n            currentPlayer: snapshot.state.currentPlayer,\\n            playerGroups: snapshot.state.playerGroups,\\n            pocketedBalls: snapshot.state.pocketedBalls,\\n            phase: 'IDLE',\\n            ballsPocketedThisShot: [],\\n            firstContact: null,\\n            foul: null,\\n          });\\n        }\\n      }\\n\\n      // Camera toggle (T)\\n      if (e.key === 't' || e.key === 'T') {\\n        useAimStore.getState().toggleCameraMode();\\n      }\\n\\n      // Reset game (R)\\n      if (e.key === 'r' || e.key === 'R') {\\n        useGameStore.getState().resetGame();\\n        useAimStore.getState().resetPower();\\n      }\\n    };\\n\\n    window.addEventListener('mousedown', handleMouseDown);\\n    window.addEventListener('mouseup', handleMouseUp);\\n    window.addEventListener('mousemove', handleMouseMove);\\n    window.addEventListener('keydown', handleKeyDown);\\n\\n    return () => {\\n      window.removeEventListener('mousedown', handleMouseDown);\\n      window.removeEventListener('mouseup', handleMouseUp);\\n      window.removeEventListener('mousemove', handleMouseMove);\\n      window.removeEventListener('keydown', handleKeyDown);\\n    };\\n  }, []);\\n}\",\"end_line\":309,\"start_line\":0,\"total_lines\":310}",
+      "tool_call_id": "call_320ea4372f5a435e81a1e18a",
+      "name": "file_read"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_8dd3df2b3a424e7daf39369e",
+          "input": {
+            "new_text": "      // Undo (U)\n      if (e.key === 'u' || e.key === 'U') {\n        const snapshot = useGameStore.getState().undo();\n        if (snapshot) {\n          useGameStore.getState().restoreSnapshot(snapshot);\n          useAimStore.getState().resetPower();\n        }\n      }",
+            "old_text": "      // Undo (U)\n      if (e.key === 'u' || e.key === 'U') {\n        const snapshot = useGameStore.getState().undo();\n        if (snapshot) {\n          useGameStore.setState({\n            currentPlayer: snapshot.state.currentPlayer,\n            playerGroups: snapshot.state.playerGroups,\n            pocketedBalls: snapshot.state.pocketedBalls,\n            phase: 'IDLE',\n            ballsPocketedThisShot: [],\n            firstContact: null,\n            foul: null,\n          });\n        }\n      }",
+            "path": "src/hooks/useShotSequence.ts"
+          },
+          "name": "file_edit",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"path\":\"src/hooks/useShotSequence.ts\",\"replacements\":1,\"success\":true}",
+      "tool_call_id": "call_8dd3df2b3a424e7daf39369e",
+      "name": "file_edit"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_bb4dcb2ded00425b924d00d4",
+          "input": {
+            "context_lines": 5,
+            "path": "src/hooks/useShotSequence.ts",
+            "pattern": "Undo \\(U\\)"
+          },
+          "name": "search",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"matches\":[{\"column\":10,\"context_after\":[\"      if (e.key === 'u' || e.key === 'U') {\",\"        const snapshot = useGameStore.getState().undo();\",\"        if (snapshot) {\",\"          useGameStore.getState().restoreSnapshot(snapshot);\",\"          useAimStore.getState().resetPower();\"],\"context_before\":[\"      }\",\"    };\",\"\",\"    // ── Keyboard shortcuts ───────────────────────────────────────────────\",\"    const handleKeyDown = (e: KeyboardEvent) => {\"],\"file\":\"src/hooks/useShotSequence.ts\",\"line\":270,\"text\":\"      // Undo (U)\"}],\"total\":1}",
+      "tool_call_id": "call_bb4dcb2ded00425b924d00d4",
+      "name": "search"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_f5ca12090b2241d49782429a",
+          "input": {
+            "limit": 15,
+            "offset": 268,
+            "path": "src/hooks/useShotSequence.ts"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"    const handleKeyDown = (e: KeyboardEvent) => {\\n      // Undo (U)\\n      if (e.key === 'u' || e.key === 'U') {\\n        const snapshot = useGameStore.getState().undo();\\n        if (snapshot) {\\n          useGameStore.getState().restoreSnapshot(snapshot);\\n          useAimStore.getState().resetPower();\\n        }\\n      }\\n\\n      // Camera toggle (T)\\n      if (e.key === 't' || e.key === 'T') {\\n        useAimStore.getState().toggleCameraMode();\\n      }\\n\",\"end_line\":282,\"start_line\":268,\"total_lines\":303}",
+      "tool_call_id": "call_f5ca12090b2241d49782429a",
+      "name": "file_read"
+    },
+    {
+      "role": "assistant",
+      "content": "The fix has been successfully applied. Here's a summary of the change:\n\n**File:** `src/hooks/useShotSequence.ts` (lines 272–278)\n\n**Before:**\n```ts\nif (snapshot) {\n  useGameStore.setState({\n    currentPlayer: snapshot.state.currentPlayer,\n    playerGroups: snapshot.state.playerGroups,\n    pocketedBalls: snapshot.state.pocketedBalls,\n    phase: 'IDLE',\n    ballsPocketedThisShot: [],\n    firstContact: null,\n    foul: null,\n  });\n}\n```\n\n**After:**\n```ts\nif (snapshot) {\n  useGameStore.getState().restoreSnapshot(snapshot);\n  useAimStore.getState().resetPower();\n}\n```\n\nThe manual `setState` call was only restoring a subset of fields (`currentPlayer`, `playerGroups`, `pocketedBalls`, `phase`, etc.), which meant `ballStates`, ball positions, pocketed status, and other snapshot fields were lost on undo. The new code delegates to `restoreSnapshot(snapshot)` which properly restores **all** fields from the snapshot, and also resets the aim power store for a clean slate."
+    }
+  ],
+  "result": "The fix has been successfully applied. Here's a summary of the change:\n\n**File:** `src/hooks/useShotSequence.ts` (lines 272–278)\n\n**Before:**\n```ts\nif (snapshot) {\n  useGameStore.setState({\n    currentPlayer: snapshot.state.currentPlayer,\n    playerGroups: snapshot.state.playerGroups,\n    pocketedBalls: snapshot.state.pocketedBalls,\n    phase: 'IDLE',\n    ballsPocketedThisShot: [],\n    firstContact: null,\n    foul: null,\n  });\n}\n```\n\n**After:**\n```ts\nif (snapshot) {\n  useGameStore.getState().restoreSnapshot(snapshot);\n  useAimStore.getState().resetPower();\n}\n```\n\nThe manual `setState` call was only restoring a subset of fields (`currentPlayer`, `playerGroups`, `pocketedBalls`, `phase`, etc.), which meant `ballStates`, ball positions, pocketed status, and other snapshot fields were lost on undo. The new code delegates to `restoreSnapshot(snapshot)` which properly restores **all** fields from the snapshot, and also resets the aim power store for a clean slate.",
+  "error": null
+}

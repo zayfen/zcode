@@ -1,0 +1,11 @@
+{
+  "id": "69ca8bb9",
+  "task": "Fix the undo handler in useShotSequence.ts. Currently when user presses U key, the handler calls undo() to get a snapshot but then manually sets partial state with setState. It should instead call useGameStore.getState().restoreSnapshot(snapshot) which properly restores all fields (ballStates, positions, pocketed status, player groups, etc). Find the U key handler in src/hooks/useShotSequence.ts and replace the manual setState call with: if (snapshot) { useGameStore.getState().restoreSnapshot(snapshot); useAimStore.getState().resetPower(); }",
+  "status": "failed",
+  "created_at": 1774881721,
+  "updated_at": 1774881721,
+  "iteration": 0,
+  "history": [],
+  "result": null,
+  "error": "LLM API error: Anthropic API error (401 Unauthorized): Header中未收到Authorization参数，无法进行身份验证。"
+}

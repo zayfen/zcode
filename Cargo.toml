@@ -20,6 +20,9 @@ serde_json = "1.0"
 # Schema generation
 schemars = "0.8"
 
+# Date/time
+chrono = "0.4"
+
 # Error handling
 anyhow = "1.0"
 thiserror = "1.0"
@@ -44,6 +47,28 @@ regex = "1.10"
 # LLM integration
 rig-core = "0.33"
 
+# Code intelligence
+tree-sitter = "0.24"
+regex = "1.10"
+similar = { version = "2.4", features = ["text"] }
+libloading = "0.8"
+
+# Agent & LLM integration
+reqwest = { version = "0.12", features = ["json", "stream", "blocking"] }
+async-trait = "0.1"
+uuid = { version = "=1.6.1", features = ["v4"] }
+
+# Memory system
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# Scripting engines
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
+pyo3 = { version = "0.22", features = ["auto-initialize"] }
+rquickjs = { version = "0.7", features = ["full"] }
+
+# LSP
+lsp-types = "0.97"
+
 # TUI
 ratatui = "0.27"
 crossterm = "0.27"
@@ -62,3 +87,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "zcode"
 path = "src/main.rs"
+
+[[example]]
+name = "pipeline_demo"
+path = "examples/pipeline_demo.rs"

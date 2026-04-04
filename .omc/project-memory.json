@@ -1,0 +1,181 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1775290135438,
+  "projectRoot": "/Users/riven/Github/zcode",
+  "techStack": {
+    "languages": [
+      {
+        "name": "Rust",
+        "version": "1.75",
+        "confidence": "high",
+        "markers": [
+          "Cargo.toml"
+        ]
+      }
+    ],
+    "frameworks": [],
+    "packageManager": "cargo",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": "cargo build",
+    "testCommand": "cargo test",
+    "lintCommand": "cargo clippy",
+    "devCommand": "cargo run",
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "examples",
+      "src",
+      "tests"
+    ],
+    "gitBranches": {
+      "defaultBranch": "master",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 1,
+      "lastAccessed": 1775290135425,
+      "keyFiles": [
+        "AGENTS.md"
+      ]
+    },
+    "example": {
+      "path": "example",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1775290135425,
+      "keyFiles": [
+        "AGENTS.md"
+      ]
+    },
+    "examples": {
+      "path": "examples",
+      "purpose": "Example code",
+      "fileCount": 1,
+      "lastAccessed": 1775290135426,
+      "keyFiles": [
+        "pipeline_demo.rs"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 5,
+      "lastAccessed": 1775290135426,
+      "keyFiles": [
+        "AGENTS.md",
+        "agent.rs",
+        "error.rs",
+        "lib.rs",
+        "main.rs"
+      ]
+    },
+    "target": {
+      "path": "target",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1775290135426,
+      "keyFiles": [
+        "CACHEDIR.TAG"
+      ]
+    },
+    "templates": {
+      "path": "templates",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1775290135426,
+      "keyFiles": [
+        "AGENTS.md"
+      ]
+    },
+    "tests": {
+      "path": "tests",
+      "purpose": "Test files",
+      "fileCount": 3,
+      "lastAccessed": 1775290135427,
+      "keyFiles": [
+        "AGENTS.md",
+        "pipeline_integration.rs",
+        "registry_test.rs"
+      ]
+    },
+    "src/config": {
+      "path": "src/config",
+      "purpose": "Configuration files",
+      "fileCount": 3,
+      "lastAccessed": 1775290135427,
+      "keyFiles": [
+        "AGENTS.md",
+        "mod.rs",
+        "settings.rs"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "src/lib.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775290180459,
+      "type": "file"
+    },
+    {
+      "path": "src/agent.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775290180510,
+      "type": "file"
+    },
+    {
+      "path": "src/main.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775290180561,
+      "type": "file"
+    },
+    {
+      "path": "src/tools/mod.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775290185959,
+      "type": "file"
+    },
+    {
+      "path": "src/tools/search.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775290186009,
+      "type": "file"
+    },
+    {
+      "path": "src/llm/provider.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775290186109,
+      "type": "file"
+    },
+    {
+      "path": "src/tui/mod.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775290191950,
+      "type": "file"
+    },
+    {
+      "path": "src/tui/chat.rs",
+      "accessCount": 1,
+      "lastAccessed": 1775290192086,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

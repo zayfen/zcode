@@ -1,0 +1,11 @@
+{
+  "id": "69c8dbc2",
+  "task": "Implement Phase 5 (T14-T16): Game state. src/store/gameStore.ts: Zustand store with state machine (IDLE→AIMING→POWER→SIMULATING→EVALUATING→GAME_OVER), currentPlayer (Player), playerGroups, pocketedBalls (BallId[]), ballStates (Record<BallId,BallState>), foul, winner, ballInHand, shotHistory for undo. Actions: startAiming, startPower, shoot(impulse), setSimulating, evaluateShot(result), nextTurn, setGameOver, resetGame, setBallInHand. src/game-logic/rules.ts: evaluateShotResult function detecting fouls (SCRATCH=cue pocketed, NO_BALL_HIT, WRONG_BALL_FIRST, NO_RAIL_CONTACT), group assignment on first legal pocket, win/loss (8-ball pocketed legally after clearing group=win, 8-ball early or scratch on 8=loss). src/hooks/useSettleDetector.ts: useFrame hook checking all ball velocities < SETTLE_LINEAR_THRESHOLD for SETTLE_FRAMES consecutive frames, triggers EVALUATING.",
+  "status": "failed",
+  "created_at": 1774771138,
+  "updated_at": 1774771328,
+  "iteration": 0,
+  "history": [],
+  "result": null,
+  "error": "LLM API error: Anthropic request failed: error sending request for url (https://open.bigmodel.cn/api/anthropic/v1/messages)"
+}

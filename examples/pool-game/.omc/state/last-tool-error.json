@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"cat > /tmp/check-pool.mjs << 'EOF'\\nimport { chromium } from '@playwright/test';\\nconst browser = await chromium.launch();\\nconst page = await browser.newPage();\\nconst errors = [];\\npage....",
+  "error": "Exit code 1\nnode:internal/modules/package_json_reader:314\n  throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);\n        ^\n\nError [ERR_MODULE_NOT_FOUND]: Cannot find package '@playwright/test' imported from /private/tmp/check-pool.mjs\n    at Object.getPackageJSONURL (node:internal/modules/package_json_reader:314:9)\n    at packageResolve (node:internal/modules/esm/resolve:767:81)\n    at moduleResolve (node:internal/modules/esm/resolve:853:18)\n    at defaultResolve (node:interna...",
+  "timestamp": "2026-03-30T16:42:03.504Z",
+  "retry_count": 1
+}

@@ -1,0 +1,821 @@
+{
+  "id": "69c8d82b",
+  "task": "Implement Phase 1 (T01-T03): Set up the pool game project structure. Create src/main.tsx (React entry), src/App.tsx (root component), src/types/index.ts with all types: BallId (0-15 union), BallGroup ('solids'|'stripes'|null), GamePhase ('IDLE'|'AIMING'|'POWER'|'SIMULATING'|'EVALUATING'|'GAME_OVER'), Player (1|2), FoulType, BallState, ShotResult, GameState, AimState. Create empty dirs: constants/, store/, components/, physics/, game-logic/, hooks/, utils/. See docs/tasks/001-pool-game.tasks.md and docs/specs/pool-game.spec.md.",
+  "status": "completed",
+  "created_at": 1774770219,
+  "updated_at": 1774770391,
+  "iteration": 18,
+  "history": [
+    {
+      "role": "system",
+      "content": "You are zcode, a senior AI coding agent using model glm-5.1. You have access to tools for reading/writing files, running shell commands, and searching code. Execute the user's task completely and report results."
+    },
+    {
+      "role": "user",
+      "content": "Implement Phase 1 (T01-T03): Set up the pool game project structure. Create src/main.tsx (React entry), src/App.tsx (root component), src/types/index.ts with all types: BallId (0-15 union), BallGroup ('solids'|'stripes'|null), GamePhase ('IDLE'|'AIMING'|'POWER'|'SIMULATING'|'EVALUATING'|'GAME_OVER'), Player (1|2), FoulType, BallState, ShotResult, GameState, AimState. Create empty dirs: constants/, store/, components/, physics/, game-logic/, hooks/, utils/. See docs/tasks/001-pool-game.tasks.md and docs/specs/pool-game.spec.md."
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_82fcc9cd03124e88ac193384",
+          "input": {
+            "path": "docs/tasks/001-pool-game.tasks.md"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_4dc0340517cb47ffb3b9d33a",
+          "input": {
+            "path": "docs/specs/pool-game.spec.md"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_d1c148cf533f419db9bea035",
+          "input": {
+            "pattern": "**/*"
+          },
+          "name": "glob",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"# Task Breakdown: 3D 8-Ball Pool Game\\n\\n## Task Overview\\n\\n29 tasks across 9 phases. Tasks are ordered by dependency — earlier phases must complete before later ones begin.\\n\\n## Phase 1: Scaffolding\\n\\n### T01: Initialize Vite Project\\n\\n- **Description**: Create Vite + React + TypeScript project at `examples/pool-game/`\\n- **Actions**:\\n  - Run `npm create vite@latest pool-game -- --template react-ts` in `examples/`\\n  - Verify `npm run dev` and `npm run build` work\\n  - Clean default boilerplate (remove App.css, assets/)\\n- **Dependencies**: None\\n- **Acceptance**: `npm run dev` starts without errors, `npm run build` produces a bundle\\n\\n### T02: Install 3D Dependencies\\n\\n- **Description**: Install all required packages\\n- **Actions**:\\n  - `npm install three @react-three/fiber @react-three/drei cannon-es @react-three/cannon zustand`\\n  - `npm install -D @types/three`\\n- **Dependencies**: T01\\n- **Acceptance**: `npm run build` succeeds with all packages installed\\n\\n### T03: Create Directory Structure + Type Definitions\\n\\n- **Description**: Create all source directories and define TypeScript types\\n- **Actions**:\\n  - Create directories: `types/`, `constants/`, `store/`, `components/`, `physics/`, `game-logic/`, `hooks/`, `utils/`\\n  - Define types in `src/types/index.ts`:\\n    ```typescript\\n    type BallId = 0 | 1 | 2 | ... | 15;  // 0 = cue\\n    type BallGroup = 'solids' | 'stripes' | null;\\n    type GamePhase = 'IDLE' | 'AIMING' | 'POWER' | 'SIMULATING' | 'EVALUATING' | 'GAME_OVER';\\n    type Player = 1 | 2;\\n    type Foul = 'SCRATCH' | 'NO_RAIL_CONTACT' | 'WRONG_BALL_FIRST' | 'NO_BALL_HIT' | null;\\n    interface ShotResult {\\n      pocketed: BallId[];\\n      firstContact: BallId | null;\\n      cueBallStopped: { x: number; y: number; z: number };\\n      foul: Foul;\\n    }\\n    ```\\n- **Dependencies**: T01\\n- **Acceptance**: TypeScript compiles without errors\\n\\n---\\n\\n## Phase 2: Constants\\n\\n### T04: Table Dimensions + Physics Constants\\n\\n- **Description**: Define all physical constants in `src/constants/table.ts` and `src/constants/physics.ts`\\n- **Actions**:\\n  - `table.ts`: TABLE_LENGTH (2.24m), TABLE_WIDTH (1.12m), BALL_RADIUS (0.0285m), POCKET_RADIUS (0.047m), cushion positions, pocket center positions (6 pockets)\\n  - `physics.ts`: GRAVITY, BALL_MASS (0.17kg), friction/restitution for ball-ball (0.05/0.95), ball-felt (0.4/0.1), ball-cushion (0.1/0.7), LINEAR_DAMPING, ANGULAR_DAMPING\\n- **Dependencies**: T03\\n- **Acceptance**: Constants exported and used consistently\\n\\n### T05: Ball Colors + Rack Positions\\n\\n- **Description**: Define ball appearance and initial positions in `src/constants/balls.ts`\\n- **Actions**:\\n  - Ball colors: map of BallId → hex color (standard billiard colors)\\n  - Rack layout: triangle formation with 8-ball at center\\n  - Ball group assignment: solids (1-7), eight (8), stripes (9-15)\\n- **Dependencies**: T03\\n- **Acceptance**: 15 object balls in correct triangle + cue ball at head position\\n\\n### T06: Vector Math Utilities\\n\\n- **Description**: Create `src/utils/vector.ts` with vector helpers\\n- **Actions**:\\n  - `vec3Distance(a, b)`: Euclidean distance\\n  - `vec3Normalize(v)`: Unit vector\\n  - `vec3Reflect(v, normal)`: Reflection for cushion bouncing\\n  - `vec3Lerp(a, b, t)`: Linear interpolation\\n  - `vec3Angle(a, b)`: Angle between vectors\\n- **Dependencies**: T03\\n- **Acceptance**: All functions typed and exported\\n\\n---\\n\\n## Phase 3: Rendering\\n\\n### T07: Scene + Lighting Setup\\n\\n- **Description**: Create `src/components/Scene.tsx` with R3F Canvas, camera, and lighting\\n- **Actions**:\\n  - R3F `<Canvas>` with shadow map enabled\\n  - Ambient light (soft fill)\\n  - Directional light (main, casts shadows, positioned above table)\\n  - Two point lights at table ends (even illumination)\\n  - Camera: perspective, 45° FOV, positioned at slight angle above table\\n  - OrbitControls: constrained to not go below table\\n- **Dependencies**: T02, T04\\n- **Acceptance**: Scene renders with proper lighting; camera can orbit around table\\n\\n### T08: Table Components\\n\\n- **Description**: Create `src/components/Table.tsx` with felt bed, rails, cushions, and pockets\\n- **Actions**:\\n  - Felt bed: flat box mesh with green material\\n  - Wooden rails: 4 outer rail meshes with brown material\\n  - Cushions: 6 inner cushion meshes (angled)\\n  - Pockets: 6 dark circular depressions at corner and side positions\\n  - All geometry uses constants from T04\\n- **Dependencies**: T04, T07\\n- **Acceptance**: Table looks correct with all elements at right positions\\n\\n### T09: Ball Component + Procedural Textures\\n\\n- **Description**: Create `src/components/Ball.tsx` and `src/utils/textures.ts`\\n- **Actions**:\\n  - `textures.ts`: Canvas-based texture generator\\n    - Generate 512x256 texture per ball\\n    - Solid balls: fill with ball color, white number circle\\n    - Stripe balls: white background, colored band in middle 50%, number circle\\n    - Cue ball: plain white\\n  - `Ball.tsx`: Sphere mesh with generated texture, correct radius\\n- **Dependencies**: T05, T07\\n- **Acceptance**: All 16 balls render with correct colors and numbers\\n\\n### T10: App Wiring + Balls Container\\n\\n- **Description**: Wire Scene, Table, and Balls together in `App.tsx`\\n- **Actions**:\\n  - `src/components/Balls.tsx`: Maps over ball IDs, renders `<Ball>` for each\\n  - Update `App.tsx`: Scene → Table + Balls, basic HTML overlay placeholder\\n  - Verify initial rack positions render correctly\\n- **Dependencies**: T08, T09\\n- **Acceptance**: All 16 balls visible on table at correct positions; `npm run dev` works\\n\\n---\\n\\n## Phase 4: Physics\\n\\n### T11: Physics World Provider\\n\\n- **Description**: Create `src/physics/PhysicsWorld.tsx`\\n- **Actions**:\\n  - Wrap children in `@react-three/cannon` `<Physics>` provider\\n  - Configure gravity: (0, -9.81, 0)\\n  - Define 3 contact materials (ball-ball, ball-felt, ball-cushion)\\n  - Set broadphase, solver iterations for accuracy\\n- **Dependencies**: T07, T04\\n- **Acceptance**: Physics provider wraps scene without errors\\n\\n### T12: Ball Physics Bodies\\n\\n- **Description**: Create `src/physics/BallBody.tsx` and update Ball component\\n- **Actions**:\\n  - `BallBody.tsx`: `useSphere` hook for each ball with correct mass, material, damping\\n  - Connect ball body position/rotation to Ball mesh\\n  - Static bodies for table bed and cushions using `usePlane`/`useBox`\\n  - Subscribe to ball body positions for pocket detection\\n- **Dependencies**: T11, T09\\n- **Acceptance**: Balls sit on table surface; pushing one causes it to roll and stop\\n\\n### T13: Pocket Detection\\n\\n- **Description**: Create `src/physics/pocketDetection.ts`\\n- **Actions**:\\n  - Function that takes ball positions + pocket positions\\n  - Returns list of pocketed ball IDs (distance < POCKET_RADIUS)\\n  - Integrate into useFrame loop during SIMULATING phase\\n  - When pocketed: remove body from physics world, animate ball below table\\n- **Dependencies**: T12, T04\\n- **Acceptance**: Balls that enter pocket zones are removed from play\\n\\n---\\n\\n## Phase 5: Game State\\n\\n### T14: Zustand Game Store\\n\\n- **Description**: Create `src/store/gameStore.ts`\\n- **Actions**:\\n  - State: `phase`, `currentPlayer`, `ballGroups` (which player has solids/stripes), `pocketedBalls`, `scores`, `foul`, `winner`\\n  - Actions: `startAiming()`, `startPower()`, `shoot()`, `setSimulating()`, `evaluateShot()`, `nextTurn()`, `setGameOver()`, `resetGame()`\\n  - State machine transitions with validation\\n  - `ballInHand` flag + position for foul recovery\\n- **Dependencies**: T03\\n- **Acceptance**: Store transitions through all phases correctly\\n\\n### T15: 8-Ball Rules Engine\\n\\n- **Description**: Create `src/game-logic/rules.ts`\\n- **Actions**:\\n  - `evaluateShotResult(shot: ShotResult, state: GameState)`:\\n    - Detect fouls: scratch, no ball hit, wrong ball first-contact, no rail after contact\\n    - Assign ball groups on first legal pocket (if unassigned)\\n    - Determine if shot was legal\\n    - Check for game over (8-ball pocketed legally or illegally)\\n  - Return: `{ foul, nextPlayer, pocketed, gameOver, winner }`\\n- **Dependencies**: T14\\n- **Acceptance**: All 8-ball rule cases handled correctly\\n\\n### T16: Settle Detector Hook\\n\\n- **Description**: Create `src/hooks/useSettleDetector.ts`\\n- **Actions**:\\n  - `useFrame` hook that checks if all ball bodies have velocity < threshold\\n  - Threshold: linear velocity < 0.001, angular velocity < 0.01\\n  - Debounce: must be below threshold for 10 consecutive frames\\n  - When settled: trigger EVALUATING phase transition\\n- **Dependencies**: T12, T14\\n- **Acceptance**: Correctly detects when all balls have stopped moving\\n\\n---\\n\\n## Phase 6: Aiming System\\n\\n### T17: Aim Store + useAim Hook\\n\\n- **Description**: Create `src/store/aimStore.ts` and `src/hooks/useAim.ts`\\n- **Actions**:\\n  - `aimStore`: `direction` (Vec3), `power` (0–1), `isCharging`\\n  - `useAim`: Raycast from camera through mouse onto table plane\\n  - Compute aim direction from cue ball to ray hit point\\n  - Update aim store direction on every mouse move (during AIMING phase)\\n- **Dependencies**: T14\\n- **Acceptance**: Aim direction updates smoothly with mouse movement\\n\\n### T18: CueStick + AimLine Components\\n\\n- **Description**: Create `src/components/CueStick.tsx` and `src/components/AimLine.tsx`\\n- **Actions**:\\n  - `CueStick.tsx`: Cylinder mesh positioned behind cue ball, rotated to match aim direction\\n  - Pull-back animation during POWER phase (retract proportional to power)\\n  - Strike animation: quick forward motion on shoot\\n  - `AimLine.tsx`: Dashed line from cue ball along aim direction (max 2m)\\n  - Ghost ball: if aim line intersects a target ball, show translucent sphere at contact point\\n- **Dependencies**: T17, T07\\n- **Acceptance**: Cue stick follows mouse; aim line shows projected path\\n\\n### T19: Power + Shot Hooks\\n\\n- **Description**: Create `src/hooks/usePower.ts` and `src/hooks/useShotSequence.ts`\\n- **Actions**:\\n  - `usePower`: On mousedown → start charging (power increases 0→1 over 2 seconds max)\\n  - On mouseup → fire shot\\n  - `useShotSequence`: Orchestrates full shot:\\n    1. Apply impulse to cue ball: `direction * power * MAX_IMPULSE`\\n    2. Transition to SIMULATING\\n    3. Wait for settle detector\\n    4. Collect shot result (pocketed balls, first contact)\\n    5. Call rules engine\\n    6. Transition to next phase\\n- **Dependencies**: T17, T16, T15\\n- **Acceptance**: Full shot cycle works: aim → charge → shoot → simulate → evaluate\\n\\n### T20: PowerMeter Component\\n\\n- **Description**: Create `src/components/PowerMeter.tsx`\\n- **Actions**:\\n  - HTML overlay bar that fills based on `aimStore.power`\\n  - Color gradient: green (low) → yellow (mid) → red (high)\\n  - Only visible during POWER phase\\n  - Positioned at bottom-center of screen\\n- **Dependencies**: T17\\n- **Acceptance**: Power meter fills while holding mouse, empties on release\\n\\n---\\n\\n## Phase 7: UI Overlay\\n\\n### T21: GameUI Component\\n\\n- **Description**: Create `src/components/GameUI.tsx`\\n- **Actions**:\\n  - Player indicator: \\\"Player 1 (Solids)\\\" / \\\"Player 2 (Stripes)\\\" with highlight for current\\n  - Pocketed balls display: small ball icons grouped by player\\n  - Foul toast: animated notification that appears for 3 seconds on foul\\n  - Game over modal: winner announcement + \\\"Play Again\\\" button\\n  - Phase indicator: subtle text showing current game phase\\n- **Dependencies**: T14, T15\\n- **Acceptance**: All UI elements display correctly and update with game state\\n\\n### T22: Ball-in-Hand Mode\\n\\n- **Description**: Implement ball-in-hand placement after fouls\\n- **Actions**:\\n  - When foul detected, set `ballInHand` flag and transition to IDLE\\n  - In IDLE with `ballInHand`: mouse click on table sets cue ball position\\n  - Constrain placement to table surface bounds\\n  - Visual: translucent cue ball follows mouse until placed\\n  - Keyboard shortcut R to confirm placement\\n- **Dependencies**: T14, T21\\n- **Acceptance**: After a foul, current player can place cue ball anywhere on table\\n\\n### T23: Top-Down Camera Toggle\\n\\n- **Description**: Add top-down camera view\\n- **Actions**:\\n  - T key toggles between orbit and top-down views\\n  - Top-down: orthographic camera directly above table center\\n  - Smooth transition between views (lerp over 0.5s)\\n  - Store camera mode in aim store\\n- **Dependencies**: T07\\n- **Acceptance**: T key switches views smoothly\\n\\n---\\n\\n## Phase 8: Polish\\n\\n### T24: Enhanced Ball Textures\\n\\n- **Description**: Improve procedural ball textures\\n- **Actions**:\\n  - Higher resolution (1024x512) with anti-aliased number rendering\\n  - Subtle specular highlight baked into texture\\n  - Stripe boundary anti-aliasing\\n  - Cue ball: slight off-white with visible glossiness\\n- **Dependencies**: T09\\n- **Acceptance**: Balls look polished and professional\\n\\n### T25: Table Textures + Environment\\n\\n- **Description**: Improve table visuals\\n- **Actions**:\\n  - Felt texture: canvas-generated with subtle noise/grain\\n  - Wood grain texture for rails: brown gradient with dark grain lines\\n  - Diamond markers on rails (sight dots)\\n  - Floor plane beneath table (dark wood)\\n- **Dependencies**: T08\\n- **Acceptance**: Table has realistic textures and looks polished\\n\\n### T26: Shadows + Post-Processing\\n\\n- **Description**: Add shadow mapping and optional post-processing\\n- **Actions**:\\n  - Configure shadow map: PCFSoftShadowMap, 2048x2048 resolution\\n  - Balls cast shadows on felt\\n  - Directional light shadow camera frustum covers table area\\n  - Optional: SSAO for subtle ambient occlusion\\n  - Optional: bloom on cue ball highlight during aiming\\n- **Dependencies**: T07, T08, T09\\n- **Acceptance**: Shadows render correctly; no shadow acne or peter-panning\\n\\n---\\n\\n## Phase 9: Integration\\n\\n### T27: End-to-End Flow Integration\\n\\n- **Description**: Wire all systems together for a complete game flow\\n- **Actions**:\\n  - Full game loop: break → turns → group assignment → 8-ball shot → win/loss\\n  - Integration test: play through a complete game automatically\\n  - Handle edge cases: break scratches, 8-ball on break, no group assignment\\n  - Fix any timing issues between physics and state transitions\\n- **Dependencies**: T20, T21, T22\\n- **Acceptance**: Complete game playable from break to win/loss\\n\\n### T28: Undo + Final Polish\\n\\n- **Description**: Add undo support and final polish\\n- **Actions**:\\n  - U key triggers undo: restore previous ball positions and game state\\n  - Snapshot ball positions + game state before each shot\\n  - Limit undo to 1 step\\n  - Smooth cue stick retraction animation\\n  - Ball pocket animation (sink below table, fade out)\\n  - Clean up any console warnings\\n- **Dependencies**: T27\\n- **Acceptance**: Undo works correctly; no visual glitches\\n\\n### T29: README + Final Verification\\n\\n- **Description**: Write project README and run final validation\\n- **Actions**:\\n  - `README.md`: project overview, tech stack, setup instructions, controls reference, screenshots placeholder\\n  - Run all validation criteria from `docs/validation.md`\\n  - Verify `npm run build` produces clean production bundle\\n  - Test in Chrome, Firefox, Safari (if available)\\n- **Dependencies**: T28\\n- **Acceptance**: README complete; all validation gates pass\\n\\n---\\n\\n## Dependency Graph\\n\\n```\\nT01 ──→ T02 ──→ T03 ──┬──→ T04 ──→ T07 ──→ T08 ──→ T10\\n                       ├──→ T05 ──→ T09 ──┘\\n                       └──→ T06\\n                                  T07 ──→ T11 ──→ T12 ──→ T13\\n                                            T04 ──→ T11\\n                                            T09 ──→ T12\\n                                  T12 ──→ T16\\n                                  T03 ──→ T14 ──→ T15\\n                                  T14 ──→ T17 ──→ T18\\n                                            T17 ──→ T19 ──→ T27 ──→ T28 ──→ T29\\n                                            T16 ──→ T19\\n                                            T15 ──→ T19\\n                                            T17 ──→ T20\\n                                            T14 ──→ T21 ──→ T22\\n                                            T07 ──→ T23\\n                                            T09 ──→ T24\\n                                            T08 ──→ T25\\n                                            T07 ──→ T26\\n                                            T20 ──→ T27\\n                                            T21 ──→ T27\\n                                            T22 ──→ T27\\n```\\n\\n## Estimated Complexity\\n\\n| Phase | Tasks | Complexity | Risk |\\n|-------|-------|-----------|------|\\n| 1. Scaffolding | T01–T03 | Low | Low |\\n| 2. Constants | T04–T06 | Low | Low |\\n| 3. Rendering | T07–T10 | Medium | Low |\\n| 4. Physics | T11–T13 | Medium | **Medium** — physics tuning |\\n| 5. Game State | T14–T16 | Medium | **Medium** — rule edge cases |\\n| 6. Aiming | T17–T20 | High | **Medium** — raycast precision |\\n| 7. UI | T21–T23 | Low | Low |\\n| 8. Polish | T24–T26 | Medium | Low |\\n| 9. Integration | T27–T29 | High | **High** — cross-system timing |\",\"end_line\":422,\"start_line\":0,\"total_lines\":423}",
+      "tool_call_id": "call_82fcc9cd03124e88ac193384",
+      "name": "file_read"
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"# Technical Specification: 3D 8-Ball Pool Game\\n\\n## Tech Stack\\n\\n| Technology | Version | Purpose |\\n|-----------|---------|---------|\\n| Vite | ^6.x | Build tool and dev server |\\n| React | ^19.x | UI framework |\\n| TypeScript | ^5.x | Type safety |\\n| Three.js | ^0.170 | 3D rendering engine |\\n| @react-three/fiber | ^9.x | React renderer for Three.js |\\n| @react-three/drei | ^10.x | Three.js helpers (OrbitControls, etc.) |\\n| cannon-es | ^0.20 | Physics engine (rigid body simulation) |\\n| @react-three/cannon | ^6.x | React bindings for cannon-es |\\n| Zustand | ^5.x | State management |\\n\\n## Architecture\\n\\n### File Structure\\n\\n```\\nexamples/pool-game/\\n├── index.html\\n├── package.json\\n├── tsconfig.json\\n├── vite.config.ts\\n├── docs/                          # Documentation (created in Pass 1)\\n│   ├── prd/\\n│   ├── specs/\\n│   ├── tasks/\\n│   ├── validation.md\\n│   └── review-checklist.md\\n└── src/\\n    ├── main.tsx                   # React entry point\\n    ├── App.tsx                    # Root component, wires Scene + UI\\n    ├── types/\\n    │   └── index.ts               # BallId, GamePhase, Player, BallGroup, Foul, ShotResult\\n    ├── constants/\\n    │   ├── table.ts               # Table dimensions, pocket positions, cushion geometry\\n    │   ├── physics.ts             # Friction, restitution, mass, gravity, materials\\n    │   └── balls.ts               # Ball colors, radius, rack positions, stripe mask\\n    ├── store/\\n    │   ├── gameStore.ts           # Zustand: game state machine + actions\\n    │   └── aimStore.ts            # Zustand: aim direction, power level, cue position\\n    ├── components/\\n    │   ├── Scene.tsx              # Canvas, lighting, camera, Physics provider\\n    │   ├── Table.tsx              # Table bed, rails, cushions, pockets (visual)\\n    │   ├── Ball.tsx               # Single ball mesh with procedural texture\\n    │   ├── Balls.tsx              # Renders all 16 balls from store state\\n    │   ├── CueStick.tsx           # Cue stick mesh, follows aim direction\\n    │   ├── AimLine.tsx            # Dashed line showing projected path + ghost ball\\n    │   ├── PowerMeter.tsx         # On-screen power bar (HTML overlay)\\n    │   └── GameUI.tsx             # HTML overlay: player info, pocketed balls, modals\\n    ├── physics/\\n    │   ├── PhysicsWorld.tsx       # Physics provider with configured materials\\n    │   ├── BallBody.tsx           # useSphere body for a single ball\\n    │   └── pocketDetection.ts     # Distance-based pocket check (runs each frame)\\n    ├── game-logic/\\n    │   ├── rules.ts               # 8-ball rules engine: validate shots, detect fouls\\n    │   ├── rack.ts                # Triangle rack position calculator\\n    │   └── shotController.ts      # Orchestrates shot: apply impulse → simulate → evaluate\\n    ├── hooks/\\n    │   ├── useAim.ts              # Computes aim direction from mouse position\\n    │   ├── usePower.ts            # Manages power charge on mouse hold\\n    │   ├── useSettleDetector.ts   # Detects when all balls have stopped moving\\n    │   └── useShotSequence.ts     # Full shot lifecycle hook\\n    └── utils/\\n        ├── vector.ts              # vec3 helpers: distance, normalize, reflect, lerp\\n        └── textures.ts            # Procedural canvas texture generator for balls + table\\n```\\n\\n### Component Architecture\\n\\n```\\nApp\\n├── Scene (R3F Canvas)\\n│   ├── PhysicsWorld (R3C Physics provider)\\n│   │   ├── Table (static bodies: bed, cushions, rails)\\n│   │   ├── Balls (16x BallBody + Ball mesh)\\n│   │   └── CueStick (visual only, follows aim)\\n│   ├── AimLine (visual guide)\\n│   ├── Lights (ambient + directional + point)\\n│   └── Camera (OrbitControls + top-down toggle)\\n└── GameUI (HTML overlay)\\n    ├── PlayerIndicator\\n    ├── PowerMeter\\n    ├── PocketedBalls\\n    ├── FoulToast\\n    └── GameOverModal\\n```\\n\\n### State Machine\\n\\n```\\nIDLE ──[click to aim]──→ AIMING ──[mousedown]──→ POWER\\n  ↑                                                │\\n  │                                          [mouseup / release]\\n  │                                                ↓\\n  │                                         SIMULATING\\n  │                                                │\\n  │                                     [all balls settled]\\n  │                                                ↓\\n  └──────── EVALUATING ──[rules check]──→ next turn or GAME_OVER\\n```\\n\\n| Phase | Description | Valid Actions |\\n|-------|-------------|---------------|\\n| `IDLE` | Waiting for current player to start aiming | Move mouse to position aim line |\\n| `AIMING` | Player is positioning their shot | Mouse move rotates aim, click starts power charge |\\n| `POWER` | Player is charging the power meter | Hold to charge, release to shoot |\\n| `SIMULATING` | Balls are in motion after a shot | No input (wait for settle) |\\n| `EVALUATING` | Checking rules: fouls, pocketed balls, game state | Automatic transition |\\n| `GAME_OVER` | Game has ended | Click \\\"Play Again\\\" to restart |\\n\\n### Physics Design\\n\\n#### Contact Materials\\n\\n| Material Pair | Friction | Restitution | Description |\\n|---------------|----------|-------------|-------------|\\n| Ball–Ball | 0.05 | 0.95 | Nearly elastic collision |\\n| Ball–Felt | 0.4 | 0.1 | High friction for deceleration, low bounce |\\n| Ball–Cushion | 0.1 | 0.7 | Moderate bounce off rails |\\n\\n#### Physics Bodies\\n\\n| Body | Shape | Mass | Type | Notes |\\n|------|-------|------|------|-------|\\n| Ball | Sphere (r=0.0285m) | 0.17 kg | Dynamic | Standard billiard ball |\\n| Table bed | Box | — | Static | Flat surface with felt material |\\n| Cushion | Box (x6) | — | Static | Angled rail cushions |\\n| Pocket zone | — | — | — | No body; checked via distance code |\\n\\n#### Pocket Detection\\n\\nPockets are not physics bodies. Instead, each frame during `SIMULATING`:\\n1. For each ball, compute distance to each of the 6 pocket centers\\n2. If distance < pocket radius (0.047m), flag ball as pocketed\\n3. Remove ball body from physics world\\n4. Animate ball dropping below table surface\\n5. After settle, feed pocketed balls to rules engine\\n\\n#### Coordinate System\\n\\n- Origin at center of table bed surface\\n- X-axis: width (short dimension)\\n- Z-axis: length (long dimension)\\n- Y-axis: up (height)\\n- Table dimensions: 2.24m x 1.12m (playing surface)\\n\\n### Aiming System\\n\\n1. **Raycasting**: Cast ray from camera through mouse position onto the table plane (Y=0)\\n2. **Direction vector**: `aimDir = normalize(raycastHit - cueBallPosition)`\\n3. **Guide line**: Draw a dashed line from cue ball in `aimDir` direction\\n4. **Ghost ball**: Cast a ray from cue ball along `aimDir`; if it intersects any ball, show ghost ball at contact point\\n5. **Cue stick**: Position behind cue ball opposite to `aimDir`, animate forward on strike\\n\\n### Procedural Textures\\n\\nAll textures are generated at runtime using HTML Canvas — no external image files needed.\\n\\n#### Ball Texture (512x256 per ball)\\n- White (solids) or white with colored band (stripes) background\\n- Number circle in center with ball number\\n- Stripe balls: color band covers middle 50% of UV space\\n\\n#### Table Texture\\n- Felt: dark green with subtle noise grain\\n- Wood rails: brown with grain pattern\\n- Pocket holes: dark circles with subtle rim\\n\\n### Camera System\\n\\n| Mode | Description |\\n|------|-------------|\\n| Default | OrbitControls centered on table, constrained angle |\\n| Top-down | Orthographic view directly above table (toggle with T key) |\\n| Ball-in-hand | Camera follows cue ball for placement |\\n\\n## Key Design Decisions\\n\\n1. **Distance-based pockets over physics triggers** — More reliable than sensor bodies in cannon-es; avoids tunneling and false positives\\n2. **Procedural textures over image files** — Zero external dependencies; textures generate instantly at startup\\n3. **Zustand over Context/Redux** — Minimal boilerplate, excellent performance for game state that updates frequently during simulation\\n4. **Separate aim store from game store** — Aim state updates every frame (mouse movement); game state updates only on phase transitions\\n5. **State machine for game phases** — Clear, testable transitions prevent impossible states\\n6. **cannon-es over Ammo.js** — Lighter weight, pure JS, sufficient for billiards physics\",\"end_line\":187,\"start_line\":0,\"total_lines\":188}",
+      "tool_call_id": "call_4dc0340517cb47ffb3b9d33a",
+      "name": "file_read"
+    },
+    {
+      "role": "tool",
+      "content": "{\"count\":1000,\"files\":[\".gitignore\",\".omc\",\".omc/state\",\".omc/state/agent-replay-b34939c1-1cf0-49a8-b5ae-c64ad12b12eb.jsonl\",\".omc/state/idle-notif-cooldown.json\",\".omc/state/last-tool-error.json\",\".omc/state/mission-state.json\",\".omc/state/subagent-tracking.json\",\".zcode\",\".zcode/tasks\",\".zcode/tasks/69c8d4f5.json\",\".zcode/tasks/69c8d7b4.json\",\".zcode/tasks/69c8d82b.json\",\"README.md\",\"docs\",\"docs/prd\",\"docs/prd/001-pool-game.md\",\"docs/review-checklist.md\",\"docs/specs\",\"docs/specs/coding.spec.md\",\"docs/specs/pool-game.spec.md\",\"docs/tasks\",\"docs/tasks/001-pool-game.tasks.md\",\"docs/validation.md\",\"eslint.config.js\",\"index.html\",\"node_modules\",\"node_modules/.bin\",\"node_modules/.bin/acorn\",\"node_modules/.bin/baseline-browser-mapping\",\"node_modules/.bin/browserslist\",\"node_modules/.bin/cross-env\",\"node_modules/.bin/cross-env-shell\",\"node_modules/.bin/eslint\",\"node_modules/.bin/js-yaml\",\"node_modules/.bin/jsesc\",\"node_modules/.bin/json5\",\"node_modules/.bin/nanoid\",\"node_modules/.bin/node-which\",\"node_modules/.bin/parser\",\"node_modules/.bin/rolldown\",\"node_modules/.bin/semver\",\"node_modules/.bin/tsc\",\"node_modules/.bin/tsserver\",\"node_modules/.bin/update-browserslist-db\",\"node_modules/.bin/vite\",\"node_modules/.package-lock.json\",\"node_modules/@babel\",\"node_modules/@babel/code-frame\",\"node_modules/@babel/code-frame/LICENSE\",\"node_modules/@babel/code-frame/README.md\",\"node_modules/@babel/code-frame/lib\",\"node_modules/@babel/code-frame/lib/index.js\",\"node_modules/@babel/code-frame/lib/index.js.map\",\"node_modules/@babel/code-frame/package.json\",\"node_modules/@babel/compat-data\",\"node_modules/@babel/compat-data/LICENSE\",\"node_modules/@babel/compat-data/README.md\",\"node_modules/@babel/compat-data/corejs2-built-ins.js\",\"node_modules/@babel/compat-data/corejs3-shipped-proposals.js\",\"node_modules/@babel/compat-data/data\",\"node_modules/@babel/compat-data/data/corejs2-built-ins.json\",\"node_modules/@babel/compat-data/data/corejs3-shipped-proposals.json\",\"node_modules/@babel/compat-data/data/native-modules.json\",\"node_modules/@babel/compat-data/data/overlapping-plugins.json\",\"node_modules/@babel/compat-data/data/plugin-bugfixes.json\",\"node_modules/@babel/compat-data/data/plugins.json\",\"node_modules/@babel/compat-data/native-modules.js\",\"node_modules/@babel/compat-data/overlapping-plugins.js\",\"node_modules/@babel/compat-data/package.json\",\"node_modules/@babel/compat-data/plugin-bugfixes.js\",\"node_modules/@babel/compat-data/plugins.js\",\"node_modules/@babel/core\",\"node_modules/@babel/core/LICENSE\",\"node_modules/@babel/core/README.md\",\"node_modules/@babel/core/lib\",\"node_modules/@babel/core/lib/config\",\"node_modules/@babel/core/lib/config/cache-contexts.js\",\"node_modules/@babel/core/lib/config/cache-contexts.js.map\",\"node_modules/@babel/core/lib/config/caching.js\",\"node_modules/@babel/core/lib/config/caching.js.map\",\"node_modules/@babel/core/lib/config/config-chain.js\",\"node_modules/@babel/core/lib/config/config-chain.js.map\",\"node_modules/@babel/core/lib/config/config-descriptors.js\",\"node_modules/@babel/core/lib/config/config-descriptors.js.map\",\"node_modules/@babel/core/lib/config/files\",\"node_modules/@babel/core/lib/config/files/configuration.js\",\"node_modules/@babel/core/lib/config/files/configuration.js.map\",\"node_modules/@babel/core/lib/config/files/import.cjs\",\"node_modules/@babel/core/lib/config/files/import.cjs.map\",\"node_modules/@babel/core/lib/config/files/index-browser.js\",\"node_modules/@babel/core/lib/config/files/index-browser.js.map\",\"node_modules/@babel/core/lib/config/files/index.js\",\"node_modules/@babel/core/lib/config/files/index.js.map\",\"node_modules/@babel/core/lib/config/files/module-types.js\",\"node_modules/@babel/core/lib/config/files/module-types.js.map\",\"node_modules/@babel/core/lib/config/files/package.js\",\"node_modules/@babel/core/lib/config/files/package.js.map\",\"node_modules/@babel/core/lib/config/files/plugins.js\",\"node_modules/@babel/core/lib/config/files/plugins.js.map\",\"node_modules/@babel/core/lib/config/files/types.js\",\"node_modules/@babel/core/lib/config/files/types.js.map\",\"node_modules/@babel/core/lib/config/files/utils.js\",\"node_modules/@babel/core/lib/config/files/utils.js.map\",\"node_modules/@babel/core/lib/config/full.js\",\"node_modules/@babel/core/lib/config/full.js.map\",\"node_modules/@babel/core/lib/config/helpers\",\"node_modules/@babel/core/lib/config/helpers/config-api.js\",\"node_modules/@babel/core/lib/config/helpers/config-api.js.map\",\"node_modules/@babel/core/lib/config/helpers/deep-array.js\",\"node_modules/@babel/core/lib/config/helpers/deep-array.js.map\",\"node_modules/@babel/core/lib/config/helpers/environment.js\",\"node_modules/@babel/core/lib/config/helpers/environment.js.map\",\"node_modules/@babel/core/lib/config/index.js\",\"node_modules/@babel/core/lib/config/index.js.map\",\"node_modules/@babel/core/lib/config/item.js\",\"node_modules/@babel/core/lib/config/item.js.map\",\"node_modules/@babel/core/lib/config/partial.js\",\"node_modules/@babel/core/lib/config/partial.js.map\",\"node_modules/@babel/core/lib/config/pattern-to-regex.js\",\"node_modules/@babel/core/lib/config/pattern-to-regex.js.map\",\"node_modules/@babel/core/lib/config/plugin.js\",\"node_modules/@babel/core/lib/config/plugin.js.map\",\"node_modules/@babel/core/lib/config/printer.js\",\"node_modules/@babel/core/lib/config/printer.js.map\",\"node_modules/@babel/core/lib/config/resolve-targets-browser.js\",\"node_modules/@babel/core/lib/config/resolve-targets-browser.js.map\",\"node_modules/@babel/core/lib/config/resolve-targets.js\",\"node_modules/@babel/core/lib/config/resolve-targets.js.map\",\"node_modules/@babel/core/lib/config/util.js\",\"node_modules/@babel/core/lib/config/util.js.map\",\"node_modules/@babel/core/lib/config/validation\",\"node_modules/@babel/core/lib/config/validation/option-assertions.js\",\"node_modules/@babel/core/lib/config/validation/option-assertions.js.map\",\"node_modules/@babel/core/lib/config/validation/options.js\",\"node_modules/@babel/core/lib/config/validation/options.js.map\",\"node_modules/@babel/core/lib/config/validation/plugins.js\",\"node_modules/@babel/core/lib/config/validation/plugins.js.map\",\"node_modules/@babel/core/lib/config/validation/removed.js\",\"node_modules/@babel/core/lib/config/validation/removed.js.map\",\"node_modules/@babel/core/lib/errors\",\"node_modules/@babel/core/lib/errors/config-error.js\",\"node_modules/@babel/core/lib/errors/config-error.js.map\",\"node_modules/@babel/core/lib/errors/rewrite-stack-trace.js\",\"node_modules/@babel/core/lib/errors/rewrite-stack-trace.js.map\",\"node_modules/@babel/core/lib/gensync-utils\",\"node_modules/@babel/core/lib/gensync-utils/async.js\",\"node_modules/@babel/core/lib/gensync-utils/async.js.map\",\"node_modules/@babel/core/lib/gensync-utils/fs.js\",\"node_modules/@babel/core/lib/gensync-utils/fs.js.map\",\"node_modules/@babel/core/lib/gensync-utils/functional.js\",\"node_modules/@babel/core/lib/gensync-utils/functional.js.map\",\"node_modules/@babel/core/lib/index.js\",\"node_modules/@babel/core/lib/index.js.map\",\"node_modules/@babel/core/lib/parse.js\",\"node_modules/@babel/core/lib/parse.js.map\",\"node_modules/@babel/core/lib/parser\",\"node_modules/@babel/core/lib/parser/index.js\",\"node_modules/@babel/core/lib/parser/index.js.map\",\"node_modules/@babel/core/lib/parser/util\",\"node_modules/@babel/core/lib/parser/util/missing-plugin-helper.js\",\"node_modules/@babel/core/lib/parser/util/missing-plugin-helper.js.map\",\"node_modules/@babel/core/lib/tools\",\"node_modules/@babel/core/lib/tools/build-external-helpers.js\",\"node_modules/@babel/core/lib/tools/build-external-helpers.js.map\",\"node_modules/@babel/core/lib/transform-ast.js\",\"node_modules/@babel/core/lib/transform-ast.js.map\",\"node_modules/@babel/core/lib/transform-file-browser.js\",\"node_modules/@babel/core/lib/transform-file-browser.js.map\",\"node_modules/@babel/core/lib/transform-file.js\",\"node_modules/@babel/core/lib/transform-file.js.map\",\"node_modules/@babel/core/lib/transform.js\",\"node_modules/@babel/core/lib/transform.js.map\",\"node_modules/@babel/core/lib/transformation\",\"node_modules/@babel/core/lib/transformation/block-hoist-plugin.js\",\"node_modules/@babel/core/lib/transformation/block-hoist-plugin.js.map\",\"node_modules/@babel/core/lib/transformation/file\",\"node_modules/@babel/core/lib/transformation/file/babel-7-helpers.cjs\",\"node_modules/@babel/core/lib/transformation/file/babel-7-helpers.cjs.map\",\"node_modules/@babel/core/lib/transformation/file/file.js\",\"node_modules/@babel/core/lib/transformation/file/file.js.map\",\"node_modules/@babel/core/lib/transformation/file/generate.js\",\"node_modules/@babel/core/lib/transformation/file/generate.js.map\",\"node_modules/@babel/core/lib/transformation/file/merge-map.js\",\"node_modules/@babel/core/lib/transformation/file/merge-map.js.map\",\"node_modules/@babel/core/lib/transformation/index.js\",\"node_modules/@babel/core/lib/transformation/index.js.map\",\"node_modules/@babel/core/lib/transformation/normalize-file.js\",\"node_modules/@babel/core/lib/transformation/normalize-file.js.map\",\"node_modules/@babel/core/lib/transformation/normalize-opts.js\",\"node_modules/@babel/core/lib/transformation/normalize-opts.js.map\",\"node_modules/@babel/core/lib/transformation/plugin-pass.js\",\"node_modules/@babel/core/lib/transformation/plugin-pass.js.map\",\"node_modules/@babel/core/lib/transformation/util\",\"node_modules/@babel/core/lib/transformation/util/clone-deep.js\",\"node_modules/@babel/core/lib/transformation/util/clone-deep.js.map\",\"node_modules/@babel/core/lib/vendor\",\"node_modules/@babel/core/lib/vendor/import-meta-resolve.js\",\"node_modules/@babel/core/lib/vendor/import-meta-resolve.js.map\",\"node_modules/@babel/core/package.json\",\"node_modules/@babel/core/src\",\"node_modules/@babel/core/src/config\",\"node_modules/@babel/core/src/config/files\",\"node_modules/@babel/core/src/config/files/index-browser.ts\",\"node_modules/@babel/core/src/config/files/index.ts\",\"node_modules/@babel/core/src/config/resolve-targets-browser.ts\",\"node_modules/@babel/core/src/config/resolve-targets.ts\",\"node_modules/@babel/core/src/transform-file-browser.ts\",\"node_modules/@babel/core/src/transform-file.ts\",\"node_modules/@babel/generator\",\"node_modules/@babel/generator/LICENSE\",\"node_modules/@babel/generator/README.md\",\"node_modules/@babel/generator/lib\",\"node_modules/@babel/generator/lib/buffer.js\",\"node_modules/@babel/generator/lib/buffer.js.map\",\"node_modules/@babel/generator/lib/generators\",\"node_modules/@babel/generator/lib/generators/base.js\",\"node_modules/@babel/generator/lib/generators/base.js.map\",\"node_modules/@babel/generator/lib/generators/classes.js\",\"node_modules/@babel/generator/lib/generators/classes.js.map\",\"node_modules/@babel/generator/lib/generators/deprecated.js\",\"node_modules/@babel/generator/lib/generators/deprecated.js.map\",\"node_modules/@babel/generator/lib/generators/expressions.js\",\"node_modules/@babel/generator/lib/generators/expressions.js.map\",\"node_modules/@babel/generator/lib/generators/flow.js\",\"node_modules/@babel/generator/lib/generators/flow.js.map\",\"node_modules/@babel/generator/lib/generators/index.js\",\"node_modules/@babel/generator/lib/generators/index.js.map\",\"node_modules/@babel/generator/lib/generators/jsx.js\",\"node_modules/@babel/generator/lib/generators/jsx.js.map\",\"node_modules/@babel/generator/lib/generators/methods.js\",\"node_modules/@babel/generator/lib/generators/methods.js.map\",\"node_modules/@babel/generator/lib/generators/modules.js\",\"node_modules/@babel/generator/lib/generators/modules.js.map\",\"node_modules/@babel/generator/lib/generators/statements.js\",\"node_modules/@babel/generator/lib/generators/statements.js.map\",\"node_modules/@babel/generator/lib/generators/template-literals.js\",\"node_modules/@babel/generator/lib/generators/template-literals.js.map\",\"node_modules/@babel/generator/lib/generators/types.js\",\"node_modules/@babel/generator/lib/generators/types.js.map\",\"node_modules/@babel/generator/lib/generators/typescript.js\",\"node_modules/@babel/generator/lib/generators/typescript.js.map\",\"node_modules/@babel/generator/lib/index.js\",\"node_modules/@babel/generator/lib/index.js.map\",\"node_modules/@babel/generator/lib/node\",\"node_modules/@babel/generator/lib/node/index.js\",\"node_modules/@babel/generator/lib/node/index.js.map\",\"node_modules/@babel/generator/lib/node/parentheses.js\",\"node_modules/@babel/generator/lib/node/parentheses.js.map\",\"node_modules/@babel/generator/lib/nodes.js\",\"node_modules/@babel/generator/lib/nodes.js.map\",\"node_modules/@babel/generator/lib/printer.js\",\"node_modules/@babel/generator/lib/printer.js.map\",\"node_modules/@babel/generator/lib/source-map.js\",\"node_modules/@babel/generator/lib/source-map.js.map\",\"node_modules/@babel/generator/lib/token-map.js\",\"node_modules/@babel/generator/lib/token-map.js.map\",\"node_modules/@babel/generator/package.json\",\"node_modules/@babel/helper-compilation-targets\",\"node_modules/@babel/helper-compilation-targets/LICENSE\",\"node_modules/@babel/helper-compilation-targets/README.md\",\"node_modules/@babel/helper-compilation-targets/lib\",\"node_modules/@babel/helper-compilation-targets/lib/debug.js\",\"node_modules/@babel/helper-compilation-targets/lib/debug.js.map\",\"node_modules/@babel/helper-compilation-targets/lib/filter-items.js\",\"node_modules/@babel/helper-compilation-targets/lib/filter-items.js.map\",\"node_modules/@babel/helper-compilation-targets/lib/index.js\",\"node_modules/@babel/helper-compilation-targets/lib/index.js.map\",\"node_modules/@babel/helper-compilation-targets/lib/options.js\",\"node_modules/@babel/helper-compilation-targets/lib/options.js.map\",\"node_modules/@babel/helper-compilation-targets/lib/pretty.js\",\"node_modules/@babel/helper-compilation-targets/lib/pretty.js.map\",\"node_modules/@babel/helper-compilation-targets/lib/targets.js\",\"node_modules/@babel/helper-compilation-targets/lib/targets.js.map\",\"node_modules/@babel/helper-compilation-targets/lib/utils.js\",\"node_modules/@babel/helper-compilation-targets/lib/utils.js.map\",\"node_modules/@babel/helper-compilation-targets/package.json\",\"node_modules/@babel/helper-globals\",\"node_modules/@babel/helper-globals/LICENSE\",\"node_modules/@babel/helper-globals/README.md\",\"node_modules/@babel/helper-globals/data\",\"node_modules/@babel/helper-globals/data/browser-upper.json\",\"node_modules/@babel/helper-globals/data/builtin-lower.json\",\"node_modules/@babel/helper-globals/data/builtin-upper.json\",\"node_modules/@babel/helper-globals/package.json\",\"node_modules/@babel/helper-module-imports\",\"node_modules/@babel/helper-module-imports/LICENSE\",\"node_modules/@babel/helper-module-imports/README.md\",\"node_modules/@babel/helper-module-imports/lib\",\"node_modules/@babel/helper-module-imports/lib/import-builder.js\",\"node_modules/@babel/helper-module-imports/lib/import-builder.js.map\",\"node_modules/@babel/helper-module-imports/lib/import-injector.js\",\"node_modules/@babel/helper-module-imports/lib/import-injector.js.map\",\"node_modules/@babel/helper-module-imports/lib/index.js\",\"node_modules/@babel/helper-module-imports/lib/index.js.map\",\"node_modules/@babel/helper-module-imports/lib/is-module.js\",\"node_modules/@babel/helper-module-imports/lib/is-module.js.map\",\"node_modules/@babel/helper-module-imports/package.json\",\"node_modules/@babel/helper-module-transforms\",\"node_modules/@babel/helper-module-transforms/LICENSE\",\"node_modules/@babel/helper-module-transforms/README.md\",\"node_modules/@babel/helper-module-transforms/lib\",\"node_modules/@babel/helper-module-transforms/lib/dynamic-import.js\",\"node_modules/@babel/helper-module-transforms/lib/dynamic-import.js.map\",\"node_modules/@babel/helper-module-transforms/lib/get-module-name.js\",\"node_modules/@babel/helper-module-transforms/lib/get-module-name.js.map\",\"node_modules/@babel/helper-module-transforms/lib/index.js\",\"node_modules/@babel/helper-module-transforms/lib/index.js.map\",\"node_modules/@babel/helper-module-transforms/lib/lazy-modules.js\",\"node_modules/@babel/helper-module-transforms/lib/lazy-modules.js.map\",\"node_modules/@babel/helper-module-transforms/lib/normalize-and-load-metadata.js\",\"node_modules/@babel/helper-module-transforms/lib/normalize-and-load-metadata.js.map\",\"node_modules/@babel/helper-module-transforms/lib/rewrite-live-references.js\",\"node_modules/@babel/helper-module-transforms/lib/rewrite-live-references.js.map\",\"node_modules/@babel/helper-module-transforms/lib/rewrite-this.js\",\"node_modules/@babel/helper-module-transforms/lib/rewrite-this.js.map\",\"node_modules/@babel/helper-module-transforms/package.json\",\"node_modules/@babel/helper-string-parser\",\"node_modules/@babel/helper-string-parser/LICENSE\",\"node_modules/@babel/helper-string-parser/README.md\",\"node_modules/@babel/helper-string-parser/lib\",\"node_modules/@babel/helper-string-parser/lib/index.js\",\"node_modules/@babel/helper-string-parser/lib/index.js.map\",\"node_modules/@babel/helper-string-parser/package.json\",\"node_modules/@babel/helper-validator-identifier\",\"node_modules/@babel/helper-validator-identifier/LICENSE\",\"node_modules/@babel/helper-validator-identifier/README.md\",\"node_modules/@babel/helper-validator-identifier/lib\",\"node_modules/@babel/helper-validator-identifier/lib/identifier.js\",\"node_modules/@babel/helper-validator-identifier/lib/identifier.js.map\",\"node_modules/@babel/helper-validator-identifier/lib/index.js\",\"node_modules/@babel/helper-validator-identifier/lib/index.js.map\",\"node_modules/@babel/helper-validator-identifier/lib/keyword.js\",\"node_modules/@babel/helper-validator-identifier/lib/keyword.js.map\",\"node_modules/@babel/helper-validator-identifier/package.json\",\"node_modules/@babel/helper-validator-option\",\"node_modules/@babel/helper-validator-option/LICENSE\",\"node_modules/@babel/helper-validator-option/README.md\",\"node_modules/@babel/helper-validator-option/lib\",\"node_modules/@babel/helper-validator-option/lib/find-suggestion.js\",\"node_modules/@babel/helper-validator-option/lib/find-suggestion.js.map\",\"node_modules/@babel/helper-validator-option/lib/index.js\",\"node_modules/@babel/helper-validator-option/lib/index.js.map\",\"node_modules/@babel/helper-validator-option/lib/validator.js\",\"node_modules/@babel/helper-validator-option/lib/validator.js.map\",\"node_modules/@babel/helper-validator-option/package.json\",\"node_modules/@babel/helpers\",\"node_modules/@babel/helpers/LICENSE\",\"node_modules/@babel/helpers/README.md\",\"node_modules/@babel/helpers/lib\",\"node_modules/@babel/helpers/lib/helpers\",\"node_modules/@babel/helpers/lib/helpers/AwaitValue.js\",\"node_modules/@babel/helpers/lib/helpers/AwaitValue.js.map\",\"node_modules/@babel/helpers/lib/helpers/OverloadYield.js\",\"node_modules/@babel/helpers/lib/helpers/OverloadYield.js.map\",\"node_modules/@babel/helpers/lib/helpers/applyDecoratedDescriptor.js\",\"node_modules/@babel/helpers/lib/helpers/applyDecoratedDescriptor.js.map\",\"node_modules/@babel/helpers/lib/helpers/applyDecs.js\",\"node_modules/@babel/helpers/lib/helpers/applyDecs.js.map\",\"node_modules/@babel/helpers/lib/helpers/applyDecs2203.js\",\"node_modules/@babel/helpers/lib/helpers/applyDecs2203.js.map\",\"node_modules/@babel/helpers/lib/helpers/applyDecs2203R.js\",\"node_modules/@babel/helpers/lib/helpers/applyDecs2203R.js.map\",\"node_modules/@babel/helpers/lib/helpers/applyDecs2301.js\",\"node_modules/@babel/helpers/lib/helpers/applyDecs2301.js.map\",\"node_modules/@babel/helpers/lib/helpers/applyDecs2305.js\",\"node_modules/@babel/helpers/lib/helpers/applyDecs2305.js.map\",\"node_modules/@babel/helpers/lib/helpers/applyDecs2311.js\",\"node_modules/@babel/helpers/lib/helpers/applyDecs2311.js.map\",\"node_modules/@babel/helpers/lib/helpers/arrayLikeToArray.js\",\"node_modules/@babel/helpers/lib/helpers/arrayLikeToArray.js.map\",\"node_modules/@babel/helpers/lib/helpers/arrayWithHoles.js\",\"node_modules/@babel/helpers/lib/helpers/arrayWithHoles.js.map\",\"node_modules/@babel/helpers/lib/helpers/arrayWithoutHoles.js\",\"node_modules/@babel/helpers/lib/helpers/arrayWithoutHoles.js.map\",\"node_modules/@babel/helpers/lib/helpers/assertClassBrand.js\",\"node_modules/@babel/helpers/lib/helpers/assertClassBrand.js.map\",\"node_modules/@babel/helpers/lib/helpers/assertThisInitialized.js\",\"node_modules/@babel/helpers/lib/helpers/assertThisInitialized.js.map\",\"node_modules/@babel/helpers/lib/helpers/asyncGeneratorDelegate.js\",\"node_modules/@babel/helpers/lib/helpers/asyncGeneratorDelegate.js.map\",\"node_modules/@babel/helpers/lib/helpers/asyncIterator.js\",\"node_modules/@babel/helpers/lib/helpers/asyncIterator.js.map\",\"node_modules/@babel/helpers/lib/helpers/asyncToGenerator.js\",\"node_modules/@babel/helpers/lib/helpers/asyncToGenerator.js.map\",\"node_modules/@babel/helpers/lib/helpers/awaitAsyncGenerator.js\",\"node_modules/@babel/helpers/lib/helpers/awaitAsyncGenerator.js.map\",\"node_modules/@babel/helpers/lib/helpers/callSuper.js\",\"node_modules/@babel/helpers/lib/helpers/callSuper.js.map\",\"node_modules/@babel/helpers/lib/helpers/checkInRHS.js\",\"node_modules/@babel/helpers/lib/helpers/checkInRHS.js.map\",\"node_modules/@babel/helpers/lib/helpers/checkPrivateRedeclaration.js\",\"node_modules/@babel/helpers/lib/helpers/checkPrivateRedeclaration.js.map\",\"node_modules/@babel/helpers/lib/helpers/classApplyDescriptorDestructureSet.js\",\"node_modules/@babel/helpers/lib/helpers/classApplyDescriptorDestructureSet.js.map\",\"node_modules/@babel/helpers/lib/helpers/classApplyDescriptorGet.js\",\"node_modules/@babel/helpers/lib/helpers/classApplyDescriptorGet.js.map\",\"node_modules/@babel/helpers/lib/helpers/classApplyDescriptorSet.js\",\"node_modules/@babel/helpers/lib/helpers/classApplyDescriptorSet.js.map\",\"node_modules/@babel/helpers/lib/helpers/classCallCheck.js\",\"node_modules/@babel/helpers/lib/helpers/classCallCheck.js.map\",\"node_modules/@babel/helpers/lib/helpers/classCheckPrivateStaticAccess.js\",\"node_modules/@babel/helpers/lib/helpers/classCheckPrivateStaticAccess.js.map\",\"node_modules/@babel/helpers/lib/helpers/classCheckPrivateStaticFieldDescriptor.js\",\"node_modules/@babel/helpers/lib/helpers/classCheckPrivateStaticFieldDescriptor.js.map\",\"node_modules/@babel/helpers/lib/helpers/classExtractFieldDescriptor.js\",\"node_modules/@babel/helpers/lib/helpers/classExtractFieldDescriptor.js.map\",\"node_modules/@babel/helpers/lib/helpers/classNameTDZError.js\",\"node_modules/@babel/helpers/lib/helpers/classNameTDZError.js.map\",\"node_modules/@babel/helpers/lib/helpers/classPrivateFieldDestructureSet.js\",\"node_modules/@babel/helpers/lib/helpers/classPrivateFieldDestructureSet.js.map\",\"node_modules/@babel/helpers/lib/helpers/classPrivateFieldGet.js\",\"node_modules/@babel/helpers/lib/helpers/classPrivateFieldGet.js.map\",\"node_modules/@babel/helpers/lib/helpers/classPrivateFieldGet2.js\",\"node_modules/@babel/helpers/lib/helpers/classPrivateFieldGet2.js.map\",\"node_modules/@babel/helpers/lib/helpers/classPrivateFieldInitSpec.js\",\"node_modules/@babel/helpers/lib/helpers/classPrivateFieldInitSpec.js.map\",\"node_modules/@babel/helpers/lib/helpers/classPrivateFieldLooseBase.js\",\"node_modules/@babel/helpers/lib/helpers/classPrivateFieldLooseBase.js.map\",\"node_modules/@babel/helpers/lib/helpers/classPrivateFieldLooseKey.js\",\"node_modules/@babel/helpers/lib/helpers/classPrivateFieldLooseKey.js.map\",\"node_modules/@babel/helpers/lib/helpers/classPrivateFieldSet.js\",\"node_modules/@babel/helpers/lib/helpers/classPrivateFieldSet.js.map\",\"node_modules/@babel/helpers/lib/helpers/classPrivateFieldSet2.js\",\"node_modules/@babel/helpers/lib/helpers/classPrivateFieldSet2.js.map\",\"node_modules/@babel/helpers/lib/helpers/classPrivateGetter.js\",\"node_modules/@babel/helpers/lib/helpers/classPrivateGetter.js.map\",\"node_modules/@babel/helpers/lib/helpers/classPrivateMethodGet.js\",\"node_modules/@babel/helpers/lib/helpers/classPrivateMethodGet.js.map\",\"node_modules/@babel/helpers/lib/helpers/classPrivateMethodInitSpec.js\",\"node_modules/@babel/helpers/lib/helpers/classPrivateMethodInitSpec.js.map\",\"node_modules/@babel/helpers/lib/helpers/classPrivateMethodSet.js\",\"node_modules/@babel/helpers/lib/helpers/classPrivateMethodSet.js.map\",\"node_modules/@babel/helpers/lib/helpers/classPrivateSetter.js\",\"node_modules/@babel/helpers/lib/helpers/classPrivateSetter.js.map\",\"node_modules/@babel/helpers/lib/helpers/classStaticPrivateFieldDestructureSet.js\",\"node_modules/@babel/helpers/lib/helpers/classStaticPrivateFieldDestructureSet.js.map\",\"node_modules/@babel/helpers/lib/helpers/classStaticPrivateFieldSpecGet.js\",\"node_modules/@babel/helpers/lib/helpers/classStaticPrivateFieldSpecGet.js.map\",\"node_modules/@babel/helpers/lib/helpers/classStaticPrivateFieldSpecSet.js\",\"node_modules/@babel/helpers/lib/helpers/classStaticPrivateFieldSpecSet.js.map\",\"node_modules/@babel/helpers/lib/helpers/classStaticPrivateMethodGet.js\",\"node_modules/@babel/helpers/lib/helpers/classStaticPrivateMethodGet.js.map\",\"node_modules/@babel/helpers/lib/helpers/classStaticPrivateMethodSet.js\",\"node_modules/@babel/helpers/lib/helpers/classStaticPrivateMethodSet.js.map\",\"node_modules/@babel/helpers/lib/helpers/construct.js\",\"node_modules/@babel/helpers/lib/helpers/construct.js.map\",\"node_modules/@babel/helpers/lib/helpers/createClass.js\",\"node_modules/@babel/helpers/lib/helpers/createClass.js.map\",\"node_modules/@babel/helpers/lib/helpers/createForOfIteratorHelper.js\",\"node_modules/@babel/helpers/lib/helpers/createForOfIteratorHelper.js.map\",\"node_modules/@babel/helpers/lib/helpers/createForOfIteratorHelperLoose.js\",\"node_modules/@babel/helpers/lib/helpers/createForOfIteratorHelperLoose.js.map\",\"node_modules/@babel/helpers/lib/helpers/createSuper.js\",\"node_modules/@babel/helpers/lib/helpers/createSuper.js.map\",\"node_modules/@babel/helpers/lib/helpers/decorate.js\",\"node_modules/@babel/helpers/lib/helpers/decorate.js.map\",\"node_modules/@babel/helpers/lib/helpers/defaults.js\",\"node_modules/@babel/helpers/lib/helpers/defaults.js.map\",\"node_modules/@babel/helpers/lib/helpers/defineAccessor.js\",\"node_modules/@babel/helpers/lib/helpers/defineAccessor.js.map\",\"node_modules/@babel/helpers/lib/helpers/defineEnumerableProperties.js\",\"node_modules/@babel/helpers/lib/helpers/defineEnumerableProperties.js.map\",\"node_modules/@babel/helpers/lib/helpers/defineProperty.js\",\"node_modules/@babel/helpers/lib/helpers/defineProperty.js.map\",\"node_modules/@babel/helpers/lib/helpers/dispose.js\",\"node_modules/@babel/helpers/lib/helpers/dispose.js.map\",\"node_modules/@babel/helpers/lib/helpers/extends.js\",\"node_modules/@babel/helpers/lib/helpers/extends.js.map\",\"node_modules/@babel/helpers/lib/helpers/get.js\",\"node_modules/@babel/helpers/lib/helpers/get.js.map\",\"node_modules/@babel/helpers/lib/helpers/getPrototypeOf.js\",\"node_modules/@babel/helpers/lib/helpers/getPrototypeOf.js.map\",\"node_modules/@babel/helpers/lib/helpers/identity.js\",\"node_modules/@babel/helpers/lib/helpers/identity.js.map\",\"node_modules/@babel/helpers/lib/helpers/importDeferProxy.js\",\"node_modules/@babel/helpers/lib/helpers/importDeferProxy.js.map\",\"node_modules/@babel/helpers/lib/helpers/inherits.js\",\"node_modules/@babel/helpers/lib/helpers/inherits.js.map\",\"node_modules/@babel/helpers/lib/helpers/inheritsLoose.js\",\"node_modules/@babel/helpers/lib/helpers/inheritsLoose.js.map\",\"node_modules/@babel/helpers/lib/helpers/initializerDefineProperty.js\",\"node_modules/@babel/helpers/lib/helpers/initializerDefineProperty.js.map\",\"node_modules/@babel/helpers/lib/helpers/initializerWarningHelper.js\",\"node_modules/@babel/helpers/lib/helpers/initializerWarningHelper.js.map\",\"node_modules/@babel/helpers/lib/helpers/instanceof.js\",\"node_modules/@babel/helpers/lib/helpers/instanceof.js.map\",\"node_modules/@babel/helpers/lib/helpers/interopRequireDefault.js\",\"node_modules/@babel/helpers/lib/helpers/interopRequireDefault.js.map\",\"node_modules/@babel/helpers/lib/helpers/interopRequireWildcard.js\",\"node_modules/@babel/helpers/lib/helpers/interopRequireWildcard.js.map\",\"node_modules/@babel/helpers/lib/helpers/isNativeFunction.js\",\"node_modules/@babel/helpers/lib/helpers/isNativeFunction.js.map\",\"node_modules/@babel/helpers/lib/helpers/isNativeReflectConstruct.js\",\"node_modules/@babel/helpers/lib/helpers/isNativeReflectConstruct.js.map\",\"node_modules/@babel/helpers/lib/helpers/iterableToArray.js\",\"node_modules/@babel/helpers/lib/helpers/iterableToArray.js.map\",\"node_modules/@babel/helpers/lib/helpers/iterableToArrayLimit.js\",\"node_modules/@babel/helpers/lib/helpers/iterableToArrayLimit.js.map\",\"node_modules/@babel/helpers/lib/helpers/jsx.js\",\"node_modules/@babel/helpers/lib/helpers/jsx.js.map\",\"node_modules/@babel/helpers/lib/helpers/maybeArrayLike.js\",\"node_modules/@babel/helpers/lib/helpers/maybeArrayLike.js.map\",\"node_modules/@babel/helpers/lib/helpers/newArrowCheck.js\",\"node_modules/@babel/helpers/lib/helpers/newArrowCheck.js.map\",\"node_modules/@babel/helpers/lib/helpers/nonIterableRest.js\",\"node_modules/@babel/helpers/lib/helpers/nonIterableRest.js.map\",\"node_modules/@babel/helpers/lib/helpers/nonIterableSpread.js\",\"node_modules/@babel/helpers/lib/helpers/nonIterableSpread.js.map\",\"node_modules/@babel/helpers/lib/helpers/nullishReceiverError.js\",\"node_modules/@babel/helpers/lib/helpers/nullishReceiverError.js.map\",\"node_modules/@babel/helpers/lib/helpers/objectDestructuringEmpty.js\",\"node_modules/@babel/helpers/lib/helpers/objectDestructuringEmpty.js.map\",\"node_modules/@babel/helpers/lib/helpers/objectSpread.js\",\"node_modules/@babel/helpers/lib/helpers/objectSpread.js.map\",\"node_modules/@babel/helpers/lib/helpers/objectSpread2.js\",\"node_modules/@babel/helpers/lib/helpers/objectSpread2.js.map\",\"node_modules/@babel/helpers/lib/helpers/objectWithoutProperties.js\",\"node_modules/@babel/helpers/lib/helpers/objectWithoutProperties.js.map\",\"node_modules/@babel/helpers/lib/helpers/objectWithoutPropertiesLoose.js\",\"node_modules/@babel/helpers/lib/helpers/objectWithoutPropertiesLoose.js.map\",\"node_modules/@babel/helpers/lib/helpers/possibleConstructorReturn.js\",\"node_modules/@babel/helpers/lib/helpers/possibleConstructorReturn.js.map\",\"node_modules/@babel/helpers/lib/helpers/readOnlyError.js\",\"node_modules/@babel/helpers/lib/helpers/readOnlyError.js.map\",\"node_modules/@babel/helpers/lib/helpers/regenerator.js\",\"node_modules/@babel/helpers/lib/helpers/regenerator.js.map\",\"node_modules/@babel/helpers/lib/helpers/regeneratorAsync.js\",\"node_modules/@babel/helpers/lib/helpers/regeneratorAsync.js.map\",\"node_modules/@babel/helpers/lib/helpers/regeneratorAsyncGen.js\",\"node_modules/@babel/helpers/lib/helpers/regeneratorAsyncGen.js.map\",\"node_modules/@babel/helpers/lib/helpers/regeneratorAsyncIterator.js\",\"node_modules/@babel/helpers/lib/helpers/regeneratorAsyncIterator.js.map\",\"node_modules/@babel/helpers/lib/helpers/regeneratorDefine.js\",\"node_modules/@babel/helpers/lib/helpers/regeneratorDefine.js.map\",\"node_modules/@babel/helpers/lib/helpers/regeneratorKeys.js\",\"node_modules/@babel/helpers/lib/helpers/regeneratorKeys.js.map\",\"node_modules/@babel/helpers/lib/helpers/regeneratorRuntime.js\",\"node_modules/@babel/helpers/lib/helpers/regeneratorRuntime.js.map\",\"node_modules/@babel/helpers/lib/helpers/regeneratorValues.js\",\"node_modules/@babel/helpers/lib/helpers/regeneratorValues.js.map\",\"node_modules/@babel/helpers/lib/helpers/set.js\",\"node_modules/@babel/helpers/lib/helpers/set.js.map\",\"node_modules/@babel/helpers/lib/helpers/setFunctionName.js\",\"node_modules/@babel/helpers/lib/helpers/setFunctionName.js.map\",\"node_modules/@babel/helpers/lib/helpers/setPrototypeOf.js\",\"node_modules/@babel/helpers/lib/helpers/setPrototypeOf.js.map\",\"node_modules/@babel/helpers/lib/helpers/skipFirstGeneratorNext.js\",\"node_modules/@babel/helpers/lib/helpers/skipFirstGeneratorNext.js.map\",\"node_modules/@babel/helpers/lib/helpers/slicedToArray.js\",\"node_modules/@babel/helpers/lib/helpers/slicedToArray.js.map\",\"node_modules/@babel/helpers/lib/helpers/superPropBase.js\",\"node_modules/@babel/helpers/lib/helpers/superPropBase.js.map\",\"node_modules/@babel/helpers/lib/helpers/superPropGet.js\",\"node_modules/@babel/helpers/lib/helpers/superPropGet.js.map\",\"node_modules/@babel/helpers/lib/helpers/superPropSet.js\",\"node_modules/@babel/helpers/lib/helpers/superPropSet.js.map\",\"node_modules/@babel/helpers/lib/helpers/taggedTemplateLiteral.js\",\"node_modules/@babel/helpers/lib/helpers/taggedTemplateLiteral.js.map\",\"node_modules/@babel/helpers/lib/helpers/taggedTemplateLiteralLoose.js\",\"node_modules/@babel/helpers/lib/helpers/taggedTemplateLiteralLoose.js.map\",\"node_modules/@babel/helpers/lib/helpers/tdz.js\",\"node_modules/@babel/helpers/lib/helpers/tdz.js.map\",\"node_modules/@babel/helpers/lib/helpers/temporalRef.js\",\"node_modules/@babel/helpers/lib/helpers/temporalRef.js.map\",\"node_modules/@babel/helpers/lib/helpers/temporalUndefined.js\",\"node_modules/@babel/helpers/lib/helpers/temporalUndefined.js.map\",\"node_modules/@babel/helpers/lib/helpers/toArray.js\",\"node_modules/@babel/helpers/lib/helpers/toArray.js.map\",\"node_modules/@babel/helpers/lib/helpers/toConsumableArray.js\",\"node_modules/@babel/helpers/lib/helpers/toConsumableArray.js.map\",\"node_modules/@babel/helpers/lib/helpers/toPrimitive.js\",\"node_modules/@babel/helpers/lib/helpers/toPrimitive.js.map\",\"node_modules/@babel/helpers/lib/helpers/toPropertyKey.js\",\"node_modules/@babel/helpers/lib/helpers/toPropertyKey.js.map\",\"node_modules/@babel/helpers/lib/helpers/toSetter.js\",\"node_modules/@babel/helpers/lib/helpers/toSetter.js.map\",\"node_modules/@babel/helpers/lib/helpers/tsRewriteRelativeImportExtensions.js\",\"node_modules/@babel/helpers/lib/helpers/tsRewriteRelativeImportExtensions.js.map\",\"node_modules/@babel/helpers/lib/helpers/typeof.js\",\"node_modules/@babel/helpers/lib/helpers/typeof.js.map\",\"node_modules/@babel/helpers/lib/helpers/unsupportedIterableToArray.js\",\"node_modules/@babel/helpers/lib/helpers/unsupportedIterableToArray.js.map\",\"node_modules/@babel/helpers/lib/helpers/using.js\",\"node_modules/@babel/helpers/lib/helpers/using.js.map\",\"node_modules/@babel/helpers/lib/helpers/usingCtx.js\",\"node_modules/@babel/helpers/lib/helpers/usingCtx.js.map\",\"node_modules/@babel/helpers/lib/helpers/wrapAsyncGenerator.js\",\"node_modules/@babel/helpers/lib/helpers/wrapAsyncGenerator.js.map\",\"node_modules/@babel/helpers/lib/helpers/wrapNativeSuper.js\",\"node_modules/@babel/helpers/lib/helpers/wrapNativeSuper.js.map\",\"node_modules/@babel/helpers/lib/helpers/wrapRegExp.js\",\"node_modules/@babel/helpers/lib/helpers/wrapRegExp.js.map\",\"node_modules/@babel/helpers/lib/helpers/writeOnlyError.js\",\"node_modules/@babel/helpers/lib/helpers/writeOnlyError.js.map\",\"node_modules/@babel/helpers/lib/helpers-generated.js\",\"node_modules/@babel/helpers/lib/helpers-generated.js.map\",\"node_modules/@babel/helpers/lib/index.js\",\"node_modules/@babel/helpers/lib/index.js.map\",\"node_modules/@babel/helpers/package.json\",\"node_modules/@babel/parser\",\"node_modules/@babel/parser/CHANGELOG.md\",\"node_modules/@babel/parser/LICENSE\",\"node_modules/@babel/parser/README.md\",\"node_modules/@babel/parser/bin\",\"node_modules/@babel/parser/bin/babel-parser.js\",\"node_modules/@babel/parser/lib\",\"node_modules/@babel/parser/lib/index.js\",\"node_modules/@babel/parser/lib/index.js.map\",\"node_modules/@babel/parser/package.json\",\"node_modules/@babel/parser/typings\",\"node_modules/@babel/parser/typings/babel-parser.d.ts\",\"node_modules/@babel/runtime\",\"node_modules/@babel/runtime/LICENSE\",\"node_modules/@babel/runtime/README.md\",\"node_modules/@babel/runtime/helpers\",\"node_modules/@babel/runtime/helpers/AwaitValue.js\",\"node_modules/@babel/runtime/helpers/OverloadYield.js\",\"node_modules/@babel/runtime/helpers/applyDecoratedDescriptor.js\",\"node_modules/@babel/runtime/helpers/applyDecs.js\",\"node_modules/@babel/runtime/helpers/applyDecs2203.js\",\"node_modules/@babel/runtime/helpers/applyDecs2203R.js\",\"node_modules/@babel/runtime/helpers/applyDecs2301.js\",\"node_modules/@babel/runtime/helpers/applyDecs2305.js\",\"node_modules/@babel/runtime/helpers/applyDecs2311.js\",\"node_modules/@babel/runtime/helpers/arrayLikeToArray.js\",\"node_modules/@babel/runtime/helpers/arrayWithHoles.js\",\"node_modules/@babel/runtime/helpers/arrayWithoutHoles.js\",\"node_modules/@babel/runtime/helpers/assertClassBrand.js\",\"node_modules/@babel/runtime/helpers/assertThisInitialized.js\",\"node_modules/@babel/runtime/helpers/asyncGeneratorDelegate.js\",\"node_modules/@babel/runtime/helpers/asyncIterator.js\",\"node_modules/@babel/runtime/helpers/asyncToGenerator.js\",\"node_modules/@babel/runtime/helpers/awaitAsyncGenerator.js\",\"node_modules/@babel/runtime/helpers/callSuper.js\",\"node_modules/@babel/runtime/helpers/checkInRHS.js\",\"node_modules/@babel/runtime/helpers/checkPrivateRedeclaration.js\",\"node_modules/@babel/runtime/helpers/classApplyDescriptorDestructureSet.js\",\"node_modules/@babel/runtime/helpers/classApplyDescriptorGet.js\",\"node_modules/@babel/runtime/helpers/classApplyDescriptorSet.js\",\"node_modules/@babel/runtime/helpers/classCallCheck.js\",\"node_modules/@babel/runtime/helpers/classCheckPrivateStaticAccess.js\",\"node_modules/@babel/runtime/helpers/classCheckPrivateStaticFieldDescriptor.js\",\"node_modules/@babel/runtime/helpers/classExtractFieldDescriptor.js\",\"node_modules/@babel/runtime/helpers/classNameTDZError.js\",\"node_modules/@babel/runtime/helpers/classPrivateFieldDestructureSet.js\",\"node_modules/@babel/runtime/helpers/classPrivateFieldGet.js\",\"node_modules/@babel/runtime/helpers/classPrivateFieldGet2.js\",\"node_modules/@babel/runtime/helpers/classPrivateFieldInitSpec.js\",\"node_modules/@babel/runtime/helpers/classPrivateFieldLooseBase.js\",\"node_modules/@babel/runtime/helpers/classPrivateFieldLooseKey.js\",\"node_modules/@babel/runtime/helpers/classPrivateFieldSet.js\",\"node_modules/@babel/runtime/helpers/classPrivateFieldSet2.js\",\"node_modules/@babel/runtime/helpers/classPrivateGetter.js\",\"node_modules/@babel/runtime/helpers/classPrivateMethodGet.js\",\"node_modules/@babel/runtime/helpers/classPrivateMethodInitSpec.js\",\"node_modules/@babel/runtime/helpers/classPrivateMethodSet.js\",\"node_modules/@babel/runtime/helpers/classPrivateSetter.js\",\"node_modules/@babel/runtime/helpers/classStaticPrivateFieldDestructureSet.js\",\"node_modules/@babel/runtime/helpers/classStaticPrivateFieldSpecGet.js\",\"node_modules/@babel/runtime/helpers/classStaticPrivateFieldSpecSet.js\",\"node_modules/@babel/runtime/helpers/classStaticPrivateMethodGet.js\",\"node_modules/@babel/runtime/helpers/classStaticPrivateMethodSet.js\",\"node_modules/@babel/runtime/helpers/construct.js\",\"node_modules/@babel/runtime/helpers/createClass.js\",\"node_modules/@babel/runtime/helpers/createForOfIteratorHelper.js\",\"node_modules/@babel/runtime/helpers/createForOfIteratorHelperLoose.js\",\"node_modules/@babel/runtime/helpers/createSuper.js\",\"node_modules/@babel/runtime/helpers/decorate.js\",\"node_modules/@babel/runtime/helpers/defaults.js\",\"node_modules/@babel/runtime/helpers/defineAccessor.js\",\"node_modules/@babel/runtime/helpers/defineEnumerableProperties.js\",\"node_modules/@babel/runtime/helpers/defineProperty.js\",\"node_modules/@babel/runtime/helpers/dispose.js\",\"node_modules/@babel/runtime/helpers/esm\",\"node_modules/@babel/runtime/helpers/esm/AwaitValue.js\",\"node_modules/@babel/runtime/helpers/esm/OverloadYield.js\",\"node_modules/@babel/runtime/helpers/esm/applyDecoratedDescriptor.js\",\"node_modules/@babel/runtime/helpers/esm/applyDecs.js\",\"node_modules/@babel/runtime/helpers/esm/applyDecs2203.js\",\"node_modules/@babel/runtime/helpers/esm/applyDecs2203R.js\",\"node_modules/@babel/runtime/helpers/esm/applyDecs2301.js\",\"node_modules/@babel/runtime/helpers/esm/applyDecs2305.js\",\"node_modules/@babel/runtime/helpers/esm/applyDecs2311.js\",\"node_modules/@babel/runtime/helpers/esm/arrayLikeToArray.js\",\"node_modules/@babel/runtime/helpers/esm/arrayWithHoles.js\",\"node_modules/@babel/runtime/helpers/esm/arrayWithoutHoles.js\",\"node_modules/@babel/runtime/helpers/esm/assertClassBrand.js\",\"node_modules/@babel/runtime/helpers/esm/assertThisInitialized.js\",\"node_modules/@babel/runtime/helpers/esm/asyncGeneratorDelegate.js\",\"node_modules/@babel/runtime/helpers/esm/asyncIterator.js\",\"node_modules/@babel/runtime/helpers/esm/asyncToGenerator.js\",\"node_modules/@babel/runtime/helpers/esm/awaitAsyncGenerator.js\",\"node_modules/@babel/runtime/helpers/esm/callSuper.js\",\"node_modules/@babel/runtime/helpers/esm/checkInRHS.js\",\"node_modules/@babel/runtime/helpers/esm/checkPrivateRedeclaration.js\",\"node_modules/@babel/runtime/helpers/esm/classApplyDescriptorDestructureSet.js\",\"node_modules/@babel/runtime/helpers/esm/classApplyDescriptorGet.js\",\"node_modules/@babel/runtime/helpers/esm/classApplyDescriptorSet.js\",\"node_modules/@babel/runtime/helpers/esm/classCallCheck.js\",\"node_modules/@babel/runtime/helpers/esm/classCheckPrivateStaticAccess.js\",\"node_modules/@babel/runtime/helpers/esm/classCheckPrivateStaticFieldDescriptor.js\",\"node_modules/@babel/runtime/helpers/esm/classExtractFieldDescriptor.js\",\"node_modules/@babel/runtime/helpers/esm/classNameTDZError.js\",\"node_modules/@babel/runtime/helpers/esm/classPrivateFieldDestructureSet.js\",\"node_modules/@babel/runtime/helpers/esm/classPrivateFieldGet.js\",\"node_modules/@babel/runtime/helpers/esm/classPrivateFieldGet2.js\",\"node_modules/@babel/runtime/helpers/esm/classPrivateFieldInitSpec.js\",\"node_modules/@babel/runtime/helpers/esm/classPrivateFieldLooseBase.js\",\"node_modules/@babel/runtime/helpers/esm/classPrivateFieldLooseKey.js\",\"node_modules/@babel/runtime/helpers/esm/classPrivateFieldSet.js\",\"node_modules/@babel/runtime/helpers/esm/classPrivateFieldSet2.js\",\"node_modules/@babel/runtime/helpers/esm/classPrivateGetter.js\",\"node_modules/@babel/runtime/helpers/esm/classPrivateMethodGet.js\",\"node_modules/@babel/runtime/helpers/esm/classPrivateMethodInitSpec.js\",\"node_modules/@babel/runtime/helpers/esm/classPrivateMethodSet.js\",\"node_modules/@babel/runtime/helpers/esm/classPrivateSetter.js\",\"node_modules/@babel/runtime/helpers/esm/classStaticPrivateFieldDestructureSet.js\",\"node_modules/@babel/runtime/helpers/esm/classStaticPrivateFieldSpecGet.js\",\"node_modules/@babel/runtime/helpers/esm/classStaticPrivateFieldSpecSet.js\",\"node_modules/@babel/runtime/helpers/esm/classStaticPrivateMethodGet.js\",\"node_modules/@babel/runtime/helpers/esm/classStaticPrivateMethodSet.js\",\"node_modules/@babel/runtime/helpers/esm/construct.js\",\"node_modules/@babel/runtime/helpers/esm/createClass.js\",\"node_modules/@babel/runtime/helpers/esm/createForOfIteratorHelper.js\",\"node_modules/@babel/runtime/helpers/esm/createForOfIteratorHelperLoose.js\",\"node_modules/@babel/runtime/helpers/esm/createSuper.js\",\"node_modules/@babel/runtime/helpers/esm/decorate.js\",\"node_modules/@babel/runtime/helpers/esm/defaults.js\",\"node_modules/@babel/runtime/helpers/esm/defineAccessor.js\",\"node_modules/@babel/runtime/helpers/esm/defineEnumerableProperties.js\",\"node_modules/@babel/runtime/helpers/esm/defineProperty.js\",\"node_modules/@babel/runtime/helpers/esm/dispose.js\",\"node_modules/@babel/runtime/helpers/esm/extends.js\",\"node_modules/@babel/runtime/helpers/esm/get.js\",\"node_modules/@babel/runtime/helpers/esm/getPrototypeOf.js\",\"node_modules/@babel/runtime/helpers/esm/identity.js\",\"node_modules/@babel/runtime/helpers/esm/importDeferProxy.js\",\"node_modules/@babel/runtime/helpers/esm/inherits.js\",\"node_modules/@babel/runtime/helpers/esm/inheritsLoose.js\",\"node_modules/@babel/runtime/helpers/esm/initializerDefineProperty.js\",\"node_modules/@babel/runtime/helpers/esm/initializerWarningHelper.js\",\"node_modules/@babel/runtime/helpers/esm/instanceof.js\",\"node_modules/@babel/runtime/helpers/esm/interopRequireDefault.js\",\"node_modules/@babel/runtime/helpers/esm/interopRequireWildcard.js\",\"node_modules/@babel/runtime/helpers/esm/isNativeFunction.js\",\"node_modules/@babel/runtime/helpers/esm/isNativeReflectConstruct.js\",\"node_modules/@babel/runtime/helpers/esm/iterableToArray.js\",\"node_modules/@babel/runtime/helpers/esm/iterableToArrayLimit.js\",\"node_modules/@babel/runtime/helpers/esm/jsx.js\",\"node_modules/@babel/runtime/helpers/esm/maybeArrayLike.js\",\"node_modules/@babel/runtime/helpers/esm/newArrowCheck.js\",\"node_modules/@babel/runtime/helpers/esm/nonIterableRest.js\",\"node_modules/@babel/runtime/helpers/esm/nonIterableSpread.js\",\"node_modules/@babel/runtime/helpers/esm/nullishReceiverError.js\",\"node_modules/@babel/runtime/helpers/esm/objectDestructuringEmpty.js\",\"node_modules/@babel/runtime/helpers/esm/objectSpread.js\",\"node_modules/@babel/runtime/helpers/esm/objectSpread2.js\",\"node_modules/@babel/runtime/helpers/esm/objectWithoutProperties.js\",\"node_modules/@babel/runtime/helpers/esm/objectWithoutPropertiesLoose.js\",\"node_modules/@babel/runtime/helpers/esm/package.json\",\"node_modules/@babel/runtime/helpers/esm/possibleConstructorReturn.js\",\"node_modules/@babel/runtime/helpers/esm/readOnlyError.js\",\"node_modules/@babel/runtime/helpers/esm/regenerator.js\",\"node_modules/@babel/runtime/helpers/esm/regeneratorAsync.js\",\"node_modules/@babel/runtime/helpers/esm/regeneratorAsyncGen.js\",\"node_modules/@babel/runtime/helpers/esm/regeneratorAsyncIterator.js\",\"node_modules/@babel/runtime/helpers/esm/regeneratorDefine.js\",\"node_modules/@babel/runtime/helpers/esm/regeneratorKeys.js\",\"node_modules/@babel/runtime/helpers/esm/regeneratorRuntime.js\",\"node_modules/@babel/runtime/helpers/esm/regeneratorValues.js\",\"node_modules/@babel/runtime/helpers/esm/set.js\",\"node_modules/@babel/runtime/helpers/esm/setFunctionName.js\",\"node_modules/@babel/runtime/helpers/esm/setPrototypeOf.js\",\"node_modules/@babel/runtime/helpers/esm/skipFirstGeneratorNext.js\",\"node_modules/@babel/runtime/helpers/esm/slicedToArray.js\",\"node_modules/@babel/runtime/helpers/esm/superPropBase.js\",\"node_modules/@babel/runtime/helpers/esm/superPropGet.js\",\"node_modules/@babel/runtime/helpers/esm/superPropSet.js\",\"node_modules/@babel/runtime/helpers/esm/taggedTemplateLiteral.js\",\"node_modules/@babel/runtime/helpers/esm/taggedTemplateLiteralLoose.js\",\"node_modules/@babel/runtime/helpers/esm/tdz.js\",\"node_modules/@babel/runtime/helpers/esm/temporalRef.js\",\"node_modules/@babel/runtime/helpers/esm/temporalUndefined.js\",\"node_modules/@babel/runtime/helpers/esm/toArray.js\",\"node_modules/@babel/runtime/helpers/esm/toConsumableArray.js\",\"node_modules/@babel/runtime/helpers/esm/toPrimitive.js\",\"node_modules/@babel/runtime/helpers/esm/toPropertyKey.js\",\"node_modules/@babel/runtime/helpers/esm/toSetter.js\",\"node_modules/@babel/runtime/helpers/esm/tsRewriteRelativeImportExtensions.js\",\"node_modules/@babel/runtime/helpers/esm/typeof.js\",\"node_modules/@babel/runtime/helpers/esm/unsupportedIterableToArray.js\",\"node_modules/@babel/runtime/helpers/esm/using.js\",\"node_modules/@babel/runtime/helpers/esm/usingCtx.js\",\"node_modules/@babel/runtime/helpers/esm/wrapAsyncGenerator.js\",\"node_modules/@babel/runtime/helpers/esm/wrapNativeSuper.js\",\"node_modules/@babel/runtime/helpers/esm/wrapRegExp.js\",\"node_modules/@babel/runtime/helpers/esm/writeOnlyError.js\",\"node_modules/@babel/runtime/helpers/extends.js\",\"node_modules/@babel/runtime/helpers/get.js\",\"node_modules/@babel/runtime/helpers/getPrototypeOf.js\",\"node_modules/@babel/runtime/helpers/identity.js\",\"node_modules/@babel/runtime/helpers/importDeferProxy.js\",\"node_modules/@babel/runtime/helpers/inherits.js\",\"node_modules/@babel/runtime/helpers/inheritsLoose.js\",\"node_modules/@babel/runtime/helpers/initializerDefineProperty.js\",\"node_modules/@babel/runtime/helpers/initializerWarningHelper.js\",\"node_modules/@babel/runtime/helpers/instanceof.js\",\"node_modules/@babel/runtime/helpers/interopRequireDefault.js\",\"node_modules/@babel/runtime/helpers/interopRequireWildcard.js\",\"node_modules/@babel/runtime/helpers/isNativeFunction.js\",\"node_modules/@babel/runtime/helpers/isNativeReflectConstruct.js\",\"node_modules/@babel/runtime/helpers/iterableToArray.js\",\"node_modules/@babel/runtime/helpers/iterableToArrayLimit.js\",\"node_modules/@babel/runtime/helpers/jsx.js\",\"node_modules/@babel/runtime/helpers/maybeArrayLike.js\",\"node_modules/@babel/runtime/helpers/newArrowCheck.js\",\"node_modules/@babel/runtime/helpers/nonIterableRest.js\",\"node_modules/@babel/runtime/helpers/nonIterableSpread.js\",\"node_modules/@babel/runtime/helpers/nullishReceiverError.js\",\"node_modules/@babel/runtime/helpers/objectDestructuringEmpty.js\",\"node_modules/@babel/runtime/helpers/objectSpread.js\",\"node_modules/@babel/runtime/helpers/objectSpread2.js\",\"node_modules/@babel/runtime/helpers/objectWithoutProperties.js\",\"node_modules/@babel/runtime/helpers/objectWithoutPropertiesLoose.js\",\"node_modules/@babel/runtime/helpers/possibleConstructorReturn.js\",\"node_modules/@babel/runtime/helpers/readOnlyError.js\",\"node_modules/@babel/runtime/helpers/regenerator.js\",\"node_modules/@babel/runtime/helpers/regeneratorAsync.js\",\"node_modules/@babel/runtime/helpers/regeneratorAsyncGen.js\",\"node_modules/@babel/runtime/helpers/regeneratorAsyncIterator.js\",\"node_modules/@babel/runtime/helpers/regeneratorDefine.js\",\"node_modules/@babel/runtime/helpers/regeneratorKeys.js\",\"node_modules/@babel/runtime/helpers/regeneratorRuntime.js\",\"node_modules/@babel/runtime/helpers/regeneratorValues.js\",\"node_modules/@babel/runtime/helpers/set.js\",\"node_modules/@babel/runtime/helpers/setFunctionName.js\",\"node_modules/@babel/runtime/helpers/setPrototypeOf.js\",\"node_modules/@babel/runtime/helpers/skipFirstGeneratorNext.js\",\"node_modules/@babel/runtime/helpers/slicedToArray.js\",\"node_modules/@babel/runtime/helpers/superPropBase.js\",\"node_modules/@babel/runtime/helpers/superPropGet.js\",\"node_modules/@babel/runtime/helpers/superPropSet.js\",\"node_modules/@babel/runtime/helpers/taggedTemplateLiteral.js\",\"node_modules/@babel/runtime/helpers/taggedTemplateLiteralLoose.js\",\"node_modules/@babel/runtime/helpers/tdz.js\",\"node_modules/@babel/runtime/helpers/temporalRef.js\",\"node_modules/@babel/runtime/helpers/temporalUndefined.js\",\"node_modules/@babel/runtime/helpers/toArray.js\",\"node_modules/@babel/runtime/helpers/toConsumableArray.js\",\"node_modules/@babel/runtime/helpers/toPrimitive.js\",\"node_modules/@babel/runtime/helpers/toPropertyKey.js\",\"node_modules/@babel/runtime/helpers/toSetter.js\",\"node_modules/@babel/runtime/helpers/tsRewriteRelativeImportExtensions.js\",\"node_modules/@babel/runtime/helpers/typeof.js\",\"node_modules/@babel/runtime/helpers/unsupportedIterableToArray.js\",\"node_modules/@babel/runtime/helpers/using.js\",\"node_modules/@babel/runtime/helpers/usingCtx.js\",\"node_modules/@babel/runtime/helpers/wrapAsyncGenerator.js\",\"node_modules/@babel/runtime/helpers/wrapNativeSuper.js\",\"node_modules/@babel/runtime/helpers/wrapRegExp.js\",\"node_modules/@babel/runtime/helpers/writeOnlyError.js\",\"node_modules/@babel/runtime/package.json\",\"node_modules/@babel/runtime/regenerator\",\"node_modules/@babel/runtime/regenerator/index.js\",\"node_modules/@babel/template\",\"node_modules/@babel/template/LICENSE\",\"node_modules/@babel/template/README.md\",\"node_modules/@babel/template/lib\",\"node_modules/@babel/template/lib/builder.js\",\"node_modules/@babel/template/lib/builder.js.map\",\"node_modules/@babel/template/lib/formatters.js\",\"node_modules/@babel/template/lib/formatters.js.map\",\"node_modules/@babel/template/lib/index.js\",\"node_modules/@babel/template/lib/index.js.map\",\"node_modules/@babel/template/lib/literal.js\",\"node_modules/@babel/template/lib/literal.js.map\",\"node_modules/@babel/template/lib/options.js\",\"node_modules/@babel/template/lib/options.js.map\",\"node_modules/@babel/template/lib/parse.js\",\"node_modules/@babel/template/lib/parse.js.map\",\"node_modules/@babel/template/lib/populate.js\",\"node_modules/@babel/template/lib/populate.js.map\",\"node_modules/@babel/template/lib/string.js\",\"node_modules/@babel/template/lib/string.js.map\",\"node_modules/@babel/template/package.json\",\"node_modules/@babel/traverse\",\"node_modules/@babel/traverse/LICENSE\",\"node_modules/@babel/traverse/README.md\",\"node_modules/@babel/traverse/lib\",\"node_modules/@babel/traverse/lib/cache.js\",\"node_modules/@babel/traverse/lib/cache.js.map\",\"node_modules/@babel/traverse/lib/context.js\",\"node_modules/@babel/traverse/lib/context.js.map\",\"node_modules/@babel/traverse/lib/hub.js\",\"node_modules/@babel/traverse/lib/hub.js.map\",\"node_modules/@babel/traverse/lib/index.js\",\"node_modules/@babel/traverse/lib/index.js.map\",\"node_modules/@babel/traverse/lib/path\",\"node_modules/@babel/traverse/lib/path/ancestry.js\",\"node_modules/@babel/traverse/lib/path/ancestry.js.map\",\"node_modules/@babel/traverse/lib/path/comments.js\",\"node_modules/@babel/traverse/lib/path/comments.js.map\",\"node_modules/@babel/traverse/lib/path/context.js\",\"node_modules/@babel/traverse/lib/path/context.js.map\",\"node_modules/@babel/traverse/lib/path/conversion.js\",\"node_modules/@babel/traverse/lib/path/conversion.js.map\",\"node_modules/@babel/traverse/lib/path/evaluation.js\",\"node_modules/@babel/traverse/lib/path/evaluation.js.map\",\"node_modules/@babel/traverse/lib/path/family.js\",\"node_modules/@babel/traverse/lib/path/family.js.map\",\"node_modules/@babel/traverse/lib/path/index.js\",\"node_modules/@babel/traverse/lib/path/index.js.map\",\"node_modules/@babel/traverse/lib/path/inference\",\"node_modules/@babel/traverse/lib/path/inference/index.js\",\"node_modules/@babel/traverse/lib/path/inference/index.js.map\",\"node_modules/@babel/traverse/lib/path/inference/inferer-reference.js\",\"node_modules/@babel/traverse/lib/path/inference/inferer-reference.js.map\",\"node_modules/@babel/traverse/lib/path/inference/inferers.js\",\"node_modules/@babel/traverse/lib/path/inference/inferers.js.map\",\"node_modules/@babel/traverse/lib/path/inference/util.js\",\"node_modules/@babel/traverse/lib/path/inference/util.js.map\",\"node_modules/@babel/traverse/lib/path/introspection.js\",\"node_modules/@babel/traverse/lib/path/introspection.js.map\",\"node_modules/@babel/traverse/lib/path/lib\",\"node_modules/@babel/traverse/lib/path/lib/hoister.js\",\"node_modules/@babel/traverse/lib/path/lib/hoister.js.map\",\"node_modules/@babel/traverse/lib/path/lib/removal-hooks.js\",\"node_modules/@babel/traverse/lib/path/lib/removal-hooks.js.map\",\"node_modules/@babel/traverse/lib/path/lib/virtual-types-validator.js\",\"node_modules/@babel/traverse/lib/path/lib/virtual-types-validator.js.map\",\"node_modules/@babel/traverse/lib/path/lib/virtual-types.js\",\"node_modules/@babel/traverse/lib/path/lib/virtual-types.js.map\",\"node_modules/@babel/traverse/lib/path/modification.js\",\"node_modules/@babel/traverse/lib/path/modification.js.map\",\"node_modules/@babel/traverse/lib/path/removal.js\",\"node_modules/@babel/traverse/lib/path/removal.js.map\",\"node_modules/@babel/traverse/lib/path/replacement.js\",\"node_modules/@babel/traverse/lib/path/replacement.js.map\",\"node_modules/@babel/traverse/lib/scope\",\"node_modules/@babel/traverse/lib/scope/binding.js\",\"node_modules/@babel/traverse/lib/scope/binding.js.map\",\"node_modules/@babel/traverse/lib/scope/index.js\",\"node_modules/@babel/traverse/lib/scope/index.js.map\",\"node_modules/@babel/traverse/lib/scope/lib\",\"node_modules/@babel/traverse/lib/scope/lib/renamer.js\",\"node_modules/@babel/traverse/lib/scope/lib/renamer.js.map\",\"node_modules/@babel/traverse/lib/scope/traverseForScope.js\",\"node_modules/@babel/traverse/lib/scope/traverseForScope.js.map\",\"node_modules/@babel/traverse/lib/traverse-node.js\",\"node_modules/@babel/traverse/lib/traverse-node.js.map\",\"node_modules/@babel/traverse/lib/types.js\",\"node_modules/@babel/traverse/lib/types.js.map\",\"node_modules/@babel/traverse/lib/visitors.js\",\"node_modules/@babel/traverse/lib/visitors.js.map\",\"node_modules/@babel/traverse/package.json\",\"node_modules/@babel/traverse/tsconfig.overrides.json\",\"node_modules/@babel/types\",\"node_modules/@babel/types/LICENSE\",\"node_modules/@babel/types/README.md\",\"node_modules/@babel/types/lib\",\"node_modules/@babel/types/lib/asserts\",\"node_modules/@babel/types/lib/asserts/assertNode.js\",\"node_modules/@babel/types/lib/asserts/assertNode.js.map\",\"node_modules/@babel/types/lib/asserts/generated\",\"node_modules/@babel/types/lib/asserts/generated/index.js\",\"node_modules/@babel/types/lib/asserts/generated/index.js.map\",\"node_modules/@babel/types/lib/ast-types\",\"node_modules/@babel/types/lib/ast-types/generated\",\"node_modules/@babel/types/lib/ast-types/generated/index.js\",\"node_modules/@babel/types/lib/ast-types/generated/index.js.map\",\"node_modules/@babel/types/lib/builders\",\"node_modules/@babel/types/lib/builders/flow\",\"node_modules/@babel/types/lib/builders/flow/createFlowUnionType.js\",\"node_modules/@babel/types/lib/builders/flow/createFlowUnionType.js.map\",\"node_modules/@babel/types/lib/builders/flow/createTypeAnnotationBasedOnTypeof.js\",\"node_modules/@babel/types/lib/builders/flow/createTypeAnnotationBasedOnTypeof.js.map\",\"node_modules/@babel/types/lib/builders/generated\",\"node_modules/@babel/types/lib/builders/generated/index.js\",\"node_modules/@babel/types/lib/builders/generated/index.js.map\",\"node_modules/@babel/types/lib/builders/generated/lowercase.js\",\"node_modules/@babel/types/lib/builders/generated/lowercase.js.map\",\"node_modules/@babel/types/lib/builders/generated/uppercase.js\",\"node_modules/@babel/types/lib/builders/generated/uppercase.js.map\",\"node_modules/@babel/types/lib/builders/productions.js\",\"node_modules/@babel/types/lib/builders/productions.js.map\",\"node_modules/@babel/types/lib/builders/react\",\"node_modules/@babel/types/lib/builders/react/buildChildren.js\",\"node_modules/@babel/types/lib/builders/react/buildChildren.js.map\",\"node_modules/@babel/types/lib/builders/typescript\",\"node_modules/@babel/types/lib/builders/typescript/createTSUnionType.js\",\"node_modules/@babel/types/lib/builders/typescript/createTSUnionType.js.map\",\"node_modules/@babel/types/lib/builders/validateNode.js\",\"node_modules/@babel/types/lib/builders/validateNode.js.map\",\"node_modules/@babel/types/lib/clone\",\"node_modules/@babel/types/lib/clone/clone.js\",\"node_modules/@babel/types/lib/clone/clone.js.map\",\"node_modules/@babel/types/lib/clone/cloneDeep.js\",\"node_modules/@babel/types/lib/clone/cloneDeep.js.map\",\"node_modules/@babel/types/lib/clone/cloneDeepWithoutLoc.js\"],\"pattern\":\"**/*\"}",
+      "tool_call_id": "call_d1c148cf533f419db9bea035",
+      "name": "glob"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_c73743a403394c398bddcde3",
+          "input": {
+            "command": "ls -la"
+          },
+          "name": "shell",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_d8ad86e0a0d84fc6b4dc036f",
+          "input": {
+            "path": "index.html"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_6561716a4cc942779cb3c32f",
+          "input": {
+            "command": "ls -la src/ 2>/dev/null || echo \"No src directory\""
+          },
+          "name": "shell",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"error\":\"Tool 'shell' execution failed: Failed to execute 'ls -la': No such file or directory (os error 2)\"}",
+      "tool_call_id": "call_c73743a403394c398bddcde3",
+      "name": "shell"
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"<!doctype html>\\n<html lang=\\\"en\\\">\\n  <head>\\n    <meta charset=\\\"UTF-8\\\" />\\n    <link rel=\\\"icon\\\" type=\\\"image/svg+xml\\\" href=\\\"/favicon.svg\\\" />\\n    <meta name=\\\"viewport\\\" content=\\\"width=device-width, initial-scale=1.0\\\" />\\n    <title>pool-game-src</title>\\n  </head>\\n  <body>\\n    <div id=\\\"root\\\"></div>\\n    <script type=\\\"module\\\" src=\\\"/src/main.tsx\\\"></script>\\n  </body>\\n</html>\",\"end_line\":12,\"start_line\":0,\"total_lines\":13}",
+      "tool_call_id": "call_d8ad86e0a0d84fc6b4dc036f",
+      "name": "file_read"
+    },
+    {
+      "role": "tool",
+      "content": "{\"error\":\"Tool 'shell' execution failed: Failed to execute 'ls -la src/ 2>/dev/null || echo \\\"No src directory\\\"': No such file or directory (os error 2)\"}",
+      "tool_call_id": "call_6561716a4cc942779cb3c32f",
+      "name": "shell"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_98c8393db0e84c8f97731347",
+          "input": {
+            "args": [
+              "pwd"
+            ],
+            "command": "pwd"
+          },
+          "name": "shell",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"command\":\"pwd\",\"exit_code\":1,\"stderr\":\"usage: pwd [-L | -P]\\n\",\"stdout\":\"\",\"success\":false,\"timeout_ms\":30000}",
+      "tool_call_id": "call_98c8393db0e84c8f97731347",
+      "name": "shell"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_c82458daf7de47eaa7076a96",
+          "input": {
+            "args": [
+              "-c",
+              "pwd"
+            ],
+            "command": "bash"
+          },
+          "name": "shell",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"command\":\"bash\",\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"/Users/riven/Github/zcode/examples/pool-game\\n\",\"success\":true,\"timeout_ms\":30000}",
+      "tool_call_id": "call_c82458daf7de47eaa7076a96",
+      "name": "shell"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_29b18d6b9f4b4bbca47129c5",
+          "input": {
+            "path": "/Users/riven/Github/zcode/examples/pool-game",
+            "pattern": "*"
+          },
+          "name": "glob",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_4edf0eee05b74f42ae933088",
+          "input": {
+            "path": "/Users/riven/Github/zcode/examples/pool-game/src",
+            "pattern": "src/**/*"
+          },
+          "name": "glob",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"count\":16,\"files\":[\"/Users/riven/Github/zcode/examples/pool-game/.gitignore\",\"/Users/riven/Github/zcode/examples/pool-game/.omc\",\"/Users/riven/Github/zcode/examples/pool-game/.zcode\",\"/Users/riven/Github/zcode/examples/pool-game/README.md\",\"/Users/riven/Github/zcode/examples/pool-game/docs\",\"/Users/riven/Github/zcode/examples/pool-game/eslint.config.js\",\"/Users/riven/Github/zcode/examples/pool-game/index.html\",\"/Users/riven/Github/zcode/examples/pool-game/node_modules\",\"/Users/riven/Github/zcode/examples/pool-game/package-lock.json\",\"/Users/riven/Github/zcode/examples/pool-game/package.json\",\"/Users/riven/Github/zcode/examples/pool-game/public\",\"/Users/riven/Github/zcode/examples/pool-game/src\",\"/Users/riven/Github/zcode/examples/pool-game/tsconfig.app.json\",\"/Users/riven/Github/zcode/examples/pool-game/tsconfig.json\",\"/Users/riven/Github/zcode/examples/pool-game/tsconfig.node.json\",\"/Users/riven/Github/zcode/examples/pool-game/vite.config.ts\"],\"pattern\":\"/Users/riven/Github/zcode/examples/pool-game/*\"}",
+      "tool_call_id": "call_29b18d6b9f4b4bbca47129c5",
+      "name": "glob"
+    },
+    {
+      "role": "tool",
+      "content": "{\"count\":0,\"files\":[],\"pattern\":\"/Users/riven/Github/zcode/examples/pool-game/src/src/**/*\"}",
+      "tool_call_id": "call_4edf0eee05b74f42ae933088",
+      "name": "glob"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_e66e11b0530346deaef013c9",
+          "input": {
+            "path": "/Users/riven/Github/zcode/examples/pool-game",
+            "pattern": "src/**/*"
+          },
+          "name": "glob",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_2df1173f25114dfda788151e",
+          "input": {
+            "path": "/Users/riven/Github/zcode/examples/pool-game/package.json"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_fd93cee0ea56460aba9f82f2",
+          "input": {
+            "path": "/Users/riven/Github/zcode/examples/pool-game/tsconfig.app.json"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_eb8ffd8daf514454b998b14f",
+          "input": {
+            "path": "/Users/riven/Github/zcode/examples/pool-game/tsconfig.json"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_292cd2eb2f5f4ef88a0ad9dc",
+          "input": {
+            "path": "/Users/riven/Github/zcode/examples/pool-game/vite.config.ts"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"count\":13,\"files\":[\"/Users/riven/Github/zcode/examples/pool-game/src/components\",\"/Users/riven/Github/zcode/examples/pool-game/src/constants\",\"/Users/riven/Github/zcode/examples/pool-game/src/constants/balls.ts\",\"/Users/riven/Github/zcode/examples/pool-game/src/constants/physics.ts\",\"/Users/riven/Github/zcode/examples/pool-game/src/constants/table.ts\",\"/Users/riven/Github/zcode/examples/pool-game/src/game-logic\",\"/Users/riven/Github/zcode/examples/pool-game/src/hooks\",\"/Users/riven/Github/zcode/examples/pool-game/src/physics\",\"/Users/riven/Github/zcode/examples/pool-game/src/store\",\"/Users/riven/Github/zcode/examples/pool-game/src/types\",\"/Users/riven/Github/zcode/examples/pool-game/src/types/index.ts\",\"/Users/riven/Github/zcode/examples/pool-game/src/utils\",\"/Users/riven/Github/zcode/examples/pool-game/src/utils/vector.ts\"],\"pattern\":\"/Users/riven/Github/zcode/examples/pool-game/src/**/*\"}",
+      "tool_call_id": "call_e66e11b0530346deaef013c9",
+      "name": "glob"
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"{\\n  \\\"name\\\": \\\"pool-game-src\\\",\\n  \\\"private\\\": true,\\n  \\\"version\\\": \\\"0.0.0\\\",\\n  \\\"type\\\": \\\"module\\\",\\n  \\\"scripts\\\": {\\n    \\\"dev\\\": \\\"vite\\\",\\n    \\\"build\\\": \\\"tsc -b && vite build\\\",\\n    \\\"lint\\\": \\\"eslint .\\\",\\n    \\\"preview\\\": \\\"vite preview\\\"\\n  },\\n  \\\"dependencies\\\": {\\n    \\\"@react-three/cannon\\\": \\\"^6.6.0\\\",\\n    \\\"@react-three/drei\\\": \\\"^10.7.7\\\",\\n    \\\"@react-three/fiber\\\": \\\"^9.5.0\\\",\\n    \\\"cannon-es\\\": \\\"^0.20.0\\\",\\n    \\\"react\\\": \\\"^19.2.4\\\",\\n    \\\"react-dom\\\": \\\"^19.2.4\\\",\\n    \\\"three\\\": \\\"^0.183.2\\\",\\n    \\\"zustand\\\": \\\"^5.0.12\\\"\\n  },\\n  \\\"devDependencies\\\": {\\n    \\\"@eslint/js\\\": \\\"^9.39.4\\\",\\n    \\\"@types/node\\\": \\\"^24.12.0\\\",\\n    \\\"@types/react\\\": \\\"^19.2.14\\\",\\n    \\\"@types/react-dom\\\": \\\"^19.2.3\\\",\\n    \\\"@types/three\\\": \\\"^0.183.1\\\",\\n    \\\"@vitejs/plugin-react\\\": \\\"^6.0.1\\\",\\n    \\\"eslint\\\": \\\"^9.39.4\\\",\\n    \\\"eslint-plugin-react-hooks\\\": \\\"^7.0.1\\\",\\n    \\\"eslint-plugin-react-refresh\\\": \\\"^0.5.2\\\",\\n    \\\"globals\\\": \\\"^17.4.0\\\",\\n    \\\"typescript\\\": \\\"~5.9.3\\\",\\n    \\\"typescript-eslint\\\": \\\"^8.57.0\\\",\\n    \\\"vite\\\": \\\"^8.0.1\\\"\\n  }\\n}\",\"end_line\":36,\"start_line\":0,\"total_lines\":37}",
+      "tool_call_id": "call_2df1173f25114dfda788151e",
+      "name": "file_read"
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"{\\n  \\\"compilerOptions\\\": {\\n    \\\"tsBuildInfoFile\\\": \\\"./node_modules/.tmp/tsconfig.app.tsbuildinfo\\\",\\n    \\\"target\\\": \\\"ES2023\\\",\\n    \\\"useDefineForClassFields\\\": true,\\n    \\\"lib\\\": [\\\"ES2023\\\", \\\"DOM\\\", \\\"DOM.Iterable\\\"],\\n    \\\"module\\\": \\\"ESNext\\\",\\n    \\\"types\\\": [\\\"vite/client\\\"],\\n    \\\"skipLibCheck\\\": true,\\n\\n    /* Bundler mode */\\n    \\\"moduleResolution\\\": \\\"bundler\\\",\\n    \\\"allowImportingTsExtensions\\\": true,\\n    \\\"verbatimModuleSyntax\\\": true,\\n    \\\"moduleDetection\\\": \\\"force\\\",\\n    \\\"noEmit\\\": true,\\n    \\\"jsx\\\": \\\"react-jsx\\\",\\n\\n    /* Linting */\\n    \\\"strict\\\": true,\\n    \\\"noUnusedLocals\\\": true,\\n    \\\"noUnusedParameters\\\": true,\\n    \\\"erasableSyntaxOnly\\\": true,\\n    \\\"noFallthroughCasesInSwitch\\\": true,\\n    \\\"noUncheckedSideEffectImports\\\": true\\n  },\\n  \\\"include\\\": [\\\"src\\\"]\\n}\",\"end_line\":27,\"start_line\":0,\"total_lines\":28}",
+      "tool_call_id": "call_fd93cee0ea56460aba9f82f2",
+      "name": "file_read"
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"{\\n  \\\"files\\\": [],\\n  \\\"references\\\": [\\n    { \\\"path\\\": \\\"./tsconfig.app.json\\\" },\\n    { \\\"path\\\": \\\"./tsconfig.node.json\\\" }\\n  ]\\n}\",\"end_line\":6,\"start_line\":0,\"total_lines\":7}",
+      "tool_call_id": "call_eb8ffd8daf514454b998b14f",
+      "name": "file_read"
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"import { defineConfig } from 'vite'\\nimport react from '@vitejs/plugin-react'\\n\\n// https://vite.dev/config/\\nexport default defineConfig({\\n  plugins: [react()],\\n})\",\"end_line\":6,\"start_line\":0,\"total_lines\":7}",
+      "tool_call_id": "call_292cd2eb2f5f4ef88a0ad9dc",
+      "name": "file_read"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_f7d89087894b4b569a1cb652",
+          "input": {
+            "path": "/Users/riven/Github/zcode/examples/pool-game/src/types/index.ts"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_ae0c9ce95db94a389d9be8b0",
+          "input": {
+            "path": "/Users/riven/Github/zcode/examples/pool-game/src/utils/vector.ts"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_b949ed360eb34487886e278e",
+          "input": {
+            "pattern": "/Users/riven/Github/zcode/examples/pool-game/src/main.tsx"
+          },
+          "name": "glob",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_96dcce4872064e2c91ec153f",
+          "input": {
+            "pattern": "/Users/riven/Github/zcode/examples/pool-game/src/App.tsx"
+          },
+          "name": "glob",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_c75bd5f1add24b869b276a01",
+          "input": {
+            "pattern": "/Users/riven/Github/zcode/examples/pool-game/src/App.css"
+          },
+          "name": "glob",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_19ad214ded02490ba2be6721",
+          "input": {
+            "pattern": "/Users/riven/Github/zcode/examples/pool-game/src/**/*.css"
+          },
+          "name": "glob",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_938ef0e2afd84a439639a4fc",
+          "input": {
+            "pattern": "/Users/riven/Github/zcode/examples/pool-game/src/vite-env.d.ts"
+          },
+          "name": "glob",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"/**\\n * Ball ID: 0 = cue ball, 1-7 = solids, 8 = eight ball, 9-15 = stripes\\n */\\nexport type BallId = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15;\\n\\n/**\\n * Ball group classification\\n */\\nexport type BallGroup = 'solids' | 'stripes' | null;\\n\\n/**\\n * Game phase as defined by the state machine:\\n *\\n * IDLE -> AIMING -> POWER -> SIMULATING -> EVALUATING -> (IDLE or GAME_OVER)\\n */\\nexport type GamePhase =\\n  | 'IDLE'\\n  | 'AIMING'\\n  | 'POWER'\\n  | 'SIMULATING'\\n  | 'EVALUATING'\\n  | 'GAME_OVER';\\n\\n/**\\n * Player identifier\\n */\\nexport type Player = 1 | 2;\\n\\n/**\\n * Foul types in 8-ball pool\\n */\\nexport type FoulType =\\n  | 'SCRATCH'\\n  | 'NO_RAIL_CONTACT'\\n  | 'WRONG_BALL_FIRST'\\n  | 'NO_BALL_HIT'\\n  | 'EIGHT_EARLY'\\n  | null;\\n\\n/**\\n * 3D vector as a tuple (compatible with Three.js and cannon-es)\\n */\\nexport type Vec3Tuple = [number, number, number];\\n\\n/**\\n * State of a single ball on the table\\n */\\nexport interface BallState {\\n  id: BallId;\\n  position: Vec3Tuple;\\n  velocity: Vec3Tuple;\\n  pocketed: boolean;\\n}\\n\\n/**\\n * Result of a single shot, used by the rules engine\\n */\\nexport interface ShotResult {\\n  pocketed: BallId[];\\n  firstContact: BallId | null;\\n  cueBallFinal: Vec3Tuple;\\n  foul: FoulType;\\n}\\n\\n/**\\n * Snapshot for undo support\\n */\\nexport interface ShotSnapshot {\\n  ballPositions: Record<number, Vec3Tuple>;\\n  state: {\\n    currentPlayer: Player;\\n    playerGroups: Record<Player, BallGroup>;\\n    pocketedBalls: BallId[];\\n  };\\n}\\n\\n/**\\n * Complete game state managed by Zustand\\n */\\nexport interface GameState {\\n  phase: GamePhase;\\n  currentPlayer: Player;\\n  playerGroups: Record<Player, BallGroup>;\\n  pocketedBalls: BallId[];\\n  foul: FoulType;\\n  winner: Player | null;\\n  ballInHand: boolean;\\n  ballInHandPosition: Vec3Tuple | null;\\n  shotHistory: ShotSnapshot[];\\n  ballsPocketedThisShot: BallId[];\\n}\\n\\n/**\\n * Aim state managed by a separate Zustand store\\n * (updates every frame on mouse movement)\\n */\\nexport interface AimState {\\n  direction: Vec3Tuple;\\n  power: number;\\n  isCharging: boolean;\\n  cameraMode: 'orbit' | 'topdown';\\n}\\n\\n// Utility constants\\nexport const ALL_BALL_IDS: BallId[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];\\nexport const SOLIDS: BallId[] = [1, 2, 3, 4, 5, 6, 7];\\nexport const STRIPES: BallId[] = [9, 10, 11, 12, 13, 14, 15];\\nexport const EIGHT: BallId = 8;\\n\\nexport function getBallGroup(id: BallId): BallGroup {\\n  if (id >= 1 && id <= 7) return 'solids';\\n  if (id >= 9 && id <= 15) return 'stripes';\\n  return null;\\n}\\n\\nexport function isStripe(id: BallId): boolean {\\n  return id >= 9 && id <= 15;\\n}\\n\\nexport function isSolid(id: BallId): boolean {\\n  return id >= 1 && id <= 7;\\n}\",\"end_line\":121,\"start_line\":0,\"total_lines\":122}",
+      "tool_call_id": "call_f7d89087894b4b569a1cb652",
+      "name": "file_read"
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"import type { Vec3Tuple } from '../types';\\n\\nexport function vec3Distance(a: Vec3Tuple, b: Vec3Tuple): number {\\n  const dx = a[0] - b[0];\\n  const dy = a[1] - b[1];\\n  const dz = a[2] - b[2];\\n  return Math.sqrt(dx * dx + dy * dy + dz * dz);\\n}\\n\\nexport function vec3Normalize(v: Vec3Tuple): Vec3Tuple {\\n  const len = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);\\n  if (len === 0) return [0, 0, 0];\\n  return [v[0] / len, v[1] / len, v[2] / len];\\n}\\n\\nexport function vec3Sub(a: Vec3Tuple, b: Vec3Tuple): Vec3Tuple {\\n  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];\\n}\\n\\nexport function vec3Add(a: Vec3Tuple, b: Vec3Tuple): Vec3Tuple {\\n  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];\\n}\\n\\nexport function vec3Scale(v: Vec3Tuple, s: number): Vec3Tuple {\\n  return [v[0] * s, v[1] * s, v[2] * s];\\n}\\n\\nexport function vec3Lerp(a: Vec3Tuple, b: Vec3Tuple, t: number): Vec3Tuple {\\n  return [\\n    a[0] + (b[0] - a[0]) * t,\\n    a[1] + (b[1] - a[1]) * t,\\n    a[2] + (b[2] - a[2]) * t,\\n  ];\\n}\\n\\nexport function vec3Reflect(v: Vec3Tuple, normal: Vec3Tuple): Vec3Tuple {\\n  const dot = vec3Dot(v, normal);\\n  return [\\n    v[0] - 2 * dot * normal[0],\\n    v[1] - 2 * dot * normal[1],\\n    v[2] - 2 * dot * normal[2],\\n  ];\\n}\\n\\nexport function vec3Dot(a: Vec3Tuple, b: Vec3Tuple): number {\\n  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];\\n}\\n\\nexport function vec3Cross(a: Vec3Tuple, b: Vec3Tuple): Vec3Tuple {\\n  return [\\n    a[1] * b[2] - a[2] * b[1],\\n    a[2] * b[0] - a[0] * b[2],\\n    a[0] * b[1] - a[1] * b[0],\\n  ];\\n}\\n\\nexport function vec3Angle(a: Vec3Tuple, b: Vec3Tuple): number {\\n  const dot = vec3Dot(a, b);\\n  const lenA = Math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);\\n  const lenB = Math.sqrt(b[0] * b[0] + b[1] * b[1] + b[2] * b[2]);\\n  if (lenA === 0 || lenB === 0) return 0;\\n  const cosAngle = Math.max(-1, Math.min(1, dot / (lenA * lenB)));\\n  return Math.acos(cosAngle);\\n}\\n\\nexport function vec3Length(v: Vec3Tuple): number {\\n  return Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);\\n}\",\"end_line\":67,\"start_line\":0,\"total_lines\":68}",
+      "tool_call_id": "call_ae0c9ce95db94a389d9be8b0",
+      "name": "file_read"
+    },
+    {
+      "role": "tool",
+      "content": "{\"count\":0,\"files\":[],\"pattern\":\"/Users/riven/Github/zcode/examples/pool-game/src/main.tsx\"}",
+      "tool_call_id": "call_b949ed360eb34487886e278e",
+      "name": "glob"
+    },
+    {
+      "role": "tool",
+      "content": "{\"count\":0,\"files\":[],\"pattern\":\"/Users/riven/Github/zcode/examples/pool-game/src/App.tsx\"}",
+      "tool_call_id": "call_96dcce4872064e2c91ec153f",
+      "name": "glob"
+    },
+    {
+      "role": "tool",
+      "content": "{\"count\":0,\"files\":[],\"pattern\":\"/Users/riven/Github/zcode/examples/pool-game/src/App.css\"}",
+      "tool_call_id": "call_c75bd5f1add24b869b276a01",
+      "name": "glob"
+    },
+    {
+      "role": "tool",
+      "content": "{\"count\":0,\"files\":[],\"pattern\":\"/Users/riven/Github/zcode/examples/pool-game/src/**/*.css\"}",
+      "tool_call_id": "call_19ad214ded02490ba2be6721",
+      "name": "glob"
+    },
+    {
+      "role": "tool",
+      "content": "{\"count\":0,\"files\":[],\"pattern\":\"/Users/riven/Github/zcode/examples/pool-game/src/vite-env.d.ts\"}",
+      "tool_call_id": "call_938ef0e2afd84a439639a4fc",
+      "name": "glob"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_39e3fc2468164544aca5928e",
+          "input": {
+            "pattern": "/Users/riven/Github/zcode/examples/pool-game/src/*.ts"
+          },
+          "name": "glob",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_f9aeda1bf1664fcf8d0386f3",
+          "input": {
+            "pattern": "/Users/riven/Github/zcode/examples/pool-game/src/*.tsx"
+          },
+          "name": "glob",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_49ac47388fa54605baadc224",
+          "input": {
+            "pattern": "/Users/riven/Github/zcode/examples/pool-game/src/index.*"
+          },
+          "name": "glob",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"count\":0,\"files\":[],\"pattern\":\"/Users/riven/Github/zcode/examples/pool-game/src/*.ts\"}",
+      "tool_call_id": "call_39e3fc2468164544aca5928e",
+      "name": "glob"
+    },
+    {
+      "role": "tool",
+      "content": "{\"count\":0,\"files\":[],\"pattern\":\"/Users/riven/Github/zcode/examples/pool-game/src/*.tsx\"}",
+      "tool_call_id": "call_f9aeda1bf1664fcf8d0386f3",
+      "name": "glob"
+    },
+    {
+      "role": "tool",
+      "content": "{\"count\":0,\"files\":[],\"pattern\":\"/Users/riven/Github/zcode/examples/pool-game/src/index.*\"}",
+      "tool_call_id": "call_49ac47388fa54605baadc224",
+      "name": "glob"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_9cddffb9b9064c0cb414d812",
+          "input": {
+            "path": "/Users/riven/Github/zcode/examples/pool-game/src/constants/table.ts"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_e690a91bf59049e1aac71f46",
+          "input": {
+            "path": "/Users/riven/Github/zcode/examples/pool-game/src/constants/physics.ts"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_b88dd0a1601b4c73b364fa22",
+          "input": {
+            "path": "/Users/riven/Github/zcode/examples/pool-game/src/constants/balls.ts"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_9ad7ed6de16747099bb7a1fd",
+          "input": {
+            "path": "/Users/riven/Github/zcode/examples/pool-game/.gitignore"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"import type { Vec3Tuple } from '../types';\\n\\n// Table dimensions (meters)\\nexport const TABLE_LENGTH = 2.24; // Z-axis (long dimension)\\nexport const TABLE_WIDTH = 1.12;  // X-axis (short dimension)\\nexport const TABLE_HEIGHT = 0.02; // Y-axis thickness of bed\\n\\n// Rail dimensions\\nexport const RAIL_HEIGHT = 0.05;\\nexport const RAIL_WIDTH = 0.06;\\n\\n// Ball\\nexport const BALL_RADIUS = 0.0285;\\n\\n// Pocket\\nexport const POCKET_RADIUS = 0.047;\\n\\n// Playing bounds (half extents)\\nexport const HALF_LENGTH = TABLE_LENGTH / 2;\\nexport const HALF_WIDTH = TABLE_WIDTH / 2;\\n\\n// Head string: 1/4 of table length from head rail\\nexport const HEAD_STRING = -HALF_LENGTH / 2;\\n\\n// Foot spot: center of the foot end (for racking)\\nexport const FOOT_SPOT_Z = HALF_LENGTH / 2;\\n\\n// Pocket center positions (6 pockets)\\n// Corners at ±(HALF_WIDTH, 0, ±HALF_LENGTH), sides at (±HALF_WIDTH, 0, 0)\\nexport const POCKET_POSITIONS: Vec3Tuple[] = [\\n  [-HALF_WIDTH, 0, -HALF_LENGTH],  // top-left\\n  [HALF_WIDTH, 0, -HALF_LENGTH],   // top-right\\n  [-HALF_WIDTH, 0, HALF_LENGTH],   // bottom-left\\n  [HALF_WIDTH, 0, HALF_LENGTH],    // bottom-right\\n  [-HALF_WIDTH, 0, 0],             // mid-left\\n  [HALF_WIDTH, 0, 0],              // mid-right\\n];\\n\\n// Cushion segments (6 cushions: 4 side + 2 end partial)\\nexport const CUSHION_THICKNESS = 0.03;\\nexport const CUSHION_HEIGHT = BALL_RADIUS * 1.5;\\n\\n// Floor\\nexport const FLOOR_Y = -0.8;\\n\\n// Camera defaults\\nexport const CAMERA_DEFAULT_POSITION: Vec3Tuple = [0, 1.8, 1.6];\\nexport const CAMERA_FOV = 45;\",\"end_line\":47,\"start_line\":0,\"total_lines\":48}",
+      "tool_call_id": "call_9cddffb9b9064c0cb414d812",
+      "name": "file_read"
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"import type { Vec3Tuple } from '../types';\\n\\n// Gravity\\nexport const GRAVITY: Vec3Tuple = [0, -9.81, 0];\\n\\n// Ball physics\\nexport const BALL_MASS = 0.17; // kg\\n\\n// Contact materials: [friction, restitution]\\nexport const BALL_BALL_FRICTION = 0.05;\\nexport const BALL_BALL_RESTITUTION = 0.95;\\n\\nexport const BALL_FELT_FRICTION = 0.4;\\nexport const BALL_FELT_RESTITUTION = 0.1;\\n\\nexport const BALL_CUSHION_FRICTION = 0.1;\\nexport const BALL_CUSHION_RESTITUTION = 0.7;\\n\\n// Damping (per-step velocity reduction)\\nexport const LINEAR_DAMPING = 0.3;\\nexport const ANGULAR_DAMPING = 0.5;\\n\\n// Settle detection\\nexport const SETTLE_LINEAR_THRESHOLD = 0.001;\\nexport const SETTLE_ANGULAR_THRESHOLD = 0.01;\\nexport const SETTLE_FRAMES = 10; // must be below threshold for N consecutive frames\\n\\n// Max impulse (full power shot)\\nexport const MAX_IMPULSE = 3.5;\\n\\n// Solver\\nexport const SOLVER_ITERATIONS = 10;\\n\\n// Power charge\\nexport const POWER_CHARGE_RATE = 0.5; // 0→1 in 2 seconds\\nexport const MAX_POWER = 1.0;\",\"end_line\":35,\"start_line\":0,\"total_lines\":36}",
+      "tool_call_id": "call_e690a91bf59049e1aac71f46",
+      "name": "file_read"
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"import type { BallId, Vec3Tuple } from '../types';\\nimport { BALL_RADIUS, HALF_LENGTH, FOOT_SPOT_Z } from './table';\\n\\n// Standard billiard ball colors\\nexport const BALL_COLORS: Record<BallId, string> = {\\n  0: '#FFFFFF',  // Cue ball - white\\n  1: '#FFD700',  // Yellow (solid)\\n  2: '#0000FF',  // Blue (solid)\\n  3: '#FF0000',  // Red (solid)\\n  4: '#800080',  // Purple (solid)\\n  5: '#FF8C00',  // Orange (solid)\\n  6: '#006400',  // Green (solid)\\n  7: '#8B0000',  // Maroon (solid)\\n  8: '#000000',  // Black (eight ball)\\n  9: '#FFD700',  // Yellow (stripe)\\n  10: '#0000FF', // Blue (stripe)\\n  11: '#FF0000', // Red (stripe)\\n  12: '#800080', // Purple (stripe)\\n  13: '#FF8C00', // Orange (stripe)\\n  14: '#006400', // Green (stripe)\\n  15: '#8B0000', // Maroon (stripe)\\n};\\n\\n// Triangle rack layout (standard 8-ball formation)\\n// Row 0: 1 ball, Row 1: 2 balls, ... Row 4: 5 balls\\n// 8-ball must be in center (row 2, position 1)\\n// One solid and one stripe in bottom corners\\nconst RACK_ORDER: BallId[] = [1, 9, 2, 10, 8, 11, 3, 14, 6, 15, 4, 12, 7, 13, 5];\\n\\nexport function getRackPositions(): Record<BallId, Vec3Tuple> {\\n  const positions: Record<number, Vec3Tuple> = {};\\n  const spacing = BALL_RADIUS * 2.05; // slight gap to prevent initial overlap\\n  let ballIndex = 0;\\n\\n  for (let row = 0; row < 5; row++) {\\n    const ballsInRow = row + 1;\\n    const rowZ = FOOT_SPOT_Z + row * spacing * Math.cos(Math.PI / 6);\\n    for (let col = 0; col < ballsInRow; col++) {\\n      const xOffset = (col - (ballsInRow - 1) / 2) * spacing;\\n      const x = xOffset;\\n      const y = BALL_RADIUS;\\n      const z = rowZ;\\n      positions[RACK_ORDER[ballIndex]] = [x, y, z];\\n      ballIndex++;\\n    }\\n  }\\n\\n  // Cue ball at head position\\n  positions[0] = [0, BALL_RADIUS, -HALF_LENGTH * 0.4];\\n\\n  return positions as Record<BallId, Vec3Tuple>;\\n}\\n\\nexport function getBallColor(id: BallId): string {\\n  return BALL_COLORS[id];\\n}\",\"end_line\":55,\"start_line\":0,\"total_lines\":56}",
+      "tool_call_id": "call_b88dd0a1601b4c73b364fa22",
+      "name": "file_read"
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"# Logs\\nlogs\\n*.log\\nnpm-debug.log*\\nyarn-debug.log*\\nyarn-error.log*\\npnpm-debug.log*\\nlerna-debug.log*\\n\\nnode_modules\\ndist\\ndist-ssr\\n*.local\\n\\n# Editor directories and files\\n.vscode/*\\n!.vscode/extensions.json\\n.idea\\n.DS_Store\\n*.suo\\n*.ntvs*\\n*.njsproj\\n*.sln\\n*.sw?\",\"end_line\":23,\"start_line\":0,\"total_lines\":24}",
+      "tool_call_id": "call_9ad7ed6de16747099bb7a1fd",
+      "name": "file_read"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_3230f14f72214d18beda286a",
+          "input": {
+            "content": "/// <reference types=\"vite/client\" />\n",
+            "path": "/Users/riven/Github/zcode/examples/pool-game/src/vite-env.d.ts"
+          },
+          "name": "file_write",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"bytes_written\":38,\"path\":\"/Users/riven/Github/zcode/examples/pool-game/src/vite-env.d.ts\",\"success\":true}",
+      "tool_call_id": "call_3230f14f72214d18beda286a",
+      "name": "file_write"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_ee820b14a5c04d90a2951b00",
+          "input": {
+            "content": "/// <reference types=\"vite/client\" />\n",
+            "path": "/Users/riven/Github/zcode/examples/pool-game/src/vite-env.d.ts"
+          },
+          "name": "file_write",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_4907e4015d4b4d7ab2e4c6cb",
+          "input": {
+            "content": "import { StrictMode } from 'react';\nimport { createRoot } from 'react-dom/client';\nimport App from './App';\n\nconst rootElement = document.getElementById('root');\nif (!rootElement) {\n  throw new Error('Root element not found');\n}\n\ncreateRoot(rootElement).render(\n  <StrictMode>\n    <App />\n  </StrictMode>,\n);\n",
+            "path": "/Users/riven/Github/zcode/examples/pool-game/src/main.tsx"
+          },
+          "name": "file_write",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_d3527cee57844dec8af9f623",
+          "input": {
+            "content": "import { useState } from 'react';\n\n/**\n * Root component for the 3D 8-Ball Pool Game.\n *\n * Architecture:\n *   App\n *   ├── Scene (R3F Canvas) — to be added in Phase 3\n *   │   ├── PhysicsWorld — to be added in Phase 4\n *   │   ├── Table — to be added in Phase 3\n *   │   ├── Balls — to be added in Phase 3\n *   │   ├── CueStick — to be added in Phase 6\n *   │   └── AimLine — to be added in Phase 6\n *   └── GameUI (HTML overlay) — to be added in Phase 7\n */\nfunction App() {\n  const [ready] = useState(true);\n\n  return (\n    <div\n      style={{\n        width: '100vw',\n        height: '100vh',\n        background: '#1a1a2e',\n        display: 'flex',\n        alignItems: 'center',\n        justifyContent: 'center',\n        fontFamily: 'system-ui, -apple-system, sans-serif',\n      }}\n    >\n      {ready ? (\n        <div style={{ textAlign: 'center', color: '#e0e0e0' }}>\n          <h1 style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>\n            🎱 8-Ball Pool\n          </h1>\n          <p style={{ color: '#888', fontSize: '0.9rem' }}>\n            Project scaffolded — components will be added in upcoming phases.\n          </p>\n        </div>\n      ) : null}\n    </div>\n  );\n}\n\nexport default App;\n",
+            "path": "/Users/riven/Github/zcode/examples/pool-game/src/App.tsx"
+          },
+          "name": "file_write",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"bytes_written\":38,\"path\":\"/Users/riven/Github/zcode/examples/pool-game/src/vite-env.d.ts\",\"success\":true}",
+      "tool_call_id": "call_ee820b14a5c04d90a2951b00",
+      "name": "file_write"
+    },
+    {
+      "role": "tool",
+      "content": "{\"bytes_written\":309,\"path\":\"/Users/riven/Github/zcode/examples/pool-game/src/main.tsx\",\"success\":true}",
+      "tool_call_id": "call_4907e4015d4b4d7ab2e4c6cb",
+      "name": "file_write"
+    },
+    {
+      "role": "tool",
+      "content": "{\"bytes_written\":1276,\"path\":\"/Users/riven/Github/zcode/examples/pool-game/src/App.tsx\",\"success\":true}",
+      "tool_call_id": "call_d3527cee57844dec8af9f623",
+      "name": "file_write"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_b31a88df9ade44fd820e93e3",
+          "input": {
+            "content": "# This directory will contain React components (Scene, Table, Ball, etc.)\n",
+            "path": "/Users/riven/Github/zcode/examples/pool-game/src/components/.gitkeep"
+          },
+          "name": "file_write",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_9a05e125b6cc4f93b1c528b7",
+          "input": {
+            "content": "# This directory will contain the Zustand stores (gameStore, aimStore)\n",
+            "path": "/Users/riven/Github/zcode/examples/pool-game/src/store/.gitkeep"
+          },
+          "name": "file_write",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_8bfcc790596942d0abb9baf6",
+          "input": {
+            "content": "# This directory will contain physics modules (PhysicsWorld, BallBody, pocketDetection)\n",
+            "path": "/Users/riven/Github/zcode/examples/pool-game/src/physics/.gitkeep"
+          },
+          "name": "file_write",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_bc2f2aee046e4d1b95c10b1e",
+          "input": {
+            "content": "# This directory will contain game logic (rules, rack, shotController)\n",
+            "path": "/Users/riven/Github/zcode/examples/pool-game/src/game-logic/.gitkeep"
+          },
+          "name": "file_write",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_40b8596d57244ba98a93b3e2",
+          "input": {
+            "content": "# This directory will contain custom hooks (useAim, usePower, useSettleDetector, useShotSequence)\n",
+            "path": "/Users/riven/Github/zcode/examples/pool-game/src/hooks/.gitkeep"
+          },
+          "name": "file_write",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"bytes_written\":74,\"path\":\"/Users/riven/Github/zcode/examples/pool-game/src/components/.gitkeep\",\"success\":true}",
+      "tool_call_id": "call_b31a88df9ade44fd820e93e3",
+      "name": "file_write"
+    },
+    {
+      "role": "tool",
+      "content": "{\"bytes_written\":71,\"path\":\"/Users/riven/Github/zcode/examples/pool-game/src/store/.gitkeep\",\"success\":true}",
+      "tool_call_id": "call_9a05e125b6cc4f93b1c528b7",
+      "name": "file_write"
+    },
+    {
+      "role": "tool",
+      "content": "{\"bytes_written\":88,\"path\":\"/Users/riven/Github/zcode/examples/pool-game/src/physics/.gitkeep\",\"success\":true}",
+      "tool_call_id": "call_8bfcc790596942d0abb9baf6",
+      "name": "file_write"
+    },
+    {
+      "role": "tool",
+      "content": "{\"bytes_written\":71,\"path\":\"/Users/riven/Github/zcode/examples/pool-game/src/game-logic/.gitkeep\",\"success\":true}",
+      "tool_call_id": "call_bc2f2aee046e4d1b95c10b1e",
+      "name": "file_write"
+    },
+    {
+      "role": "tool",
+      "content": "{\"bytes_written\":98,\"path\":\"/Users/riven/Github/zcode/examples/pool-game/src/hooks/.gitkeep\",\"success\":true}",
+      "tool_call_id": "call_40b8596d57244ba98a93b3e2",
+      "name": "file_write"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_33f746f35fe44a2f90dad91d",
+          "input": {
+            "command": "cd /Users/riven/Github/zcode/examples/pool-game && npx tsc -b --noEmit 2>&1",
+            "timeout_ms": 30000
+          },
+          "name": "shell",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"error\":\"Tool 'shell' execution failed: Failed to execute 'cd /Users/riven/Github/zcode/examples/pool-game && npx tsc -b --noEmit 2>&1': No such file or directory (os error 2)\"}",
+      "tool_call_id": "call_33f746f35fe44a2f90dad91d",
+      "name": "shell"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_28a4d560b6a34270b7769ae4",
+          "input": {
+            "args": [
+              "-c",
+              "cd /Users/riven/Github/zcode/examples/pool-game && npx tsc -b --noEmit 2>&1"
+            ],
+            "command": "bash"
+          },
+          "name": "shell",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"command\":\"bash\",\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"\",\"success\":true,\"timeout_ms\":30000}",
+      "tool_call_id": "call_28a4d560b6a34270b7769ae4",
+      "name": "shell"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_80c5d4a491af4fed9e7ea516",
+          "input": {
+            "args": [
+              "-c",
+              "cd /Users/riven/Github/zcode/examples/pool-game && npm run build 2>&1"
+            ],
+            "command": "bash"
+          },
+          "name": "shell",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"command\":\"bash\",\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"\\n> pool-game-src@0.0.0 build\\n> tsc -b && vite build\\n\\nvite v8.0.3 building client environment for production...\\n\\u001b[2K\\rtransforming...✓ 15 modules transformed.\\nrendering chunks...\\ncomputing gzip size...\\ndist/index.html                  0.38 kB │ gzip:  0.27 kB\\ndist/assets/index-CBVW5-KA.js  191.00 kB │ gzip: 60.30 kB\\n\\n✓ built in 82ms\\n\",\"success\":true,\"timeout_ms\":30000}",
+      "tool_call_id": "call_80c5d4a491af4fed9e7ea516",
+      "name": "shell"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_46399d97cc8b491a97b6f4d7",
+          "input": {
+            "path": "/Users/riven/Github/zcode/examples/pool-game/src/types/index.ts"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_ecb81e42432c4b4ba05c6b8f",
+          "input": {
+            "path": "/Users/riven/Github/zcode/examples/pool-game/src/main.tsx"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_11c5123b6777449abd6e876c",
+          "input": {
+            "path": "/Users/riven/Github/zcode/examples/pool-game/src/App.tsx"
+          },
+          "name": "file_read",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"/**\\n * Ball ID: 0 = cue ball, 1-7 = solids, 8 = eight ball, 9-15 = stripes\\n */\\nexport type BallId = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15;\\n\\n/**\\n * Ball group classification\\n */\\nexport type BallGroup = 'solids' | 'stripes' | null;\\n\\n/**\\n * Game phase as defined by the state machine:\\n *\\n * IDLE -> AIMING -> POWER -> SIMULATING -> EVALUATING -> (IDLE or GAME_OVER)\\n */\\nexport type GamePhase =\\n  | 'IDLE'\\n  | 'AIMING'\\n  | 'POWER'\\n  | 'SIMULATING'\\n  | 'EVALUATING'\\n  | 'GAME_OVER';\\n\\n/**\\n * Player identifier\\n */\\nexport type Player = 1 | 2;\\n\\n/**\\n * Foul types in 8-ball pool\\n */\\nexport type FoulType =\\n  | 'SCRATCH'\\n  | 'NO_RAIL_CONTACT'\\n  | 'WRONG_BALL_FIRST'\\n  | 'NO_BALL_HIT'\\n  | 'EIGHT_EARLY'\\n  | null;\\n\\n/**\\n * 3D vector as a tuple (compatible with Three.js and cannon-es)\\n */\\nexport type Vec3Tuple = [number, number, number];\\n\\n/**\\n * State of a single ball on the table\\n */\\nexport interface BallState {\\n  id: BallId;\\n  position: Vec3Tuple;\\n  velocity: Vec3Tuple;\\n  pocketed: boolean;\\n}\\n\\n/**\\n * Result of a single shot, used by the rules engine\\n */\\nexport interface ShotResult {\\n  pocketed: BallId[];\\n  firstContact: BallId | null;\\n  cueBallFinal: Vec3Tuple;\\n  foul: FoulType;\\n}\\n\\n/**\\n * Snapshot for undo support\\n */\\nexport interface ShotSnapshot {\\n  ballPositions: Record<number, Vec3Tuple>;\\n  state: {\\n    currentPlayer: Player;\\n    playerGroups: Record<Player, BallGroup>;\\n    pocketedBalls: BallId[];\\n  };\\n}\\n\\n/**\\n * Complete game state managed by Zustand\\n */\\nexport interface GameState {\\n  phase: GamePhase;\\n  currentPlayer: Player;\\n  playerGroups: Record<Player, BallGroup>;\\n  pocketedBalls: BallId[];\\n  foul: FoulType;\\n  winner: Player | null;\\n  ballInHand: boolean;\\n  ballInHandPosition: Vec3Tuple | null;\\n  shotHistory: ShotSnapshot[];\\n  ballsPocketedThisShot: BallId[];\\n}\\n\\n/**\\n * Aim state managed by a separate Zustand store\\n * (updates every frame on mouse movement)\\n */\\nexport interface AimState {\\n  direction: Vec3Tuple;\\n  power: number;\\n  isCharging: boolean;\\n  cameraMode: 'orbit' | 'topdown';\\n}\\n\\n// Utility constants\\nexport const ALL_BALL_IDS: BallId[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];\\nexport const SOLIDS: BallId[] = [1, 2, 3, 4, 5, 6, 7];\\nexport const STRIPES: BallId[] = [9, 10, 11, 12, 13, 14, 15];\\nexport const EIGHT: BallId = 8;\\n\\nexport function getBallGroup(id: BallId): BallGroup {\\n  if (id >= 1 && id <= 7) return 'solids';\\n  if (id >= 9 && id <= 15) return 'stripes';\\n  return null;\\n}\\n\\nexport function isStripe(id: BallId): boolean {\\n  return id >= 9 && id <= 15;\\n}\\n\\nexport function isSolid(id: BallId): boolean {\\n  return id >= 1 && id <= 7;\\n}\",\"end_line\":121,\"start_line\":0,\"total_lines\":122}",
+      "tool_call_id": "call_46399d97cc8b491a97b6f4d7",
+      "name": "file_read"
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"import { StrictMode } from 'react';\\nimport { createRoot } from 'react-dom/client';\\nimport App from './App';\\n\\nconst rootElement = document.getElementById('root');\\nif (!rootElement) {\\n  throw new Error('Root element not found');\\n}\\n\\ncreateRoot(rootElement).render(\\n  <StrictMode>\\n    <App />\\n  </StrictMode>,\\n);\",\"end_line\":13,\"start_line\":0,\"total_lines\":14}",
+      "tool_call_id": "call_ecb81e42432c4b4ba05c6b8f",
+      "name": "file_read"
+    },
+    {
+      "role": "tool",
+      "content": "{\"content\":\"import { useState } from 'react';\\n\\n/**\\n * Root component for the 3D 8-Ball Pool Game.\\n *\\n * Architecture:\\n *   App\\n *   ├── Scene (R3F Canvas) — to be added in Phase 3\\n *   │   ├── PhysicsWorld — to be added in Phase 4\\n *   │   ├── Table — to be added in Phase 3\\n *   │   ├── Balls — to be added in Phase 3\\n *   │   ├── CueStick — to be added in Phase 6\\n *   │   └── AimLine — to be added in Phase 6\\n *   └── GameUI (HTML overlay) — to be added in Phase 7\\n */\\nfunction App() {\\n  const [ready] = useState(true);\\n\\n  return (\\n    <div\\n      style={{\\n        width: '100vw',\\n        height: '100vh',\\n        background: '#1a1a2e',\\n        display: 'flex',\\n        alignItems: 'center',\\n        justifyContent: 'center',\\n        fontFamily: 'system-ui, -apple-system, sans-serif',\\n      }}\\n    >\\n      {ready ? (\\n        <div style={{ textAlign: 'center', color: '#e0e0e0' }}>\\n          <h1 style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>\\n            🎱 8-Ball Pool\\n          </h1>\\n          <p style={{ color: '#888', fontSize: '0.9rem' }}>\\n            Project scaffolded — components will be added in upcoming phases.\\n          </p>\\n        </div>\\n      ) : null}\\n    </div>\\n  );\\n}\\n\\nexport default App;\",\"end_line\":44,\"start_line\":0,\"total_lines\":45}",
+      "tool_call_id": "call_11c5123b6777449abd6e876c",
+      "name": "file_read"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+        {
+          "id": "call_32661ace5b7c4b358a474064",
+          "input": {
+            "path": "/Users/riven/Github/zcode/examples/pool-game",
+            "pattern": "src/**/*"
+          },
+          "name": "glob",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_746953861c574f59a0104e6b",
+          "input": {
+            "args": [
+              "-c",
+              "cd /Users/riven/Github/zcode/examples/pool-game && find src -type d | sort"
+            ],
+            "command": "bash"
+          },
+          "name": "shell",
+          "type": "tool_use"
+        },
+        {
+          "id": "call_523054084f274b399aef13c7",
+          "input": {
+            "args": [
+              "-c",
+              "cd /Users/riven/Github/zcode/examples/pool-game && cat src/vite-env.d.ts"
+            ],
+            "command": "bash"
+          },
+          "name": "shell",
+          "type": "tool_use"
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "content": "{\"count\":22,\"files\":[\"/Users/riven/Github/zcode/examples/pool-game/src/App.tsx\",\"/Users/riven/Github/zcode/examples/pool-game/src/components\",\"/Users/riven/Github/zcode/examples/pool-game/src/components/.gitkeep\",\"/Users/riven/Github/zcode/examples/pool-game/src/constants\",\"/Users/riven/Github/zcode/examples/pool-game/src/constants/balls.ts\",\"/Users/riven/Github/zcode/examples/pool-game/src/constants/physics.ts\",\"/Users/riven/Github/zcode/examples/pool-game/src/constants/table.ts\",\"/Users/riven/Github/zcode/examples/pool-game/src/game-logic\",\"/Users/riven/Github/zcode/examples/pool-game/src/game-logic/.gitkeep\",\"/Users/riven/Github/zcode/examples/pool-game/src/hooks\",\"/Users/riven/Github/zcode/examples/pool-game/src/hooks/.gitkeep\",\"/Users/riven/Github/zcode/examples/pool-game/src/main.tsx\",\"/Users/riven/Github/zcode/examples/pool-game/src/physics\",\"/Users/riven/Github/zcode/examples/pool-game/src/physics/.gitkeep\",\"/Users/riven/Github/zcode/examples/pool-game/src/store\",\"/Users/riven/Github/zcode/examples/pool-game/src/store/.gitkeep\",\"/Users/riven/Github/zcode/examples/pool-game/src/types\",\"/Users/riven/Github/zcode/examples/pool-game/src/types/index.ts\",\"/Users/riven/Github/zcode/examples/pool-game/src/utils\",\"/Users/riven/Github/zcode/examples/pool-game/src/utils/textures.ts\",\"/Users/riven/Github/zcode/examples/pool-game/src/utils/vector.ts\",\"/Users/riven/Github/zcode/examples/pool-game/src/vite-env.d.ts\"],\"pattern\":\"/Users/riven/Github/zcode/examples/pool-game/src/**/*\"}",
+      "tool_call_id": "call_32661ace5b7c4b358a474064",
+      "name": "glob"
+    },
+    {
+      "role": "tool",
+      "content": "{\"command\":\"bash\",\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"src\\nsrc/components\\nsrc/constants\\nsrc/game-logic\\nsrc/hooks\\nsrc/physics\\nsrc/store\\nsrc/types\\nsrc/utils\\n\",\"success\":true,\"timeout_ms\":30000}",
+      "tool_call_id": "call_746953861c574f59a0104e6b",
+      "name": "shell"
+    },
+    {
+      "role": "tool",
+      "content": "{\"command\":\"bash\",\"exit_code\":0,\"stderr\":\"\",\"stdout\":\"/// <reference types=\\\"vite/client\\\" />\\n\",\"success\":true,\"timeout_ms\":30000}",
+      "tool_call_id": "call_523054084f274b399aef13c7",
+      "name": "shell"
+    },
+    {
+      "role": "assistant",
+      "content": "Phase 1 (T01–T03) is fully implemented. Here's a summary of everything in place:\n\n## Project Structure\n\n```\nexamples/pool-game/\n├── index.html                        ✅ Entry HTML\n├── package.json                      ✅ All deps installed (React 19, Three.js, R3F, cannon-es, Zustand)\n├── tsconfig.json / tsconfig.app.json ✅ Strict TypeScript config\n├── vite.config.ts                    ✅ Vite + React plugin\n└── src/\n    ├── main.tsx                      ✅ React entry point (StrictMode + createRoot)\n    ├── App.tsx                       ✅ Root component with placeholder UI\n    ├── vite-env.d.ts                 ✅ Vite client types\n    ├── types/\n    │   └── index.ts                  ✅ All type definitions\n    ├── constants/\n    │   ├── table.ts                  ✅ Table dimensions, pocket positions, camera defaults\n    │   ├── physics.ts                ✅ Friction, restitution, damping, impulse constants\n    │   └── balls.ts                  ✅ Ball colors, rack positions, group helpers\n    ├── utils/\n    │   ├── vector.ts                 ✅ Vec3 math utilities (14 functions)\n    │   └── textures.ts               ✅ (placeholder)\n    ├── components/                   ✅ Empty dir (.gitkeep)\n    ├── store/                        ✅ Empty dir (.gitkeep)\n    ├── physics/                      ✅ Empty dir (.gitkeep)\n    ├── game-logic/                   ✅ Empty dir (.gitkeep)\n    └── hooks/                        ✅ Empty dir (.gitkeep)\n```\n\n## Type Definitions (`src/types/index.ts`)\n\n| Type | Definition |\n|------|-----------|\n| `BallId` | Union `0 \\| 1 \\| 2 \\| ... \\| 15` |\n| `BallGroup` | `'solids' \\| 'stripes' \\| null` |\n| `GamePhase` | `'IDLE' \\| 'AIMING' \\| 'POWER' \\| 'SIMULATING' \\| 'EVALUATING' \\| 'GAME_OVER'` |\n| `Player` | `1 \\| 2` |\n| `FoulType` | `'SCRATCH' \\| 'NO_RAIL_CONTACT' \\| 'WRONG_BALL_FIRST' \\| 'NO_BALL_HIT' \\| 'EIGHT_EARLY' \\| null` |\n| `Vec3Tuple` | `[number, number, number]` |\n| `BallState` | `{ id, position, velocity, pocketed }` |\n| `ShotResult` | `{ pocketed, firstContact, cueBallFinal, foul }` |\n| `ShotSnapshot` | `{ ballPositions, state }` (for undo) |\n| `GameState` | Full game state with 10 fields |\n| `AimState` | `{ direction, power, isCharging, cameraMode }` |\n\nPlus helper functions: `getBallGroup()`, `isStripe()`, `isSolid()`, and constants `ALL_BALL_IDS`, `SOLIDS`, `STRIPES`, `EIGHT`.\n\n## Verification\n\n- ✅ **`npm run build`** succeeds — TypeScript compiles cleanly, Vite produces a 191KB bundle\n- ✅ **No TypeScript errors** — all types are well-formed with strict mode enabled\n- ✅ **All 8 source directories** created (`types/`, `constants/`, `store/`, `components/`, `physics/`, `game-logic/`, `hooks/`, `utils/`)"
+    }
+  ],
+  "result": "Phase 1 (T01–T03) is fully implemented. Here's a summary of everything in place:\n\n## Project Structure\n\n```\nexamples/pool-game/\n├── index.html                        ✅ Entry HTML\n├── package.json                      ✅ All deps installed (React 19, Three.js, R3F, cannon-es, Zustand)\n├── tsconfig.json / tsconfig.app.json ✅ Strict TypeScript config\n├── vite.config.ts                    ✅ Vite + React plugin\n└── src/\n    ├── main.tsx                      ✅ React entry point (StrictMode + createRoot)\n    ├── App.tsx                       ✅ Root component with placeholder UI\n    ├── vite-env.d.ts                 ✅ Vite client types\n    ├── types/\n    │   └── index.ts                  ✅ All type definitions\n    ├── constants/\n    │   ├── table.ts                  ✅ Table dimensions, pocket positions, camera defaults\n    │   ├── physics.ts                ✅ Friction, restitution, damping, impulse constants\n    │   └── balls.ts                  ✅ Ball colors, rack positions, group helpers\n    ├── utils/\n    │   ├── vector.ts                 ✅ Vec3 math utilities (14 functions)\n    │   └── textures.ts               ✅ (placeholder)\n    ├── components/                   ✅ Empty dir (.gitkeep)\n    ├── store/                        ✅ Empty dir (.gitkeep)\n    ├── physics/                      ✅ Empty dir (.gitkeep)\n    ├── game-logic/                   ✅ Empty dir (.gitkeep)\n    └── hooks/                        ✅ Empty dir (.gitkeep)\n```\n\n## Type Definitions (`src/types/index.ts`)\n\n| Type | Definition |\n|------|-----------|\n| `BallId` | Union `0 \\| 1 \\| 2 \\| ... \\| 15` |\n| `BallGroup` | `'solids' \\| 'stripes' \\| null` |\n| `GamePhase` | `'IDLE' \\| 'AIMING' \\| 'POWER' \\| 'SIMULATING' \\| 'EVALUATING' \\| 'GAME_OVER'` |\n| `Player` | `1 \\| 2` |\n| `FoulType` | `'SCRATCH' \\| 'NO_RAIL_CONTACT' \\| 'WRONG_BALL_FIRST' \\| 'NO_BALL_HIT' \\| 'EIGHT_EARLY' \\| null` |\n| `Vec3Tuple` | `[number, number, number]` |\n| `BallState` | `{ id, position, velocity, pocketed }` |\n| `ShotResult` | `{ pocketed, firstContact, cueBallFinal, foul }` |\n| `ShotSnapshot` | `{ ballPositions, state }` (for undo) |\n| `GameState` | Full game state with 10 fields |\n| `AimState` | `{ direction, power, isCharging, cameraMode }` |\n\nPlus helper functions: `getBallGroup()`, `isStripe()`, `isSolid()`, and constants `ALL_BALL_IDS`, `SOLIDS`, `STRIPES`, `EIGHT`.\n\n## Verification\n\n- ✅ **`npm run build`** succeeds — TypeScript compiles cleanly, Vite produces a 191KB bundle\n- ✅ **No TypeScript errors** — all types are well-formed with strict mode enabled\n- ✅ **All 8 source directories** created (`types/`, `constants/`, `store/`, `components/`, `physics/`, `game-logic/`, `hooks/`, `utils/`)",
+  "error": null
+}

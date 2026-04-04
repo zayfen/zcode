@@ -2,10 +2,19 @@
 //!
 //! This module defines the tool trait and registry for managing and executing tools.
 
+pub mod file;
+pub mod glob;
+pub mod search;
+pub mod shell;
+pub mod ast_tools;
+
+pub use file::{FileEditTool, FileReadTool, FileWriteTool};
+pub use glob::GlobTool;
+pub use search::SearchTool;
+pub use shell::ShellTool;
+
 use serde_json::Value;
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 use crate::error::{ZcodeError, Result};
 
@@ -20,23 +29,29 @@ pub trait Tool: Send + Sync {
     /// Get the tool description
     fn description(&self) -> &str;
 
-    /// Get the tool's JSON schema for input parameters
-    fn input_schema(&self) -> Value {
+    /// Execute the tool with the given input
+    fn execute(&self, input: Value) -> ToolResult<Value>;
+
+    /// Return the Anthropic-format tool schema for this tool.
+    ///
+    /// Override this to provide parameter schemas; the default produces a
+    /// generic schema that accepts any JSON object.
+    fn anthropic_schema(&self) -> Value {
         serde_json::json!({
-            "type": "object",
-            "properties": {},
-            "required": []
+            "name": self.name(),
+            "description": self.description(),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "input": {
+                        "type": "string",
+                        "description": "Tool input (JSON string or plain string)"
+                    }
+                }
+            }
         })
     }
-
-    /// Execute the tool with the given input
-    fn execute(&self, input: Value) -> Pin<Box<dyn Future<Output = ToolResult<Value>> + Send + '_>>;
 }
-
-pub mod file_ops;
-pub mod search;
-pub use file_ops::{FileReadTool, FileWriteTool, ShellExecTool, FileEditTool};
-pub use search::{SearchTool, GlobTool};
 
 /// Registry for managing and executing tools
 pub struct ToolRegistry {
@@ -63,22 +78,12 @@ impl ToolRegistry {
     }
 
     /// Execute a tool by name
-    pub async fn execute(&self, name: &str, input: Value) -> ToolResult<Value> {
+    pub fn execute(&self, name: &str, input: Value) -> ToolResult<Value> {
         let tool = self.tools.get(name).ok_or_else(|| ZcodeError::ToolNotFound {
             name: name.to_string(),
         })?;
 
-        tool.execute(input).await
-    }
-
-    /// Register all built-in tools
-    pub fn register_built_in_tools(&mut self) {
-        self.register(file_ops::FileReadTool);
-        self.register(file_ops::FileWriteTool);
-        self.register(file_ops::ShellExecTool);
-        self.register(file_ops::FileEditTool);
-        self.register(search::SearchTool);
-        self.register(search::GlobTool);
+        tool.execute(input)
     }
 
     /// List all registered tools
@@ -86,18 +91,9 @@ impl ToolRegistry {
         self.tools.keys().map(|s| s.as_str()).collect()
     }
 
-    /// Get all tool definitions as JSON (name, description, schema)
-    pub fn tool_definitions(&self) -> Vec<Value> {
-        self.tools
-            .values()
-            .map(|tool| {
-                serde_json::json!({
-                    "name": tool.name(),
-                    "description": tool.description(),
-                    "parameters": tool.input_schema(),
-                })
-            })
-            .collect()
+    /// Return Anthropic-format schema array for all registered tools.
+    pub fn anthropic_schemas(&self) -> Vec<Value> {
+        self.tools.values().map(|t| t.anthropic_schema()).collect()
     }
 }
 
@@ -107,9 +103,31 @@ impl Default for ToolRegistry {
     }
 }
 
+/// Register all built-in Phase 2 tools into a registry.
+///
+/// This populates the registry with: `file_read`, `file_write`, `file_edit`,
+/// `search`, `shell`, `glob`.
+///
+/// AST tools (`ast_search`, `ast_edit`) require a `LanguageRegistry` and must be
+/// registered separately via `AstSearchTool::new(registry)`.
+pub fn register_default_tools(registry: &mut ToolRegistry) {
+    registry.register(FileReadTool);
+    registry.register(FileWriteTool);
+    registry.register(FileEditTool);
+    registry.register(SearchTool);
+    registry.register(ShellTool);
+    registry.register(GlobTool);
+}
+
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ============================================================
+    // Test tool implementations
+    // ============================================================
 
     struct TestTool;
 
@@ -122,57 +140,426 @@ mod tests {
             "A test tool"
         }
 
-        fn execute(&self, _input: Value) -> Pin<Box<dyn Future<Output = ToolResult<Value>> + Send + '_>> {
-            Box::pin(async { Ok(Value::String("test result".to_string())) })
+        fn execute(&self, _input: Value) -> ToolResult<Value> {
+            Ok(Value::String("test result".to_string()))
+        }
+    }
+
+    struct EchoTool;
+
+    impl Tool for EchoTool {
+        fn name(&self) -> &str {
+            "echo"
+        }
+
+        fn description(&self) -> &str {
+            "Echoes the input"
+        }
+
+        fn execute(&self, input: Value) -> ToolResult<Value> {
+            Ok(input)
+        }
+    }
+
+    struct FailingTool;
+
+    impl Tool for FailingTool {
+        fn name(&self) -> &str {
+            "failing"
+        }
+
+        fn description(&self) -> &str {
+            "A tool that always fails"
+        }
+
+        fn execute(&self, _input: Value) -> ToolResult<Value> {
+            Err(ZcodeError::ToolExecutionFailed {
+                name: "failing".to_string(),
+                message: "intentional failure".to_string(),
+            })
+        }
+    }
+
+    struct JsonTool;
+
+    impl Tool for JsonTool {
+        fn name(&self) -> &str {
+            "json"
+        }
+
+        fn description(&self) -> &str {
+            "Returns a JSON object"
+        }
+
+        fn execute(&self, input: Value) -> ToolResult<Value> {
+            let mut result = serde_json::Map::new();
+            result.insert("input".to_string(), input);
+            result.insert("status".to_string(), Value::String("ok".to_string()));
+            Ok(Value::Object(result))
+        }
+    }
+
+    // ============================================================
+    // ToolRegistry creation tests
+    // ============================================================
+
+    #[test]
+    fn test_registry_new() {
+        let registry = ToolRegistry::new();
+        assert!(registry.list().is_empty());
+    }
+
+    #[test]
+    fn test_registry_default() {
+        let registry = ToolRegistry::default();
+        assert!(registry.list().is_empty());
+    }
+
+    // ============================================================
+    // ToolRegistry register tests
+    // ============================================================
+
+    #[test]
+    fn test_registry_register_single_tool() {
+        let mut registry = ToolRegistry::new();
+        registry.register(TestTool);
+
+        assert_eq!(registry.list().len(), 1);
+        assert!(registry.list().contains(&"test"));
+    }
+
+    #[test]
+    fn test_registry_register_multiple_tools() {
+        let mut registry = ToolRegistry::new();
+        registry.register(TestTool);
+        registry.register(EchoTool);
+        registry.register(JsonTool);
+
+        assert_eq!(registry.list().len(), 3);
+        assert!(registry.list().contains(&"test"));
+        assert!(registry.list().contains(&"echo"));
+        assert!(registry.list().contains(&"json"));
+    }
+
+    #[test]
+    fn test_registry_register_overwrites_same_name() {
+        let mut registry = ToolRegistry::new();
+        registry.register(TestTool);
+
+        // Register another tool with same name
+        struct AnotherTestTool;
+        impl Tool for AnotherTestTool {
+            fn name(&self) -> &str { "test" }
+            fn description(&self) -> &str { "Another test tool" }
+            fn execute(&self, _input: Value) -> ToolResult<Value> {
+                Ok(Value::String("another result".to_string()))
+            }
+        }
+        registry.register(AnotherTestTool);
+
+        assert_eq!(registry.list().len(), 1);
+        let result = registry.execute("test", Value::Null).unwrap();
+        assert_eq!(result, Value::String("another result".to_string()));
+    }
+
+    // ============================================================
+    // ToolRegistry get tests
+    // ============================================================
+
+    #[test]
+    fn test_registry_get_existing_tool() {
+        let mut registry = ToolRegistry::new();
+        registry.register(TestTool);
+
+        let tool = registry.get("test");
+        assert!(tool.is_some());
+        assert_eq!(tool.unwrap().name(), "test");
+    }
+
+    #[test]
+    fn test_registry_get_nonexistent_tool() {
+        let registry = ToolRegistry::new();
+
+        let tool = registry.get("nonexistent");
+        assert!(tool.is_none());
+    }
+
+    #[test]
+    fn test_registry_get_returns_arc() {
+        let mut registry = ToolRegistry::new();
+        registry.register(TestTool);
+
+        let tool1 = registry.get("test").unwrap();
+        let tool2 = registry.get("test").unwrap();
+
+        // Both should point to the same tool
+        assert_eq!(tool1.name(), tool2.name());
+    }
+
+    // ============================================================
+    // ToolRegistry execute tests
+    // ============================================================
+
+    #[test]
+    fn test_registry_execute_success() {
+        let mut registry = ToolRegistry::new();
+        registry.register(TestTool);
+
+        let result = registry.execute("test", Value::Null);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Value::String("test result".to_string()));
+    }
+
+    #[test]
+    fn test_registry_execute_unknown_tool() {
+        let registry = ToolRegistry::new();
+
+        let result = registry.execute("unknown", Value::Null);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ZcodeError::ToolNotFound { name } => {
+                assert_eq!(name, "unknown");
+            }
+            _ => panic!("Expected ToolNotFound error"),
         }
     }
 
     #[test]
-    fn test_registry_register() {
+    fn test_registry_execute_echo_tool() {
         let mut registry = ToolRegistry::new();
-        registry.register(TestTool);
+        registry.register(EchoTool);
 
-        assert!(registry.get("test").is_some());
-        assert!(registry.get("nonexistent").is_none());
-    }
-
-    #[tokio::test]
-    async fn test_registry_execute() {
-        let mut registry = ToolRegistry::new();
-        registry.register(TestTool);
-
-        let result = registry.execute("test", Value::Null).await;
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Value::String("test result".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_registry_unknown_tool() {
-        let registry = ToolRegistry::new();
-
-        let result = registry.execute("unknown", Value::Null).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_registry_execute_async() {
-        let mut registry = ToolRegistry::new();
-        registry.register(TestTool);
-
-        let result = registry.execute("test", Value::Null).await;
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), Value::String("test result".to_string()));
+        let input = Value::String("hello".to_string());
+        let result = registry.execute("echo", input.clone()).unwrap();
+        assert_eq!(result, input);
     }
 
     #[test]
-    fn test_register_built_in_tools() {
+    fn test_registry_execute_failing_tool() {
         let mut registry = ToolRegistry::new();
-        registry.register_built_in_tools();
+        registry.register(FailingTool);
 
-        let tools = registry.list();
-        assert!(tools.contains(&"file_read"));
-        assert!(tools.contains(&"file_write"));
-        assert!(tools.contains(&"shell_exec"));
-        assert_eq!(tools.len(), 6);
+        let result = registry.execute("failing", Value::Null);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ZcodeError::ToolExecutionFailed { name, message } => {
+                assert_eq!(name, "failing");
+                assert_eq!(message, "intentional failure");
+            }
+            _ => panic!("Expected ToolExecutionFailed error"),
+        }
+    }
+
+    #[test]
+    fn test_registry_execute_json_tool() {
+        let mut registry = ToolRegistry::new();
+        registry.register(JsonTool);
+
+        let input = Value::String("test input".to_string());
+        let result = registry.execute("json", input).unwrap();
+
+        assert!(result.is_object());
+        let obj = result.as_object().unwrap();
+        assert!(obj.contains_key("input"));
+        assert!(obj.contains_key("status"));
+        assert_eq!(obj.get("status").unwrap(), &Value::String("ok".to_string()));
+    }
+
+    #[test]
+    fn test_registry_execute_with_null_input() {
+        let mut registry = ToolRegistry::new();
+        registry.register(EchoTool);
+
+        let result = registry.execute("echo", Value::Null).unwrap();
+        assert_eq!(result, Value::Null);
+    }
+
+    #[test]
+    fn test_registry_execute_with_complex_input() {
+        let mut registry = ToolRegistry::new();
+        registry.register(EchoTool);
+
+        let input = serde_json::json!({
+            "key": "value",
+            "nested": {
+                "array": [1, 2, 3]
+            }
+        });
+
+        let result = registry.execute("echo", input.clone()).unwrap();
+        assert_eq!(result, input);
+    }
+
+    // ============================================================
+    // ToolRegistry list tests
+    // ============================================================
+
+    #[test]
+    fn test_registry_list_empty() {
+        let registry = ToolRegistry::new();
+        assert!(registry.list().is_empty());
+    }
+
+    #[test]
+    fn test_registry_list_single_tool() {
+        let mut registry = ToolRegistry::new();
+        registry.register(TestTool);
+
+        let list = registry.list();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0], "test");
+    }
+
+    #[test]
+    fn test_registry_list_multiple_tools() {
+        let mut registry = ToolRegistry::new();
+        registry.register(TestTool);
+        registry.register(EchoTool);
+        registry.register(JsonTool);
+
+        let list = registry.list();
+        assert_eq!(list.len(), 3);
+
+        // Check all tools are in the list
+        let list_set: std::collections::HashSet<&str> = list.into_iter().collect();
+        assert!(list_set.contains("test"));
+        assert!(list_set.contains("echo"));
+        assert!(list_set.contains("json"));
+    }
+
+    // ============================================================
+    // Tool trait tests
+    // ============================================================
+
+    #[test]
+    fn test_tool_name() {
+        let tool = TestTool;
+        assert_eq!(tool.name(), "test");
+    }
+
+    #[test]
+    fn test_tool_description() {
+        let tool = TestTool;
+        assert_eq!(tool.description(), "A test tool");
+    }
+
+    #[test]
+    fn test_tool_execute_returns_value() {
+        let tool = TestTool;
+        let result = tool.execute(Value::Null).unwrap();
+        assert_eq!(result, Value::String("test result".to_string()));
+    }
+
+    // ============================================================
+    // ToolResult type tests
+    // ============================================================
+
+    #[test]
+    fn test_tool_result_ok() {
+        let result: ToolResult<Value> = Ok(Value::Bool(true));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_tool_result_err() {
+        let result: ToolResult<Value> = Err(ZcodeError::InvalidToolInput("test".to_string()));
+        assert!(result.is_err());
+    }
+
+    // ============================================================
+    // Thread safety tests
+    // ============================================================
+
+    #[test]
+    fn test_registry_thread_safety() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let mut registry = ToolRegistry::new();
+        registry.register(TestTool);
+        let registry = Arc::new(registry);
+
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let registry_clone = Arc::clone(&registry);
+                thread::spawn(move || {
+                    let result = registry_clone.execute("test", Value::Null);
+                    assert!(result.is_ok());
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn test_tool_arc_clone() {
+        let mut registry = ToolRegistry::new();
+        registry.register(TestTool);
+
+        let tool1 = registry.get("test").unwrap();
+        let tool2 = tool1.clone();
+
+        assert_eq!(tool1.name(), tool2.name());
+    }
+
+    // ============================================================
+    // Edge case tests
+    // ============================================================
+
+    #[test]
+    fn test_registry_execute_empty_name() {
+        let registry = ToolRegistry::new();
+
+        let result = registry.execute("", Value::Null);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_tool_with_empty_name() {
+        struct EmptyNameTool;
+        impl Tool for EmptyNameTool {
+            fn name(&self) -> &str { "" }
+            fn description(&self) -> &str { "Tool with empty name" }
+            fn execute(&self, _input: Value) -> ToolResult<Value> {
+                Ok(Value::Null)
+            }
+        }
+
+        let mut registry = ToolRegistry::new();
+        registry.register(EmptyNameTool);
+
+        let result = registry.execute("", Value::Null);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_tool_with_empty_description() {
+        struct EmptyDescTool;
+        impl Tool for EmptyDescTool {
+            fn name(&self) -> &str { "empty_desc" }
+            fn description(&self) -> &str { "" }
+            fn execute(&self, _input: Value) -> ToolResult<Value> {
+                Ok(Value::Null)
+            }
+        }
+
+        let tool = EmptyDescTool;
+        assert_eq!(tool.description(), "");
+    }
+
+    #[test]
+    fn test_tool_execute_with_large_input() {
+        let mut registry = ToolRegistry::new();
+        registry.register(EchoTool);
+
+        // Create a large JSON input
+        let large_array: Vec<Value> = (0..1000).map(Value::from).collect();
+        let input = Value::Array(large_array);
+
+        let result = registry.execute("echo", input.clone()).unwrap();
+        assert_eq!(result, input);
     }
 }

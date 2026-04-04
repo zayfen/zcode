@@ -1,0 +1,11 @@
+{
+  "id": "69c8e11d",
+  "task": "Implement Phase 7 (T21-T23): UI overlay. src/components/GameUI.tsx: positioned HTML overlay (absolute, pointer-events-none on container, auto on interactive elements). Player indicator showing current player and assigned group. Pocketed balls display as small colored circles. Foul toast notification (appears for 3 seconds on foul). Game over modal with winner text and Play Again button (calls resetGame). Ball-in-hand mode: after foul sets ballInHand, clicking on table surface places cue ball at click position, constrained to playing bounds. T key toggles cameraMode between orbit and topdown. Update Scene to switch between OrbitControls and orthographic top-down camera based on aimStore.cameraMode.",
+  "status": "failed",
+  "created_at": 1774772509,
+  "updated_at": 1774772685,
+  "iteration": 0,
+  "history": [],
+  "result": null,
+  "error": "LLM API error: Anthropic request failed: error sending request for url (https://open.bigmodel.cn/api/anthropic/v1/messages)"
+}

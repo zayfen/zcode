@@ -45,6 +45,18 @@ pub enum Command {
         max_iterations: usize,
     },
 
+    /// Feed raw requirement documents to generate/update the docs/ directory
+    Feed {
+        /// Path to a raw PRD file or directory of raw PRD files
+        path: String,
+        /// Maximum number of LLM ↔ tool iterations (default: 50)
+        #[arg(long, short = 'n', default_value = "50")]
+        max_iterations: usize,
+        /// Start an Investigator agent to research missing contexts before generating docs
+        #[arg(long)]
+        investigate: bool,
+    },
+
     /// Start interactive chat mode (default)
     Chat,
 
@@ -85,6 +97,8 @@ pub enum TaskAction {
     },
     /// Delete all completed, failed or interrupted tasks
     Clean,
+    /// Parse and sync tasks from docs/tasks/*.md
+    Sync,
 }
 
 #[cfg(test)]
@@ -189,6 +203,36 @@ mod tests {
             assert!(task.contains("你好"));
         } else {
             panic!("Expected Run command");
+        }
+    }
+
+    // ============================================================
+    // Command parsing tests - Feed
+    // ============================================================
+
+    #[test]
+    fn test_feed_command_basic() {
+        let args = Args::try_parse_from(["zcode", "feed", "./raw_req.md"]);
+        assert!(args.is_ok());
+        let args = args.unwrap();
+        if let Some(Command::Feed { path, max_iterations, .. }) = args.command {
+            assert_eq!(path, "./raw_req.md");
+            assert_eq!(max_iterations, 50);
+        } else {
+            panic!("Expected Feed command");
+        }
+    }
+
+    #[test]
+    fn test_feed_command_custom_iterations() {
+        let args = Args::try_parse_from(["zcode", "feed", "./raw_req.md", "-n", "100"]);
+        assert!(args.is_ok());
+        let args = args.unwrap();
+        if let Some(Command::Feed { path, max_iterations, .. }) = args.command {
+            assert_eq!(path, "./raw_req.md");
+            assert_eq!(max_iterations, 100);
+        } else {
+            panic!("Expected Feed command");
         }
     }
 

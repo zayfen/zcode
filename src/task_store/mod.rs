@@ -13,7 +13,8 @@
 //!     └── ...
 //! ```
 
-use crate::agent::loop_exec::ConversationMessage;
+use crate::agent::graph::state::DefaultState;
+use crate::agent::types::Task;
 use crate::error::{Result, ZcodeError};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -60,12 +61,8 @@ pub struct TaskRecord {
     pub created_at: u64,
     /// Unix timestamp of last update (seconds).
     pub updated_at: u64,
-    /// Number of agent loop iterations completed so far.
-    pub iteration: usize,
-    /// Full conversation history — restored on resume.
-    pub history: Vec<ConversationMessage>,
-    /// Final answer produced when status = Completed.
-    pub result: Option<String>,
+    /// Graph engine state, storing messages, iteration, result, etc.
+    pub state: DefaultState,
     /// Error message when status = Failed.
     pub error: Option<String>,
 }
@@ -73,16 +70,15 @@ pub struct TaskRecord {
 impl TaskRecord {
     /// Create a new record for a task that hasn't started yet.
     pub fn new(id: String, task: impl Into<String>) -> Self {
+        let task_str = task.into();
         let now = now_secs();
         Self {
             id,
-            task: task.into(),
+            task: task_str.clone(),
             status: TaskStatus::Running,
             created_at: now,
             updated_at: now,
-            iteration: 0,
-            history: vec![],
-            result: None,
+            state: DefaultState::new(Task::new(task_str)),
             error: None,
         }
     }
@@ -96,7 +92,7 @@ impl TaskRecord {
         };
         format!(
             "[{}] {} | {} | iter={}",
-            self.id, self.status, task_snippet, self.iteration
+            self.id, self.status, task_snippet, self.state.iteration
         )
     }
 }
@@ -250,12 +246,12 @@ mod tests {
     fn test_create_and_save_and_load() {
         let (_dir, store) = store();
         let mut record = store.create("add error handling");
-        record.iteration = 3;
+        record.state.iteration = 3;
         store.save(&mut record).unwrap();
 
         let loaded = store.load(&record.id).unwrap();
         assert_eq!(loaded.task, "add error handling");
-        assert_eq!(loaded.iteration, 3);
+        assert_eq!(loaded.state.iteration, 3);
         assert_eq!(loaded.status, TaskStatus::Running);
     }
 
@@ -302,7 +298,7 @@ mod tests {
 
         let mut r2 = store.create("done task");
         r2.status = TaskStatus::Completed;
-        r2.result = Some("done".into());
+        // mock a result via state if needed, not strictly necessary for this test
         store.save(&mut r2).unwrap();
 
         let mut r3 = store.create("failed task");

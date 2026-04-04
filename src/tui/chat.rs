@@ -3,10 +3,10 @@
 //! This module provides a chat interface with input and message display.
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Rect, Alignment},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, BorderType, Paragraph, Wrap},
     Frame,
 };
 
@@ -122,6 +122,16 @@ impl ChatInterface {
         self.cursor_pos += c.len_utf8();
     }
 
+    /// Scroll chat up
+    pub fn scroll_up(&mut self) {
+        self.scroll = self.scroll.saturating_sub(3);
+    }
+
+    /// Scroll chat down
+    pub fn scroll_down(&mut self) {
+        self.scroll = self.scroll.saturating_add(3);
+    }
+
     /// Number of lines in the current input (min 1)
     pub fn input_line_count(&self) -> u16 {
         let count = self.input.split('\n').count().max(1);
@@ -156,37 +166,131 @@ impl ChatInterface {
     }
 
     /// Render the chat interface and position the cursor in the input area
-    pub fn render(&self, frame: &mut Frame) {
+    pub fn render(&self, frame: &mut Frame, agent_statuses: &[(String, String)], active_skills: &[String], active_mcps: &[String]) {
         let area = frame.size();
 
         // Dynamic input height: 2 border + lines (capped at 8)
         let input_lines = self.input_line_count().min(8);
         let input_height = input_lines + 2; // +2 for borders
 
-        // Create layout: messages on top, input at bottom
-        let chunks = Layout::default()
+        // Create layout: Main Content, Input, Status Bar
+        let root_chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(3), Constraint::Length(input_height)])
+            .constraints([
+                Constraint::Min(3),               // Main area
+                Constraint::Length(input_height), // Input area
+                Constraint::Length(1),            // Bottom hotkeys
+            ])
             .split(area);
 
-        // Render messages area
-        let messages_widget = self.render_messages(chunks[0]);
-        frame.render_widget(messages_widget, chunks[0]);
+        // Split Main area into Chat and Sidebar
+        let main_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(75), // Chat takes 75%
+                Constraint::Percentage(25), // Context sidebar takes 25%
+            ])
+            .split(root_chunks[0]);
+
+        // Render messages area (Chat)
+        let messages_widget = self.render_messages(main_chunks[0]);
+        frame.render_widget(messages_widget, main_chunks[0]);
+
+        // Render Context Sidebar
+        let sidebar_widget = self.render_sidebar(agent_statuses, active_skills, active_mcps);
+        frame.render_widget(sidebar_widget, main_chunks[1]);
 
         // Render input area
-        let input_widget = self.render_input(chunks[1]);
-        frame.render_widget(input_widget, chunks[1]);
+        let input_widget = self.render_input(root_chunks[1]);
+        frame.render_widget(input_widget, root_chunks[1]);
+
+        // Render Bottom Hotkeys Status Bar
+        let status_text = Line::from(vec![
+            Span::styled(" zcode ", Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::raw(" | "),
+            Span::styled("Enter:", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(" Send | "),
+            Span::styled("Alt+Enter / Ctrl+J:", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(" Newline | "),
+            Span::styled("↑/↓:", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(" Scroll | "),
+            Span::styled("Esc:", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(" Quit"),
+        ]);
+        frame.render_widget(Paragraph::new(status_text).style(Style::default().fg(Color::DarkGray)), root_chunks[2]);
 
         // Position the cursor inside the input box
-        // chunks[1]: x=left border, y=top border; inner starts at +1
         let (cur_row, cur_col) = self.cursor_row_col();
-        // Clamp to visible area
-        let max_visible_row = input_height.saturating_sub(3); // -2 border -1 for 0-index
+        let max_visible_row = input_height.saturating_sub(3);
         let visible_row = cur_row.min(max_visible_row);
         frame.set_cursor(
-            chunks[1].x + 1 + cur_col,   // +1 for left border
-            chunks[1].y + 1 + visible_row, // +1 for top border
+            root_chunks[1].x + 1 + cur_col,
+            root_chunks[1].y + 1 + visible_row,
         );
+    }
+
+    /// Render the context sidebar
+    fn render_sidebar<'a>(&self, agent_statuses: &'a [(String, String)], active_skills: &'a [String], active_mcps: &'a [String]) -> Paragraph<'a> {
+        let mut lines = Vec::new();
+
+        // 1. Agent Statuses
+        lines.push(Line::from(vec![
+            Span::styled("🤖 AI Agents ", Style::default().add_modifier(Modifier::BOLD).fg(Color::White).bg(Color::Rgb(60,60,60))),
+        ]));
+        for (name, status) in agent_statuses {
+            let status_color = match status.as_str() {
+                "Idle" => Color::DarkGray,
+                s if s.starts_with("Thinking") => Color::Yellow,
+                _ => Color::Red,
+            };
+            lines.push(Line::from(vec![
+                Span::raw("   "),
+                // Fixed-width formatting helps align the statues
+                Span::styled(format!("{:<15}", name), Style::default().fg(Color::White)),
+                Span::styled(format!("⦾ {}", status), Style::default().fg(status_color)),
+            ]));
+        }
+        lines.push(Line::from(""));
+
+        // 2. Active MCPs
+        lines.push(Line::from(vec![
+            Span::styled(format!(" 🔌 MCP Servers ({}) ", active_mcps.len()), Style::default().add_modifier(Modifier::BOLD).fg(Color::White).bg(Color::Rgb(60,60,60))),
+        ]));
+        if active_mcps.is_empty() {
+            lines.push(Line::from(Span::styled("   No MCPs enabled", Style::default().fg(Color::DarkGray))));
+        } else {
+            for mcp in active_mcps {
+                lines.push(Line::from(vec![
+                    Span::raw("   • "),
+                    Span::styled(mcp.clone(), Style::default().fg(Color::Cyan)),
+                ]));
+            }
+        }
+        lines.push(Line::from(""));
+
+        // 3. Active Skills
+        lines.push(Line::from(vec![
+            Span::styled(format!(" 📚 Active Skills ({}) ", active_skills.len()), Style::default().add_modifier(Modifier::BOLD).fg(Color::White).bg(Color::Rgb(60,60,60))),
+        ]));
+        if active_skills.is_empty() {
+            lines.push(Line::from(Span::styled("   No Skills attached", Style::default().fg(Color::DarkGray))));
+        } else {
+            for skill in active_skills {
+                lines.push(Line::from(vec![
+                    Span::raw("   • "),
+                    Span::styled(skill.clone(), Style::default().fg(Color::Green)),
+                ]));
+            }
+        }
+
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(Color::DarkGray))
+            )
+            .wrap(Wrap { trim: false })
     }
 
     /// Render the messages area
@@ -195,51 +299,75 @@ impl ChatInterface {
 
         for message in &self.messages {
             let (style, prefix) = match message.role.as_str() {
-                "user" => (Style::default().fg(Color::Cyan), "You: "),
-                "assistant" => (Style::default().fg(Color::Green), "Assistant: "),
-                "system" => (Style::default().fg(Color::Yellow), "System: "),
+                "user" => (Style::default().fg(Color::Cyan), "👤 You     "),
+                "assistant" => (Style::default().fg(Color::Magenta), "🤖 zcode   "),
+                "system" => (Style::default().fg(Color::DarkGray),   "⚙ System  "),
                 _ => (Style::default(), ""),
             };
 
-            // Word wrap the content
-            let max_width = area.width.saturating_sub(2) as usize;
-            let wrapped = textwrap::wrap(&message.content, max_width);
+            // Calculate indentation manually for word wrapping if we wanted, 
+            // but textwrap can do initial_indent and subsequent_indent!
+            let max_width = area.width.saturating_sub(4) as usize; // Provide breathing room
+            
+            let options = textwrap::Options::new(max_width)
+                .initial_indent(prefix)
+                .subsequent_indent("           "); // Align with prefix length
+
+            let wrapped = textwrap::wrap(&message.content, options);
 
             for (i, line) in wrapped.iter().enumerate() {
                 if i == 0 {
-                    lines.push(Line::from(vec![
-                        Span::styled(prefix, style.add_modifier(Modifier::BOLD)),
-                        Span::styled(line.to_string(), style),
-                    ]));
-                } else {
-                    lines.push(Line::from(Span::styled(line.to_string(), style)));
+                    // First line already has the prefix built-in by textwrap, but we want to colorize the prefix distinctly!
+                    // Wait, textwrap injected the prefix. We must strip it or recreate it for coloring.
+                    // Easier: use textwrap WITHOUT indent, and just handle it manually.
                 }
             }
-            // Add a blank line between messages for readability
+
+            // Let's do manual indent wrap for coloring precision:
+            let content_width = area.width.saturating_sub(14) as usize; // width - prefix space
+            let wrapped_lines = textwrap::wrap(&message.content, content_width);
+
+            for (i, line) in wrapped_lines.iter().enumerate() {
+                if i == 0 {
+                    lines.push(Line::from(vec![
+                        Span::styled(prefix, style.add_modifier(Modifier::BOLD)),
+                        Span::styled(line.to_string(), Style::default()), // Standard text color
+                    ]));
+                } else {
+                    lines.push(Line::from(vec![
+                        Span::raw("           "), // Match prefix width
+                        Span::styled(line.to_string(), Style::default()),
+                    ]));
+                }
+            }
+            // Add a blank line between messages
             lines.push(Line::from(""));
         }
 
         if lines.is_empty() {
-            lines.push(Line::from(Span::styled(
-                "No messages yet. Start typing to chat!",
-                Style::default().fg(Color::DarkGray),
-            )));
+            let welcome = vec![
+                Line::from(Span::styled("╭────────────────────────╮", Style::default().fg(Color::DarkGray))),
+                Line::from(Span::styled("│ Welcome to zcode agent │", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+                Line::from(Span::styled("╰────────────────────────╯", Style::default().fg(Color::DarkGray))),
+                Line::from(""),
+                Line::from(Span::styled("Start typing a task to interact.", Style::default().fg(Color::DarkGray))),
+            ];
+            lines.extend(welcome);
         }
 
+        // We use Block::default() implicitly with NO borders, achieving the edge-to-edge look!
         Paragraph::new(Text::from(lines))
-            .block(Block::default().borders(Borders::ALL).title("Chat"))
             .scroll((self.scroll, 0))
     }
 
-    /// Render the input area — supports multi-line (\n in input)
+    /// Render the input area
     fn render_input(&self, _area: Rect) -> Paragraph<'_> {
         let input_text = if self.input.is_empty() {
             Text::from(Span::styled(
-                "Type a message... (Enter: send, Alt+Enter: newline, ←→: move cursor)",
+                "Type a message...",
                 Style::default().fg(Color::DarkGray),
             ))
         } else {
-            // Render each line of the input separately
             let lines: Vec<Line<'_>> = self
                 .input
                 .split('\n')
@@ -251,8 +379,8 @@ impl ChatInterface {
         Paragraph::new(input_text).block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("Input  [Enter: send | Alt+Enter / Ctrl+J: newline | ←→: cursor]")
-                .style(Style::default()),
+                .border_type(BorderType::Rounded) // Claude Code aesthetics
+                .border_style(Style::default().fg(if self.input.is_empty() { Color::DarkGray } else { Color::Cyan }))
         )
     }
 }
@@ -559,6 +687,27 @@ mod tests {
         let mut chat = ChatInterface::new();
         chat.scroll = 10;
         assert_eq!(chat.scroll, 10);
+    }
+
+    #[test]
+    fn test_chat_interface_scroll_down() {
+        let mut chat = ChatInterface::new();
+        chat.scroll_down();
+        assert_eq!(chat.scroll, 3);
+        chat.scroll_down();
+        assert_eq!(chat.scroll, 6);
+    }
+
+    #[test]
+    fn test_chat_interface_scroll_up() {
+        let mut chat = ChatInterface::new();
+        chat.scroll = 5;
+        chat.scroll_up();
+        assert_eq!(chat.scroll, 2);
+        
+        // Ensure it doesn't underflow
+        chat.scroll_up();
+        assert_eq!(chat.scroll, 0);
     }
 
     // ============================================================

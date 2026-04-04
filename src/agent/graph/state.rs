@@ -22,6 +22,8 @@ pub enum NodeOutput {
     AgentState(AgentState),
     /// Set a custom metadata key-value pair
     Custom(String, serde_json::Value),
+    /// Multiple outputs sequentially
+    Multiple(Vec<NodeOutput>),
     /// No output (no-op)
     None,
 }
@@ -115,6 +117,11 @@ impl GraphState for DefaultState {
             }
             NodeOutput::Custom(key, value) => {
                 self.metadata.insert(key, value);
+            }
+            NodeOutput::Multiple(outputs) => {
+                for out in outputs {
+                    self.reduce(out);
+                }
             }
             NodeOutput::None => {}
         }

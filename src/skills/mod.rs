@@ -76,13 +76,30 @@ impl SkillsLoader {
     /// ```
     ///
     /// Returns an empty vec if the directory does not exist.
-    pub fn load(project_root: &Path) -> Vec<Skill> {
+    pub fn load(project_root: &Path, extra_dirs: &[String]) -> Vec<Skill> {
+        let mut all_skills = Vec::new();
+
+        // 1. Load from project root
         let skills_dir = project_root.join("docs").join("skills");
+        all_skills.extend(Self::load_from_dir(&skills_dir));
+
+        // 2. Load from extra configuration directories
+        for extra in extra_dirs {
+            let path = std::path::PathBuf::from(extra);
+            all_skills.extend(Self::load_from_dir(&path));
+        }
+
+        // Sort: High first, then Medium, then Low.
+        all_skills.sort_by(|a, b| b.priority.cmp(&a.priority));
+        all_skills
+    }
+
+    fn load_from_dir(skills_dir: &Path) -> Vec<Skill> {
         if !skills_dir.is_dir() {
             return vec![];
         }
 
-        let mut skills: Vec<Skill> = std::fs::read_dir(&skills_dir)
+        std::fs::read_dir(skills_dir)
             .into_iter()
             .flatten()
             .flatten()
@@ -95,11 +112,7 @@ impl SkillsLoader {
                     None
                 }
             })
-            .collect();
-
-        // Sort: High first, then Medium, then Low.
-        skills.sort_by(|a, b| b.priority.cmp(&a.priority));
-        skills
+            .collect()
     }
 
     /// Build an enhanced system prompt by appending all loaded skills.
@@ -218,7 +231,7 @@ mod tests {
     #[test]
     fn test_load_no_skills_dir_returns_empty() {
         let dir = TempDir::new().unwrap();
-        let skills = SkillsLoader::load(dir.path());
+        let skills = SkillsLoader::load(dir.path(), &[]);
         assert!(skills.is_empty());
     }
 
@@ -226,7 +239,7 @@ mod tests {
     fn test_load_empty_skills_dir_returns_empty() {
         let dir = TempDir::new().unwrap();
         make_skills_dir(dir.path());
-        let skills = SkillsLoader::load(dir.path());
+        let skills = SkillsLoader::load(dir.path(), &[]);
         assert!(skills.is_empty());
     }
 
@@ -240,7 +253,7 @@ mod tests {
             "---\nname: rust-error-handling\ndescription: Error rules\npriority: high\n---\n\nAlways use ZcodeError.\n",
         );
 
-        let skills = SkillsLoader::load(dir.path());
+        let skills = SkillsLoader::load(dir.path(), &[]);
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].name, "rust-error-handling");
         assert_eq!(skills[0].description, "Error rules");
@@ -255,7 +268,7 @@ mod tests {
         // No frontmatter — name falls back to the SKILL.md stem ("SKILL")
         write_skill(&skills_dir, "my-skill", "# My Skill\n\nSome content.\n");
 
-        let skills = SkillsLoader::load(dir.path());
+        let skills = SkillsLoader::load(dir.path(), &[]);
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].priority, SkillPriority::Medium);
     }
@@ -269,7 +282,7 @@ mod tests {
         fs::create_dir_all(&orphan).unwrap();
         fs::write(orphan.join("README.md"), "Not a skill.").unwrap();
 
-        let skills = SkillsLoader::load(dir.path());
+        let skills = SkillsLoader::load(dir.path(), &[]);
         assert!(skills.is_empty());
     }
 
@@ -282,7 +295,7 @@ mod tests {
         write_skill(&skills_dir, "high", "---\nname: high\npriority: high\n---\nHigh skill");
         write_skill(&skills_dir, "mid", "---\nname: mid\npriority: medium\n---\nMid skill");
 
-        let skills = SkillsLoader::load(dir.path());
+        let skills = SkillsLoader::load(dir.path(), &[]);
         assert_eq!(skills.len(), 3);
         assert_eq!(skills[0].priority, SkillPriority::High);
         assert_eq!(skills[1].priority, SkillPriority::Medium);
@@ -320,7 +333,7 @@ mod tests {
         let skills_dir = make_skills_dir(dir.path());
         fs::write(skills_dir.join("stray.md"), "# Stray file").unwrap();
 
-        let skills = SkillsLoader::load(dir.path());
+        let skills = SkillsLoader::load(dir.path(), &[]);
         assert!(skills.is_empty());
     }
 

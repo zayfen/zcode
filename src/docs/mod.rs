@@ -20,6 +20,8 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+pub mod parser;
+
 // ─────────────────────────────────────────────
 // Error & Result types
 // ─────────────────────────────────────────────

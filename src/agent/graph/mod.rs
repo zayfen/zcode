@@ -41,8 +41,14 @@ pub mod checkpoint;
 pub mod edge;
 pub mod graph;
 pub mod node;
+pub mod pipeline;
 pub mod presets;
 pub mod state;
+
+pub use checkpoint::*;
+pub use edge::*;
+pub use graph::*;
+pub use state::*;
 
 // ── Core graph types ──────────────────────────────────────────────────────────
 pub use graph::{CompiledGraph, EndReason, GraphEvent, GraphOutput, StateGraph};

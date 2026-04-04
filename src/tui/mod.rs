@@ -82,6 +82,12 @@ pub struct TuiApp {
     provider: Option<Arc<dyn LlmProvider>>,
     /// System prompt
     pub system_prompt: String,
+    /// Current agents statuses [(Name, Status)]
+    pub agent_statuses: Vec<(String, String)>,
+    /// Loaded skill names
+    pub active_skills: Vec<String>,
+    /// Loaded MCP server names
+    pub active_mcps: Vec<String>,
 }
 
 impl TuiApp {
@@ -94,6 +100,15 @@ impl TuiApp {
             system_prompt: "You are zcode, a helpful AI coding agent. \
                 Use your knowledge to assist with code, architecture, and development tasks."
                 .to_string(),
+            agent_statuses: vec![
+                ("Supervisor".to_string(), "Idle".to_string()),
+                ("Planner".to_string(), "Idle".to_string()),
+                ("Coder".to_string(), "Idle".to_string()),
+                ("Reviewer".to_string(), "Idle".to_string()),
+                ("Investigator".to_string(), "Idle".to_string()),
+            ],
+            active_skills: Vec::new(),
+            active_mcps: Vec::new(),
         }
     }
 
@@ -157,6 +172,12 @@ impl TuiApp {
                 | (KeyModifiers::SHIFT, KeyCode::Backspace) => {
                     self.chat.backspace();
                 }
+                (KeyModifiers::NONE, KeyCode::Up) => {
+                    self.chat.scroll_up();
+                }
+                (KeyModifiers::NONE, KeyCode::Down) => {
+                    self.chat.scroll_down();
+                }
                 _ => {}
             }
         }
@@ -174,6 +195,11 @@ impl TuiApp {
             ));
             return;
         };
+
+        // Update Supervisor status to Thinking
+        if let Some(agent) = self.agent_statuses.iter_mut().find(|a| a.0 == "Supervisor") {
+            agent.1 = "Thinking...".to_string();
+        }
 
         // Build conversation history as Message slice
         let mut messages: Vec<Message> = vec![
@@ -199,11 +225,17 @@ impl TuiApp {
         match provider.chat(&messages, &[]) {
             Ok(response) => {
                 self.chat.add_message(chat::ChatMessage::assistant(response.content));
+                if let Some(agent) = self.agent_statuses.iter_mut().find(|a| a.0 == "Supervisor") {
+                    agent.1 = "Idle".to_string();
+                }
             }
             Err(e) => {
                 self.chat.add_message(chat::ChatMessage::assistant(
                     format!("⚠ LLM error: {}", e)
                 ));
+                if let Some(agent) = self.agent_statuses.iter_mut().find(|a| a.0 == "Supervisor") {
+                    agent.1 = "Idle (Error)".to_string();
+                }
             }
         }
     }
@@ -212,7 +244,7 @@ impl TuiApp {
     pub fn run(&mut self, terminal: &mut TuiTerminal) -> crate::error::Result<()> {
         while !self.should_quit {
             terminal
-                .draw(|f| self.chat.render(f))
+                .draw(|f| self.chat.render(f, &self.agent_statuses, &self.active_skills, &self.active_mcps))
                 .map_err(|e| ZcodeError::InternalError(format!("Failed to draw: {}", e)))?;
 
             if event::poll(std::time::Duration::from_millis(100))
@@ -246,12 +278,18 @@ mod tests {
     fn test_tui_app_new() {
         let app = TuiApp::new();
         assert!(!app.should_quit);
+        assert_eq!(app.active_skills.len(), 0);
+        assert_eq!(app.active_mcps.len(), 0);
+        assert_eq!(app.agent_statuses.len(), 5);
+        assert_eq!(app.agent_statuses[0].0, "Supervisor");
+        assert_eq!(app.agent_statuses[0].1, "Idle");
     }
 
     #[test]
     fn test_tui_app_default() {
         let app = TuiApp::default();
         assert!(!app.should_quit);
+        assert_eq!(app.agent_statuses.len(), 5);
     }
 
     // ============================================================
@@ -364,6 +402,21 @@ mod tests {
         app.handle_event(event).unwrap();
 
         assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn test_tui_app_handle_event_scroll() {
+        let mut app = TuiApp::new();
+        
+        // Scroll down
+        let event = Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        app.handle_event(event).unwrap();
+        assert_eq!(app.chat.scroll, 3);
+        
+        // Scroll up
+        let event = Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+        app.handle_event(event).unwrap();
+        assert_eq!(app.chat.scroll, 0);
     }
 
     // ============================================================

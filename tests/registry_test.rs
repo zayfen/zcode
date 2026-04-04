@@ -1,6 +1,5 @@
-use std::future::Future;
-use std::pin::Pin;
-use zcode::tools::{Tool, ToolRegistry, ToolResult};
+use zcode::tools::{Tool, ToolRegistry};
+use zcode::error::ZcodeError;
 
 // Mock tool for testing
 struct MockTool {
@@ -24,8 +23,8 @@ impl Tool for MockTool {
         "A mock tool for testing"
     }
 
-    fn execute(&self, _input: serde_json::Value) -> Pin<Box<dyn Future<Output = ToolResult<serde_json::Value>> + Send + '_>> {
-        Box::pin(async { Ok(serde_json::json!({ "result": "mock executed" })) })
+    fn execute(&self, _input: serde_json::Value) -> Result<serde_json::Value, ZcodeError> {
+        Ok(serde_json::json!({ "result": "mock executed" }))
     }
 }
 
@@ -46,7 +45,7 @@ async fn test_registry_executes_tool() {
     registry.register(tool);
 
     let input = serde_json::json!({ "param": "value" });
-    let result = registry.execute("execute_tool", input).await;
+    let result = registry.execute("execute_tool", input);
 
     assert!(result.is_ok());
     let output = result.unwrap();
@@ -57,7 +56,7 @@ async fn test_registry_executes_tool() {
 async fn test_registry_unknown_tool() {
     let registry = ToolRegistry::new();
 
-    let result = registry.execute("unknown_tool", serde_json::json!({})).await;
+    let result = registry.execute("unknown_tool", serde_json::json!({}));
 
     assert!(result.is_err());
     let error = result.unwrap_err();

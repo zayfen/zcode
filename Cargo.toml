@@ -87,6 +87,4 @@ path = "src/lib.rs"
 name = "zcode"
 path = "src/main.rs"
 
-[[example]]
-name = "pipeline_demo"
-path = "examples/pipeline_demo.rs"
+

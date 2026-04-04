@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use schemars::JsonSchema;
-use directories::ProjectDirs;
+use directories::UserDirs;
 use std::path::PathBuf;
 use crate::error::{ZcodeError, Result};
 
@@ -27,6 +27,14 @@ pub struct Settings {
     /// Tool settings
     #[serde(default)]
     pub tools: ToolSettings,
+
+    /// Global MCP Servers
+    #[serde(default)]
+    pub mcp_servers: Vec<super::McpServerConfig>,
+
+    /// Extra directories to load skills from
+    #[serde(default)]
+    pub skill_dirs: Vec<String>,
 }
 
 /// LLM provider settings
@@ -189,15 +197,15 @@ impl Settings {
 
     /// Get the config directory path
     pub fn config_dir() -> Result<PathBuf> {
-        let project_dirs = ProjectDirs::from("com", "zcode", "zcode")
-            .ok_or_else(|| ZcodeError::ConfigError("Could not determine config directory".to_string()))?;
-
-        Ok(project_dirs.config_dir().to_path_buf())
+        let base_dir = UserDirs::new()
+            .map(|d| d.home_dir().to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+        Ok(base_dir.join(".zcode"))
     }
 
     /// Get the settings file path
     pub fn settings_file() -> Result<PathBuf> {
-        Ok(Self::config_dir()?.join("settings.toml"))
+        Ok(Self::config_dir()?.join("zcode.json"))
     }
 
     /// Load settings from file
@@ -213,7 +221,7 @@ impl Settings {
                 path: settings_path.display().to_string(),
             })?;
 
-        let settings: Settings = toml::from_str(&content)?;
+        let settings: Settings = serde_json::from_str(&content).unwrap_or_else(|_| Self::default());
 
         Ok(settings)
     }
@@ -224,7 +232,7 @@ impl Settings {
         std::fs::create_dir_all(&config_dir)?;
 
         let settings_path = Self::settings_file()?;
-        let content = toml::to_string_pretty(self)
+        let content = serde_json::to_string_pretty(self)
             .map_err(|e| ZcodeError::InternalError(e.to_string()))?;
 
         std::fs::write(&settings_path, content)?;
@@ -282,6 +290,16 @@ impl Settings {
         }
         if other.tools.timeout != default_tool_timeout() {
             self.tools.timeout = other.tools.timeout;
+        }
+
+        // Global MCP settings
+        if !other.mcp_servers.is_empty() {
+            self.mcp_servers.extend(other.mcp_servers);
+        }
+
+        // Global skill directories
+        if !other.skill_dirs.is_empty() {
+            self.skill_dirs.extend(other.skill_dirs);
         }
     }
 }
@@ -401,8 +419,8 @@ mod tests {
             timeout: 60,
         };
 
-        let serialized = toml::to_string_pretty(&llm).unwrap();
-        let deserialized: LlmSettings = toml::from_str(&serialized).unwrap();
+        let serialized = serde_json::to_string_pretty(&llm).unwrap();
+        let deserialized: LlmSettings = serde_json::from_str(&serialized).unwrap();
 
         assert_eq!(deserialized.provider, "openai");
         assert_eq!(deserialized.model, "gpt-4-turbo");
@@ -449,8 +467,8 @@ mod tests {
             auto_save: true,
         };
 
-        let serialized = toml::to_string_pretty(&editor).unwrap();
-        let deserialized: EditorSettings = toml::from_str(&serialized).unwrap();
+        let serialized = serde_json::to_string_pretty(&editor).unwrap();
+        let deserialized: EditorSettings = serde_json::from_str(&serialized).unwrap();
 
         assert_eq!(deserialized.command, "nano");
         assert!(deserialized.auto_save);
@@ -506,8 +524,8 @@ mod tests {
             progress_style: "bar".to_string(),
         };
 
-        let serialized = toml::to_string_pretty(&ui).unwrap();
-        let deserialized: UiSettings = toml::from_str(&serialized).unwrap();
+        let serialized = serde_json::to_string_pretty(&ui).unwrap();
+        let deserialized: UiSettings = serde_json::from_str(&serialized).unwrap();
 
         assert!(!deserialized.color);
         assert!(deserialized.verbose);
@@ -561,8 +579,8 @@ mod tests {
             timeout: 180,
         };
 
-        let serialized = toml::to_string_pretty(&tools).unwrap();
-        let deserialized: ToolSettings = toml::from_str(&serialized).unwrap();
+        let serialized = serde_json::to_string_pretty(&tools).unwrap();
+        let deserialized: ToolSettings = serde_json::from_str(&serialized).unwrap();
 
         assert!(deserialized.enable_dangerous_ops);
         assert!(!deserialized.require_confirmation);
@@ -761,8 +779,8 @@ mod tests {
     #[test]
     fn test_settings_serialization_roundtrip() {
         let settings = Settings::default();
-        let serialized = toml::to_string_pretty(&settings).unwrap();
-        let deserialized: Settings = toml::from_str(&serialized).unwrap();
+        let serialized = serde_json::to_string_pretty(&settings).unwrap();
+        let deserialized: Settings = serde_json::from_str(&serialized).unwrap();
 
         assert_eq!(deserialized.llm.provider, settings.llm.provider);
         assert_eq!(deserialized.llm.model, settings.llm.model);
@@ -772,41 +790,41 @@ mod tests {
     #[test]
     fn test_settings_serialization_output_format() {
         let settings = Settings::default();
-        let serialized = toml::to_string_pretty(&settings).unwrap();
+        let serialized = serde_json::to_string_pretty(&settings).unwrap();
 
-        assert!(serialized.contains("[llm]"));
-        assert!(serialized.contains("[editor]"));
-        assert!(serialized.contains("[ui]"));
-        assert!(serialized.contains("[tools]"));
+        assert!(serialized.contains("\"llm\""));
+        assert!(serialized.contains("\"editor\""));
+        assert!(serialized.contains("\"ui\""));
     }
 
     #[test]
-    fn test_settings_deserialization_from_toml() {
-        let toml_str = r#"
-[llm]
-provider = "openai"
-model = "gpt-4"
-api_key = "sk-test"
-temperature = 0.5
-max_tokens = 8192
-timeout = 60
+    fn test_settings_deserialization_from_json() {
+        let json_str = r#"{
+            "llm": {
+                "provider": "openai",
+                "model": "gpt-4",
+                "api_key": "sk-test",
+                "temperature": 0.5,
+                "max_tokens": 8192,
+                "timeout": 60
+            },
+            "editor": {
+                "command": "vim",
+                "auto_save": false
+            },
+            "ui": {
+                "color": false,
+                "verbose": true,
+                "progress_style": "bar"
+            },
+            "tools": {
+                "enable_dangerous_ops": true,
+                "require_confirmation": false,
+                "timeout": 120
+            }
+        }"#;
 
-[editor]
-command = "vim"
-auto_save = false
-
-[ui]
-color = false
-verbose = true
-progress_style = "bar"
-
-[tools]
-enable_dangerous_ops = true
-require_confirmation = false
-timeout = 120
-"#;
-
-        let settings: Settings = toml::from_str(toml_str).unwrap();
+        let settings: Settings = serde_json::from_str(json_str).unwrap();
 
         assert_eq!(settings.llm.provider, "openai");
         assert_eq!(settings.llm.model, "gpt-4");
@@ -826,12 +844,13 @@ timeout = 120
 
     #[test]
     fn test_settings_deserialization_partial() {
-        let toml_str = r#"
-[llm]
-provider = "anthropic"
-"#;
+        let json_str = r#"{
+            "llm": {
+                "provider": "anthropic"
+            }
+        }"#;
 
-        let settings: Settings = toml::from_str(toml_str).unwrap();
+        let settings: Settings = serde_json::from_str(json_str).unwrap();
 
         // Should use defaults for missing fields
         assert_eq!(settings.llm.provider, "anthropic");
@@ -851,19 +870,19 @@ provider = "anthropic"
         let config_dir = temp_dir.path().join("zcode");
         std::fs::create_dir_all(&config_dir).unwrap();
 
-        let settings_path = config_dir.join("settings.toml");
+        let settings_path = config_dir.join("zcode.json");
 
         let mut settings = Settings::default();
         settings.llm.temperature = 0.9;
         settings.ui.verbose = true;
 
         // Manually save
-        let content = toml::to_string_pretty(&settings).unwrap();
+        let content = serde_json::to_string_pretty(&settings).unwrap();
         std::fs::write(&settings_path, content).unwrap();
 
         // Manually load
         let loaded_content = std::fs::read_to_string(&settings_path).unwrap();
-        let loaded: Settings = toml::from_str(&loaded_content).unwrap();
+        let loaded: Settings = serde_json::from_str(&loaded_content).unwrap();
 
         assert_eq!(loaded.llm.temperature, 0.9);
         assert!(loaded.ui.verbose);

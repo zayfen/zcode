@@ -247,9 +247,15 @@ impl RigProvider {
         let model = self.config.model.clone();
 
         let (status, response_body) = run_http(async move {
+            let endpoint = {
+                let base = std::env::var("OPENAI_BASE_URL")
+                    .unwrap_or_else(|_| "https://api.openai.com".to_string());
+                format!("{}/v1/chat/completions", base.trim_end_matches('/'))
+            };
+
             let client = reqwest::Client::new();
             let resp = client
-                .post("https://api.openai.com/v1/chat/completions")
+                .post(&endpoint)
                 .header("Authorization", format!("Bearer {}", api_key))
                 .header("Content-Type", "application/json")
                 .json(&body)

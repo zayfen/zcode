@@ -11,6 +11,7 @@ use crate::tools::ToolRegistry;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
+use tracing::{debug, info, warn};
 
 // ─── LoopConfig ────────────────────────────────────────────────────────────────
 
@@ -156,21 +157,26 @@ impl AgentLoop {
         // Build tool schemas from registry once
         let tool_schemas = self.registry.anthropic_schemas();
 
+        info!("Starting AgentLoop (max_iterations={})", self.config.max_iterations);
+
         let mut llm_calls = 0usize;
         let mut tool_calls_executed = 0usize;
 
-        for _ in 0..self.config.max_iterations {
+        for i in 0..self.config.max_iterations {
             // Build messages array for LLM
             let messages = history
                 .iter()
                 .map(|m| serde_json::to_value(m).unwrap())
                 .collect::<Vec<_>>();
 
+            debug!("Loop iteration {}/{} - Calling LLM", i + 1, self.config.max_iterations);
+
             let response = llm_call(messages, tool_schemas.clone()).await?;
             llm_calls += 1;
 
             match response {
                 LlmResponse::Text(text) => {
+                    info!("Agent reached a final text answer.");
                     history.push(ConversationMessage::assistant_text(&text));
                     return Ok(LoopResult {
                         answer: text,
@@ -188,6 +194,11 @@ impl AgentLoop {
                         .filter_map(ToolCallRequest::from_anthropic)
                         .collect();
 
+                    info!("Agent requested {} tool call(s).", requests.len());
+                    for req in &requests {
+                        debug!("Executing tool: {} with input: {:?}", req.name, req.arguments);
+                    }
+
                     // Record assistant tool call message
                     history.push(ConversationMessage::assistant_tool_calls(calls_json.clone()));
 
@@ -197,6 +208,11 @@ impl AgentLoop {
 
                     // Add tool results to history (Anthropic format: role=user, content=[tool_result])
                     for resp in &responses {
+                        if resp.success {
+                            debug!("Tool {} execution succeeded.", resp.name);
+                        } else {
+                            warn!("Tool {} execution failed: {}", resp.name, resp.content);
+                        }
                         history.push(ConversationMessage::tool_result(resp));
                     }
                 }
@@ -204,6 +220,7 @@ impl AgentLoop {
         }
 
         // Hit max iterations — return partial result
+        warn!("Maximum iterations ({}) reached without a final answer.", self.config.max_iterations);
         Ok(LoopResult {
             answer: "Maximum iterations reached without a final answer.".to_string(),
             history,

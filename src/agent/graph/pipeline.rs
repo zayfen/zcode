@@ -58,7 +58,7 @@ pub fn build_task_pipeline(
         state.agent_state = AgentState::Planning;
 
         async move {
-            tracing::info!("[planner] Starting planning phase for task: {}...", &task[..task.len().min(80)]);
+            tracing::info!("[planner] Starting planning phase for task: {}...", task.chars().take(80).collect::<String>());
             let config = LoopConfig {
                 max_iterations: 10,
                 system_prompt: format!(
@@ -113,7 +113,7 @@ pub fn build_task_pipeline(
         let state_msgs = state.messages.clone();
 
         async move {
-            tracing::info!("[coder] Starting coder (attempt {}/3) for task: {}...", new_retries, &task[..task.len().min(80)]);
+            tracing::info!("[coder] Starting coder (attempt {}/3) for task: {}...", new_retries, task.chars().take(80).collect::<String>());
             let config = LoopConfig {
                 max_iterations: 20,
                 system_prompt: format!(

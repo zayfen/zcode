@@ -171,7 +171,7 @@ async fn execute_task(action: &TaskAction, args: &crate::cli::args::Args) -> Res
         TaskAction::RunAll { concurrency, max_iterations } => {
             let tasks = store.list()?;
             let pending: Vec<_> = tasks.into_iter()
-                .filter(|t| t.status == TaskStatus::Running || t.status == TaskStatus::Interrupted)
+                .filter(|t| matches!(t.status, TaskStatus::Running | TaskStatus::Interrupted | TaskStatus::Failed))
                 .collect();
 
             if pending.is_empty() {

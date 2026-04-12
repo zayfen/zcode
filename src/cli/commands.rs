@@ -660,14 +660,29 @@ async fn execute_run(task: &str, resume_id: Option<&str>, max_iterations: usize,
     // Save task-level status
     let final_answer = match task_result {
         Ok(graph_out) => {
-            task_record.status = TaskStatus::Completed;
+            let test_passed = task_record.state.metadata.get("test_passed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+
             let answer = task_record.state.messages.last()
                 .and_then(|m| m.content.clone())
                 .unwrap_or_else(|| "No output generated".into());
-            task_record.state.result = Some(crate::agent::types::TaskResult::success(
-                task_record.id.clone(), answer.clone()
-            ));
-            println!("\n✅ Task complete ({} graph iterations)", graph_out.total_iterations);
+
+            if test_passed {
+                task_record.status = TaskStatus::Completed;
+                task_record.state.result = Some(crate::agent::types::TaskResult::success(
+                    task_record.id.clone(), answer.clone()
+                ));
+                println!("\n✅ Task complete ({} graph iterations)", graph_out.total_iterations);
+            } else {
+                task_record.status = TaskStatus::Failed;
+                task_record.error = Some("Tests failed after max retries".into());
+                task_record.state.result = Some(crate::agent::types::TaskResult::failure(
+                    task_record.id.clone(), "Tests failed after max retries"
+                ));
+                println!("\n❌ Task failed: Tests failed after max retries ({} iterations)", graph_out.total_iterations);
+            }
+
             println!("\n📤 Result:\n{}", answer);
             let _ = store.save(&mut task_record);
             answer
@@ -800,14 +815,28 @@ async fn execute_run_task_only(task: &str, resume_id: Option<&str>, max_iteratio
 
     match task_result {
         Ok(graph_out) => {
-            task_record.status = TaskStatus::Completed;
+            let test_passed = task_record.state.metadata.get("test_passed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+
             let answer = task_record.state.messages.last()
                 .and_then(|m| m.content.clone())
                 .unwrap_or_else(|| "No output generated".into());
-            task_record.state.result = Some(crate::agent::types::TaskResult::success(
-                task_record.id.clone(), answer.clone()
-            ));
-            println!("\n✅ Task [{}] complete ({} iterations)", task_record.id, graph_out.total_iterations);
+
+            if test_passed {
+                task_record.status = TaskStatus::Completed;
+                task_record.state.result = Some(crate::agent::types::TaskResult::success(
+                    task_record.id.clone(), answer.clone()
+                ));
+                println!("\n✅ Task [{}] complete ({} iterations)", task_record.id, graph_out.total_iterations);
+            } else {
+                task_record.status = TaskStatus::Failed;
+                task_record.error = Some("Tests failed after max retries".into());
+                task_record.state.result = Some(crate::agent::types::TaskResult::failure(
+                    task_record.id.clone(), "Tests failed after max retries"
+                ));
+                println!("\n❌ Task [{}] failed: Tests failed after max retries ({} iterations)", task_record.id, graph_out.total_iterations);
+            }
             let _ = store.save(&mut task_record);
             Ok(answer)
         }

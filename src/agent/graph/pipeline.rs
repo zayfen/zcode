@@ -1,4 +1,15 @@
-//! Comprehensive LangGraph pipeline for Zcode
+//! Comprehensive LangGraph pipelines for Zcode
+//!
+//! Two pipelines are provided:
+//!
+//! - `build_task_pipeline()`: per-task graph (`planner → coder → tester`).
+//!   After the tester the graph either ends (PASS or retries exhausted) or
+//!   loops back to the coder (FAIL, retries remaining).  Maximum 3 coder
+//!   retries per task.
+//!
+//! - `build_reviewer_pipeline()`: global review graph run **once** after all
+//!   tasks have completed.  The reviewer receives a combined report of all
+//!   task outputs via the initial state messages.
 
 use std::sync::Arc;
 use crate::agent::graph::graph::StateGraph;
@@ -8,12 +19,24 @@ use crate::agent::graph::edge::routers;
 use crate::agent::loop_exec::{AgentLoop, LoopConfig, ConversationMessage, LlmResponse};
 use crate::agent::types::AgentState;
 use crate::llm::provider::LlmProvider;
-use crate::llm::{Message, MessageRole};
+use crate::llm::Message;
 use crate::tools::ToolRegistry;
 use crate::error::Result;
 
-/// Build the main 4-stage agentic workflow: Planner -> Coder -> Tester -> Reviewer -> (loop back to Coder if failed)
-pub fn build_zcode_pipeline(
+// ─── Per-task pipeline ────────────────────────────────────────────────────────
+
+/// Build the per-task agentic workflow:
+///
+/// ```text
+/// planner → coder → tester
+///                     ├─ PASS ──────────────────────────→ END
+///                     └─ FAIL + retries < 3 ── → coder (with failure context)
+///                     └─ FAIL + retries >= 3 ─→ END (force-stop)
+/// ```
+///
+/// The reviewer is **not** part of this graph — it is invoked separately via
+/// `build_reviewer_pipeline()` after all tasks have finished.
+pub fn build_task_pipeline(
     provider: Arc<dyn LlmProvider>,
     registry: Arc<ToolRegistry>,
     model: String,
@@ -21,7 +44,7 @@ pub fn build_zcode_pipeline(
 ) -> StateGraph {
     let mut g = StateGraph::new("planner");
 
-    // Planner Node
+    // ── Planner Node ──────────────────────────────────────────────────────────
     let p1 = Arc::clone(&provider);
     let r1 = Arc::clone(&registry);
     let m1 = model.clone();
@@ -33,31 +56,39 @@ pub fn build_zcode_pipeline(
         let sp = sp1.clone();
         let task = state.task.clone().map(|t| t.description).unwrap_or_default();
         state.agent_state = AgentState::Planning;
-        
+
         async move {
+            tracing::info!("[planner] Starting planning phase for task: {}...", &task[..task.len().min(80)]);
             let config = LoopConfig {
                 max_iterations: 10,
                 system_prompt: format!(
                     "You are zcode Planner Agent (Model: {}).\n\
-                     Your job is to read the user's task, inspect the codebase using read/search tools, \
+                     Your job is to read the user's task, inspect the codebase using AST and read tools, \
                      and formulate a concrete technical plan. \n\
+                     Prefer using `ast_search` for semantic symbol discovery over `glob` where possible.\n\
+                     If the task is extremely simple (e.g. small bugfix, single function change), append `[FAST_PATH]` to your plan.\n\
                      Do NOT attempt to write code. Output a step-by-step Execution Plan.\n\n\
                      {}",
                      m, sp
                 ),
             };
-            
-            let mut loop_engine = AgentLoop::new(config, r);
-            let result = loop_engine.run(&task, &[], move |msgs, tools| {
+
+            let loop_engine = AgentLoop::new(config, r);
+            let result = loop_engine.run(&task, &[], &[], move |msgs, tools| {
                 let p2 = Arc::clone(&p);
                 async move { call_llm(p2, msgs, tools).await }
             }).await?;
-            
-            Ok(NodeOutput::Messages(vec![ConversationMessage::assistant_text(format!("PLAN:\n{}", result.answer))]))
+
+            let is_simple = result.answer.contains("[FAST_PATH]");
+            tracing::info!("[planner] Plan generated ({} chars, fast_path={})", result.answer.len(), is_simple);
+            Ok(NodeOutput::Multiple(vec![
+                NodeOutput::Custom("is_simple".into(), serde_json::json!(is_simple)),
+                NodeOutput::Messages(vec![ConversationMessage::assistant_text(format!("PLAN:\n{}", result.answer))])
+            ]))
         }
     }));
 
-    // Coder Node
+    // ── Coder Node ────────────────────────────────────────────────────────────
     let p2 = Arc::clone(&provider);
     let r2 = Arc::clone(&registry);
     let m2 = model.clone();
@@ -67,44 +98,61 @@ pub fn build_zcode_pipeline(
         let r = Arc::clone(&r2);
         let m = m2.clone();
         let sp = sp2.clone();
-        
+
         let task = state.task.clone().map(|t| t.description).unwrap_or_default();
-        // Retrieve the plan or feedback from previous nodes
+        // Retrieve the plan or test-failure feedback from the last message
         let last_msg = state.messages.last().and_then(|m| m.content.clone()).unwrap_or_default();
         state.agent_state = AgentState::Executing;
-        
-        async move {
-            // Clear review status whenever coder restarts
-            // Since we must return a NodeOutput, we just map it out
-            let _ = NodeOutput::Custom("review_passed".into(), serde_json::Value::Null);
 
-            let config = LoopConfig { 
-                max_iterations: 20, 
+        // Increment coder retry counter
+        let retries = state.metadata
+            .get("coder_retries")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let new_retries = retries + 1;
+        let state_msgs = state.messages.clone();
+
+        async move {
+            tracing::info!("[coder] Starting coder (attempt {}/3) for task: {}...", new_retries, &task[..task.len().min(80)]);
+            let config = LoopConfig {
+                max_iterations: 20,
                 system_prompt: format!(
                     "You are zcode Coder Agent (Model: {}).\n\
                      Execute the provided technical plan to fulfill the original task. \n\
-                     You have full write access to the workspace.\n\n\
+                     You have full write access to the workspace. \n\
+                     If you received a TEST FAILURE REPORT, you MUST fix the reported issues before finishing.\n\
+                     Prefer `analyze_code_structure` and `apply_structural_edit` for precise code modifications.\n\n\
                      {}",
                      m, sp
-                ) 
+                )
             };
-            
-            let user_prompt = format!("Original Task: {}\n\nInput Context (Plan/Feedback):\n{}", task, last_msg);
-            let mut loop_engine = AgentLoop::new(config, r);
-            let result = loop_engine.run(&user_prompt, &[], move |msgs, tools| {
+
+            let user_prompt = if retries == 0 {
+                format!("Original Task: {}\n\nExecution Plan:\n{}", task, last_msg)
+            } else {
+                format!(
+                    "Original Task: {}\n\nTEST FAILURE REPORT (attempt {}/{}):\n{}\n\nPlease fix the issues described above.",
+                    task, new_retries, 3, last_msg
+                )
+            };
+
+            let loop_engine = AgentLoop::new(config, r);
+            let result = loop_engine.run(&user_prompt, &state_msgs, &[], move |msgs, tools| {
                 let p_inner = Arc::clone(&p);
                 async move { call_llm(p_inner, msgs, tools).await }
             }).await?;
-            
-            // Return both clearing of review_passed and the new messages
+
+            tracing::info!("[coder] Coder completed (attempt {}), output: {} chars", new_retries, result.answer.len());
+            // Update retry counter; reset test_passed so tester re-evaluates
             Ok(NodeOutput::Multiple(vec![
-                NodeOutput::Custom("review_passed".into(), serde_json::Value::Null),
-                NodeOutput::Messages(vec![ConversationMessage::assistant_text(format!("CODER_REPORT:\n{}", result.answer))])
+                NodeOutput::Custom("coder_retries".into(), serde_json::json!(new_retries)),
+                NodeOutput::Custom("test_passed".into(), serde_json::Value::Null),
+                NodeOutput::Messages(vec![ConversationMessage::assistant_text(format!("CODER_REPORT:\n{}", result.answer))]),
             ]))
         }
     }));
 
-    // Tester Node
+    // ── Tester Node ───────────────────────────────────────────────────────────
     let p_test = Arc::clone(&provider);
     let r_test = Arc::clone(&registry);
     let m_test = model.clone();
@@ -114,110 +162,187 @@ pub fn build_zcode_pipeline(
         let r = Arc::clone(&r_test);
         let m = m_test.clone();
         let sp = sp_test.clone();
-        
+
         let task = state.task.clone().map(|t| t.description).unwrap_or_default();
         let coder_report = state.messages.last().and_then(|m| m.content.clone()).unwrap_or_default();
-        
+
         state.agent_state = AgentState::Executing;
+        let state_msgs = state.messages.clone();
 
         async move {
+            tracing::info!("[tester] Starting test verification for this task...");
             let config = LoopConfig {
                 max_iterations: 15,
                 system_prompt: format!(
                     "You are zcode Tester Agent (Model: {}).\n\
-                     Your job is to test the code changes made by the Coder against the original task.\n\
-                     You must run tests, shell commands, or manually inspect output to verify correctness.\n\
-                     Output a Test Report detailing what was checked, the commands run, and the outcomes.\n\n\
+                     Your job is to test ONLY the code changes made for the current task against its requirements.\n\
+                     Run the relevant tests, build commands, or inspect outputs to verify correctness.\n\
+                     Produce a Test Report detailing what was checked, the commands run, and the outcomes.\n\
+                     If all checks pass and the task is fulfilled, you MUST include the exact word 'PASS' in your final answer.\n\
+                     If any check fails or the task is not fulfilled, do NOT include 'PASS' — \
+                     describe the failures in detail so the Coder can fix them.\n\n\
                      {}",
                      m, sp
                 ),
             };
-            
-            let user_prompt = format!("Original Task: {}\n\nCoder reported:\n{}\n\nPlease verify these changes by running necessary tests/builds.", task, coder_report);
-            let mut loop_engine = AgentLoop::new(config, r);
-            let result = loop_engine.run(&user_prompt, &[], move |msgs, tools| {
-                let p_inner = Arc::clone(&p);
-                async move { call_llm(p_inner, msgs, tools).await }
-            }).await?;
-            
-            Ok(NodeOutput::Messages(vec![ConversationMessage::assistant_text(format!("TEST_REPORT:\n{}", result.answer))]))
-        }
-    }));
 
-    // Reviewer Node
-    let p3 = Arc::clone(&provider);
-    let r3 = Arc::clone(&registry);
-    let m3 = model.clone();
-    let sp3 = skills_prompt.clone();
-    g.add_node(AsyncFnNode::new("reviewer", move |state| {
-        let p = Arc::clone(&p3);
-        let r = Arc::clone(&r3);
-        let m = m3.clone();
-        let sp = sp3.clone();
-        
-        let task = state.task.clone().map(|t| t.description).unwrap_or_default();
-        let coder_report = state.messages.last().and_then(|m| m.content.clone()).unwrap_or_default();
-        
-        state.agent_state = AgentState::Reviewing;
-
-        async move {
-            let config = LoopConfig {
-                max_iterations: 10,
-                system_prompt: format!(
-                    "You are zcode Reviewer Agent (Model: {}).\n\
-                     Inspect the test report and the coder's work against the original task. \n\
-                     If everything works and passes, you MUST include the exact word 'PASS' in your final answer. \n\
-                     If there are failed tests or missing requirements, list the exact files and lines that need fixing.\n\n\
-                     {}",
-                     m, sp
-                ),
-            };
-            
             let user_prompt = format!(
-                "Task: {}\n\nTester/Coder reported:\n{}\n\nVerify the outcomes. Reply PASS if good, or list required fixes.",
+                "Original Task: {}\n\nCoder reported:\n{}\n\n\
+                 Please verify these changes by running the relevant tests/builds for this specific task.",
                 task, coder_report
             );
-            let mut loop_engine = AgentLoop::new(config, r);
-            let result = loop_engine.run(&user_prompt, &[], move |msgs, tools| {
+            let loop_engine = AgentLoop::new(config, r);
+            let result = loop_engine.run(&user_prompt, &state_msgs, &[], move |msgs, tools| {
                 let p_inner = Arc::clone(&p);
                 async move { call_llm(p_inner, msgs, tools).await }
             }).await?;
-            
+
             let is_pass = result.answer.contains("PASS");
-            
-            // Return BOTH metadata flag and message feedback
+            tracing::info!(
+                "[tester] Test verdict: {} (output: {} chars)",
+                if is_pass { "PASS ✅" } else { "FAIL ❌" },
+                result.answer.len()
+            );
+
             Ok(NodeOutput::Multiple(vec![
-                NodeOutput::Custom("review_passed".into(), serde_json::json!(is_pass)),
-                NodeOutput::Messages(vec![ConversationMessage::assistant_text(format!("REVIEW_FEEDBACK:\n{}", result.answer))])
+                NodeOutput::Custom("test_passed".into(), serde_json::json!(is_pass)),
+                NodeOutput::Messages(vec![ConversationMessage::assistant_text(format!("TEST_REPORT:\n{}", result.answer))]),
             ]))
         }
     }));
-    
-    // Edges
+
+    // ── Edges ─────────────────────────────────────────────────────────────────
     g.add_edge("planner", "coder");
     g.add_edge("coder", "tester");
-    g.add_edge("tester", "reviewer");
-    
+
+    // Tester → PASS: END | FAIL + retries < 3: back to coder | FAIL + exhausted: force END
     g.add_conditional_edge(
-        "reviewer",
-        routers::review_router("coder"),
+        "tester",
+        routers::task_test_router("coder", 3),
         vec!["coder", "__end__"],
     );
 
     g
 }
 
+// ─── Global reviewer pipeline ─────────────────────────────────────────────────
+
+/// Build the global reviewer pipeline run **once** after all tasks are complete.
+///
+/// The caller is responsible for pre-populating `state.messages` with a combined
+/// summary of all task outputs before calling `graph.execute(&mut state)`.
+///
+/// ```text
+/// reviewer → END
+/// ```
+pub fn build_reviewer_pipeline(
+    provider: Arc<dyn LlmProvider>,
+    registry: Arc<ToolRegistry>,
+    model: String,
+    skills_prompt: String,
+) -> StateGraph {
+    let mut g = StateGraph::new("reviewer");
+
+    let p = Arc::clone(&provider);
+    let r = Arc::clone(&registry);
+    let m = model.clone();
+    let sp = skills_prompt.clone();
+    g.add_node(AsyncFnNode::new("reviewer", move |state| {
+        let p = Arc::clone(&p);
+        let r = Arc::clone(&r);
+        let m = m.clone();
+        let sp = sp.clone();
+
+        // The combined report is expected as the last message in state
+        let combined_report = state.messages.last().and_then(|msg| msg.content.clone()).unwrap_or_default();
+        state.agent_state = AgentState::Reviewing;
+        let state_msgs = state.messages.clone();
+
+        async move {
+            tracing::info!("[reviewer] Starting global code review for all completed tasks...");
+            let config = LoopConfig {
+                max_iterations: 15,
+                system_prompt: format!(
+                    "You are zcode Reviewer Agent (Model: {}).\n\
+                     All tasks have been implemented and tested. Your job is to perform a holistic \
+                     code review across all the changes made in this session.\n\
+                     Inspect the combined task reports, verify correctness, consistency, style, \
+                     and adherence to the original requirements.\n\
+                     If everything looks good, include the exact word 'PASS' in your final answer. \n\
+                     Otherwise, list findings grouped by file/component for the team to address.\n\n\
+                     {}",
+                     m, sp
+                ),
+            };
+
+            let user_prompt = format!(
+                "Combined Task Completion Report:\n\n{}\n\n\
+                 Please review all the above changes holistically. Reply PASS if everything is satisfactory, \
+                 or list your review findings.",
+                combined_report
+            );
+            let loop_engine = AgentLoop::new(config, r);
+            let result = loop_engine.run(&user_prompt, &state_msgs, &[], move |msgs, tools| {
+                let p_inner = Arc::clone(&p);
+                async move { call_llm(p_inner, msgs, tools).await }
+            }).await?;
+
+            let is_pass = result.answer.contains("PASS");
+            tracing::info!(
+                "[reviewer] Global review verdict: {} (output: {} chars)",
+                if is_pass { "PASS ✅" } else { "FAIL ❌" },
+                result.answer.len()
+            );
+
+            Ok(NodeOutput::Multiple(vec![
+                NodeOutput::Custom("review_passed".into(), serde_json::json!(is_pass)),
+                NodeOutput::Messages(vec![ConversationMessage::assistant_text(format!("REVIEW_FEEDBACK:\n{}", result.answer))]),
+            ]))
+        }
+    }));
+
+    // reviewer → END (no loop; single-pass global review)
+    // No outgoing edge → NaturalEnd
+    g
+}
+
+// ─── Internal LLM helper ──────────────────────────────────────────────────────
+
 async fn call_llm(p: Arc<dyn LlmProvider>, msgs: Vec<serde_json::Value>, tools: Vec<serde_json::Value>) -> Result<LlmResponse> {
     let llm_messages: Vec<Message> = msgs.iter()
         .filter_map(|v| {
             let role = v.get("role")?.as_str()?;
-            let content = v.get("content")?.as_str().unwrap_or("").to_string();
-            let role = match role {
-                "system" => MessageRole::System,
-                "assistant" => MessageRole::Assistant,
-                _ => MessageRole::User,
-            };
-            Some(Message { role, content })
+            match role {
+                "system" => {
+                    let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                    Some(Message::system(content))
+                }
+                "assistant" => {
+                    if let Some(tool_calls) = v.get("tool_calls").and_then(|tc| tc.as_array()) {
+                        if !tool_calls.is_empty() {
+                            let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                            Some(Message::assistant_with_tool_calls(content, tool_calls.clone()))
+                        } else {
+                            let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                            Some(Message::assistant(content))
+                        }
+                    } else {
+                        let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                        Some(Message::assistant(content))
+                    }
+                }
+                "tool" => {
+                    let tool_call_id = v.get("tool_call_id").and_then(|id| id.as_str()).unwrap_or("").to_string();
+                    let name = v.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                    let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                    Some(Message::tool_result(tool_call_id, name, content))
+                }
+                _ => {
+                    // "user" and anything else
+                    let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                    Some(Message::user(content))
+                }
+            }
         })
         .collect();
 

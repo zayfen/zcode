@@ -38,7 +38,7 @@ pub async fn execute_command(command: &Command, args: &crate::cli::args::Args) -
         }
         Command::Chat => execute_chat(args).await,
         Command::Docs { action } => execute_docs(action),
-        Command::Task { action } => execute_task(action),
+        Command::Task { action } => execute_task(action, args).await,
         Command::Version => execute_version(),
     }
 }
@@ -111,21 +111,22 @@ pub async fn execute_default(args: &crate::cli::args::Args) -> Result<()> {
 }
 
 /// Handle `zcode task {list|show|clean}` commands.
-fn execute_task(action: &TaskAction) -> Result<()> {
+async fn execute_task(action: &TaskAction, args: &crate::cli::args::Args) -> Result<()> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let store = TaskStore::new(&cwd)?;
     match action {
         TaskAction::List => {
             let tasks = store.list()?;
             if tasks.is_empty() {
-                println!("No saved tasks. Run `zcode run \"<task>\"` to create one.");
+                println!("No saved tasks. Run `zcode task sync` to import from docs/tasks/.");
             } else {
                 println!("{:<10} {:<12} {:<5} {}",
                     "ID", "STATUS", "ITER", "TASK");
                 println!("{}", "-".repeat(70));
                 for t in &tasks {
-                    let snippet = if t.task.len() > 45 {
-                        format!("{}…", &t.task[..45])
+                    let snippet = if t.task.chars().count() > 45 {
+                        let truncated: String = t.task.chars().take(45).collect();
+                        format!("{}…", truncated)
                     } else {
                         t.task.clone()
                     };
@@ -151,6 +152,155 @@ fn execute_task(action: &TaskAction) -> Result<()> {
             }
             println!("\nHistory: {} messages", record.state.messages.len());
             Ok(())
+        }
+        TaskAction::Run { task_or_id, max_iterations } => {
+            // Try to load from store first; if not found, treat as direct task description
+            let task_description = match store.load(task_or_id) {
+                Ok(record) => {
+                    println!("📋 Found task in store: [{}] {}", record.id, record.task);
+                    record.task
+                }
+                Err(_) => {
+                    println!("📋 Running direct task: {}", task_or_id);
+                    task_or_id.clone()
+                }
+            };
+            let _ = execute_run(&task_description, None, *max_iterations, args).await?;
+            Ok(())
+        }
+        TaskAction::RunAll { concurrency, max_iterations } => {
+            let tasks = store.list()?;
+            let pending: Vec<_> = tasks.into_iter()
+                .filter(|t| t.status == TaskStatus::Running || t.status == TaskStatus::Interrupted)
+                .collect();
+
+            if pending.is_empty() {
+                println!("No pending tasks. Run `zcode task sync` to import from docs/tasks/.");
+                return Ok(());
+            }
+
+            println!("🚀 Running {} pending task(s) with concurrency={}", pending.len(), concurrency);
+            println!("{}", "-".repeat(60));
+
+            let semaphore = Arc::new(tokio::sync::Semaphore::new(*concurrency));
+            let args_arc = Arc::new(args.clone());
+            let max_iter = *max_iterations;
+            let total_count = pending.len();
+
+            let mut handles = Vec::new();
+            for (i, task) in pending.iter().enumerate() {
+                let sem = Arc::clone(&semaphore);
+                let task_desc = task.task.clone();
+                let task_id = task.id.clone();
+                let args_clone = Arc::clone(&args_arc);
+
+                let handle = tokio::spawn(async move {
+                    let _permit = sem.acquire().await.expect("semaphore closed");
+                    println!("\n▶ [{}/{}] Starting: {} [id={}]", i + 1, total_count, task_desc, task_id);
+                    // execute_run runs: planner→coder→tester (with fix loop) only — no reviewer
+                    let result = execute_run_task_only(&task_desc, Some(&task_id), max_iter, &args_clone).await;
+                    match &result {
+                        Ok(output) => println!("✅ [{}] Completed: {}", task_id, task_desc),
+                        Err(e)    => println!("❌ [{}] Failed: {} — {}", task_id, task_desc, e),
+                    }
+                    (task_id, task_desc, result)
+                });
+                handles.push(handle);
+            }
+
+            let total = handles.len();
+            let mut succeeded = 0;
+            let mut failed = 0;
+            let mut task_reports: Vec<String> = Vec::new();
+
+            for handle in handles {
+                match handle.await {
+                    Ok((id, desc, Ok(output))) => {
+                        succeeded += 1;
+                        task_reports.push(format!("### Task [{}]: {}\n{}", id, desc, output));
+                    }
+                    Ok((id, desc, Err(e))) => {
+                        failed += 1;
+                        task_reports.push(format!("### Task [{}]: {} — FAILED: {}", id, desc, e));
+                        tracing::error!("Task {} failed: {}", id, e);
+                    }
+                    Err(e) => {
+                        failed += 1;
+                        tracing::error!("Task join error: {}", e);
+                    }
+                }
+            }
+
+            println!("\n{}", "=".repeat(60));
+            println!("📊 Task Results: {}/{} succeeded, {} failed", succeeded, total, failed);
+
+            // ── Global Reviewer: runs once after ALL tasks complete ────────────
+            println!("\n🔍 All tasks done — starting global code review...");
+            let combined_report = task_reports.join("\n\n---\n\n");
+
+            // Re-build shared infra for the reviewer
+            let mut settings = Settings::load().unwrap_or_default();
+            if let Some(model) = &args.model {
+                settings.llm.model = model.clone();
+            }
+            let llm_config = crate::llm::LlmConfig {
+                provider: settings.llm.provider.clone(),
+                model: settings.llm.model.clone(),
+                api_key: settings.llm.api_key.clone(),
+                temperature: settings.llm.temperature,
+                max_tokens: settings.llm.max_tokens,
+            };
+            let provider: Arc<dyn LlmProvider> = Arc::new(RigProvider::new(llm_config.clone()));
+            let mut reg = ToolRegistry::new();
+            register_default_tools(&mut reg);
+            use crate::ast::LanguageRegistry;
+            use crate::tools::ast_tools::{AstSearchTool, AstEditTool};
+            let lang_reg = Arc::new(LanguageRegistry::new());
+            reg.register(AstSearchTool::new(Arc::clone(&lang_reg)));
+            reg.register(AstEditTool::new(Arc::clone(&lang_reg)));
+            let registry = Arc::new(reg);
+
+            let skills = SkillsLoader::load(
+                &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+                &settings.skill_dirs
+            );
+            let skills_prompt = SkillsLoader::build_system_prompt("", &skills);
+
+            use crate::agent::graph::pipeline::build_reviewer_pipeline;
+            let reviewer_graph = build_reviewer_pipeline(
+                provider, registry, llm_config.model.clone(), skills_prompt
+            ).compile()?;
+
+            use crate::agent::graph::state::DefaultState;
+            use crate::agent::loop_exec::ConversationMessage;
+            let mut review_state = DefaultState::default();
+            review_state.messages.push(ConversationMessage::user(
+                format!("Combined Task Completion Report:\n\n{}", combined_report)
+            ));
+
+            match reviewer_graph.execute_with_events(
+                &mut review_state,
+                |e| println!("🔍 {}", e),
+            ).await {
+                Ok(_) => {
+                    let review_output = review_state.messages.last()
+                        .and_then(|m| m.content.clone())
+                        .unwrap_or_default();
+                    println!("\n📋 Global Review complete:\n{}", review_output);
+                }
+                Err(e) => {
+                    tracing::warn!("[reviewer] Global review failed (non-fatal): {}", e);
+                    println!("⚠️  Global review step failed (non-fatal): {}", e);
+                }
+            }
+
+            if failed > 0 {
+                Err(crate::error::ZcodeError::InternalError(
+                    format!("{} task(s) failed", failed)
+                ))
+            } else {
+                Ok(())
+            }
         }
         TaskAction::Clean => {
             let deleted = store.clean()?;
@@ -188,49 +338,198 @@ fn execute_task(action: &TaskAction) -> Result<()> {
     }
 }
 
-/// Feed raw requirements to generate/update the docs/ structure using AgentLoop
+/// Feed raw requirements to generate/update the docs/ structure using a lightweight AgentLoop.
+///
+/// Unlike `execute_run` which spins up the full 4-stage pipeline (planner → coder → tester → reviewer),
+/// `execute_feed` runs each step as a single AgentLoop — just one LLM agent with tools, no
+/// unnecessary planner/tester/reviewer overhead.
 async fn execute_feed(path: &str, investigate: bool, max_iterations: usize, args: &crate::cli::args::Args) -> Result<()> {
+    use crate::agent::loop_exec::{AgentLoop, LoopConfig, LlmResponse as AgentLlmResponse};
+    use crate::llm::Message;
+
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    
+
     // Ensure docs scaffolding exists before feeding LLM
     let _ = generate_docs_scaffold(&cwd);
     println!("🔄 Prepared docs/ scaffolding.");
     println!("📖 Feeding raw requirements from: {}", path);
 
+    // ── Shared setup: LLM provider + tool registry ──────────────────
+    let mut settings = Settings::load().unwrap_or_default();
+    if let Some(model) = &args.model {
+        settings.llm.model = model.clone();
+    }
+
+    let llm_config = LlmConfig {
+        provider: settings.llm.provider.clone(),
+        model: settings.llm.model.clone(),
+        api_key: settings.llm.api_key.clone(),
+        temperature: settings.llm.temperature,
+        max_tokens: settings.llm.max_tokens,
+    };
+    let provider: Arc<dyn LlmProvider> = Arc::new(RigProvider::new(llm_config.clone()));
+
+    let mut registry = ToolRegistry::new();
+    register_default_tools(&mut registry);
+    
+    // Register AST tools
+    use crate::ast::LanguageRegistry;
+    use crate::tools::ast_tools::{AstSearchTool, AstEditTool};
+    let lang_registry = Arc::new(LanguageRegistry::new());
+    registry.register(AstSearchTool::new(Arc::clone(&lang_registry)));
+    registry.register(AstEditTool::new(Arc::clone(&lang_registry)));
+
+    // MCP servers (global + workspace + CLI)
+    use crate::workspace::Workspace;
+    let ws_config = Workspace::open(&cwd).map(|w| w.config).unwrap_or_default();
+    for mcp_cfg in &settings.mcp_servers {
+        if !mcp_cfg.auto_start { continue; }
+        let exec_args: Vec<&str> = mcp_cfg.args.iter().map(|s| s.as_str()).collect();
+        let client = crate::mcp::client::McpClient::connect_stdio(&mcp_cfg.name, &mcp_cfg.command, &exec_args)?;
+        let adapters = Arc::new(client).create_adapters();
+        for adapter in adapters { registry.register(adapter); }
+    }
+    for mcp_cfg in ws_config.mcp_servers {
+        if !mcp_cfg.auto_start { continue; }
+        let exec_args: Vec<&str> = mcp_cfg.args.iter().map(|s| s.as_str()).collect();
+        let client = crate::mcp::client::McpClient::connect_stdio(&mcp_cfg.name, &mcp_cfg.command, &exec_args)?;
+        let adapters = Arc::new(client).create_adapters();
+        for adapter in adapters { registry.register(adapter); }
+    }
+    for mcp_str in &args.mcp {
+        let parts: Vec<&str> = mcp_str.split_whitespace().collect();
+        if parts.is_empty() { continue; }
+        let client = crate::mcp::client::McpClient::connect_stdio("cli_mcp", parts[0], &parts[1..])?;
+        let adapters = Arc::new(client).create_adapters();
+        for adapter in adapters { registry.register(adapter); }
+    }
+
+    let registry = Arc::new(registry);
+
+    println!("🧠 Model: {}", llm_config.model);
+
+    // ── Step 1 (optional): Investigator Agent ────────────────────────
     let mut investigator_context = String::new();
 
     if investigate {
-        println!("🔍 Starting Investigator Agent to research requirements...");
-        let investigate_task = format!(
-            "You are the zcode Investigator Agent.\n\
-             The user has provided raw requirement documents at: `{}`.\n\
-             Your task is to:\n\
+        println!("\n🔍 Starting Investigator Agent...");
+        let config = LoopConfig {
+            max_iterations,
+            system_prompt: format!(
+                "You are the zcode Investigator Agent (Model: {}).\n\
+                 Your job is to research requirements and gather context. \
+                 You have access to file reading, search, and MCP tools. \
+                 Do NOT write code or modify files. Only return your research findings.",
+                llm_config.model
+            ),
+        };
+        let user_task = format!(
+            "The user has provided raw requirement documents at: `{}`.\n\
              1. Read and analyze the raw requirement documents.\n\
-             2. Use connected external search tools (e.g. Search MCP) to research any missing contexts, architectural patterns, or API best practices related to these requirements.\n\
-             3. Generate a comprehensive 'Research Report' that documents your findings, which will be natively passed to the next agent.\n\
-             4. You do NOT write code or modify the docs/ directory directly. Only return your research findings in your final message.",
+             2. Use connected tools to research any missing contexts, architectural patterns, or API best practices.\n\
+             3. Generate a comprehensive Research Report with your findings.",
             path
         );
-        let report = execute_run(&investigate_task, None, max_iterations, args).await?;
-        investigator_context = format!("\n💡 [Investigator Agent Report]\nThe Investigator Agent has conducted preliminary research on the requirements and provided the following context. Use this context to enrich the generated documents:\n{}\n", report);
+        let p = Arc::clone(&provider);
+        let agent_loop = AgentLoop::new(config, Arc::clone(&registry));
+        let result = agent_loop.run(&user_task, &[], &[], move |msgs, tools| {
+            let p = Arc::clone(&p);
+            async move { feed_call_llm(p, msgs, tools).await }
+        }).await?;
+        println!("✅ Investigator Agent complete.");
+        investigator_context = format!(
+            "\n💡 [Investigator Agent Report]\n{}\n",
+            result.answer
+        );
     }
 
-    let feed_task = format!(
-        "You are the zcode Docs Generation Agent.\n\
-         The user has provided raw requirement documents at: `{}`.\n{}\n\
-         Your task is to:\n\
+    // ── Step 2: Docs Generation Agent ────────────────────────────────
+    println!("\n📝 Starting Docs Generation Agent...");
+    let config = LoopConfig {
+        max_iterations,
+        system_prompt: format!(
+            "You are the zcode Docs Generation Agent (Model: {}).\n\
+             Your job is to populate and update the `docs/` directory structure based on raw requirements. \
+             You have full access to file reading and writing tools. \
+             Comply strictly with the Harness Engineering docs convention. \
+             Do NOT write application code — only architect and document the project in `docs/`.",
+            llm_config.model
+        ),
+    };
+    let user_task = format!(
+        "The user has provided raw requirement documents at: `{}`.\n{}\n\
          1. Use tools like `read_file` or `glob` to read the raw text from that path.\n\
-         2. Use `write_file` or `edit_file` to populate and update the `docs/` structure \
-         (e.g., `docs/prd/001-feature.md`, `docs/specs/coding.spec.md`, `docs/tasks/001-feature.tasks.md`) \
-         based on these raw requirements and Investigator reports.\n\
-         3. Comply strictly with the Harness Engineering docs convention (keep required headings).\n\
-         4. Do NOT write application code. Your ONLY objective is to architect and document the project in `docs/`.",
+         2. Use `write_file` or `edit_file` to populate and update `docs/` \
+         (e.g., `docs/prd/001-feature.md`, `docs/specs/coding.spec.md`, `docs/tasks/001-feature.tasks.md`).\n\
+         3. Keep required headings per Harness Engineering convention.",
         path, investigator_context
     );
+    let agent_loop = AgentLoop::new(config, registry);
+    let result = agent_loop.run(&user_task, &[], &[], move |msgs, tools| {
+        let p = Arc::clone(&provider);
+        async move { feed_call_llm(p, msgs, tools).await }
+    }).await?;
+    println!("✅ Docs Generation Agent complete.");
+    println!("\n📤 Result:\n{}", result.answer);
 
-    // Execute it as a transparent run task
-    let _ = execute_run(&feed_task, None, max_iterations, args).await?;
     Ok(())
+}
+
+/// Lightweight LLM call helper for `execute_feed` (shared by investigator and docs generation).
+async fn feed_call_llm(
+    p: Arc<dyn LlmProvider>,
+    msgs: Vec<serde_json::Value>,
+    tools: Vec<serde_json::Value>,
+) -> Result<crate::agent::loop_exec::LlmResponse> {
+    use crate::agent::loop_exec::LlmResponse as AgentLlmResponse;
+    use crate::llm::Message;
+
+    let llm_messages: Vec<Message> = msgs.iter()
+        .filter_map(|v| {
+            let role_str = v.get("role")?.as_str()?;
+            match role_str {
+                "system" => {
+                    let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                    Some(Message::system(content))
+                }
+                "assistant" => {
+                    if let Some(tool_calls) = v.get("tool_calls").and_then(|tc| tc.as_array()) {
+                        if !tool_calls.is_empty() {
+                            let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                            Some(Message::assistant_with_tool_calls(content, tool_calls.clone()))
+                        } else {
+                            let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                            Some(Message::assistant(content))
+                        }
+                    } else {
+                        let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                        Some(Message::assistant(content))
+                    }
+                }
+                "tool" => {
+                    let tool_call_id = v.get("tool_call_id").and_then(|id| id.as_str()).unwrap_or("").to_string();
+                    let name = v.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                    let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                    Some(Message::tool_result(tool_call_id, name, content))
+                }
+                _ => {
+                    let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                    Some(Message::user(content))
+                }
+            }
+        })
+        .collect();
+
+    match p.chat(&llm_messages, &tools) {
+        Ok(resp) => {
+            if let Ok(agent_resp) = AgentLlmResponse::from_anthropic_response(&resp.raw_response) {
+                Ok(agent_resp)
+            } else {
+                Ok(AgentLlmResponse::Text(resp.content))
+            }
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Run a single task in non-interactive mode using AgentLoop + LLM
@@ -280,6 +579,13 @@ async fn execute_run(task: &str, resume_id: Option<&str>, max_iterations: usize,
     let mut registry = ToolRegistry::new();
     register_default_tools(&mut registry);
     
+    // Register AST tools
+    use crate::ast::LanguageRegistry;
+    use crate::tools::ast_tools::{AstSearchTool, AstEditTool};
+    let lang_registry = Arc::new(LanguageRegistry::new());
+    registry.register(AstSearchTool::new(Arc::clone(&lang_registry)));
+    registry.register(AstEditTool::new(Arc::clone(&lang_registry)));
+    
     // ── MCP Servers ───────────────────────────────────────────────────
     use crate::workspace::Workspace;
     let ws_config = Workspace::open(&cwd).map(|w| w.config).unwrap_or_default();
@@ -328,11 +634,16 @@ async fn execute_run(task: &str, resume_id: Option<&str>, max_iterations: usize,
 
     let skills_prompt = SkillsLoader::build_system_prompt("", &skills);
     
-    // ── Graph Engine ──────────────────────────────────────────────────
-    use crate::agent::graph::pipeline::build_zcode_pipeline;
-    let mut graph = build_zcode_pipeline(Arc::clone(&provider), registry, llm_config.model.clone(), skills_prompt).compile()?;
+    // ── Graph Engine (per-task: planner → coder → tester, max 3 fix retries) ──
+    use crate::agent::graph::pipeline::{build_task_pipeline, build_reviewer_pipeline};
+    let graph = build_task_pipeline(
+        Arc::clone(&provider),
+        Arc::clone(&registry),
+        llm_config.model.clone(),
+        skills_prompt.clone(),
+    ).compile()?;
 
-    println!("🤖 zcode Graph Agent starting...");
+    println!("🤖 zcode Task Agent starting...");
     println!("📋 Task: {} [id={}]", task, task_record.id);
     println!("🧠 Model: {}", llm_config.model);
     println!("💾 Progress saved to .zcode/tasks/{}.json", task_record.id);
@@ -341,28 +652,164 @@ async fn execute_run(task: &str, resume_id: Option<&str>, max_iterations: usize,
     // Save initial state
     let _ = store.save(&mut task_record);
 
-    let result: std::result::Result<crate::agent::graph::graph::GraphOutput, crate::error::ZcodeError> = graph.execute_with_events(
+    let task_result = graph.execute_with_events(
         &mut task_record.state,
-        |e| {
-            // Optional: debounce or filter if it gets too noisy
-            println!("🌐 {}", e);
-        }
+        |e| println!("🌐 {}", e),
     ).await;
 
-    // Save final status
-    match result {
+    // Save task-level status
+    let final_answer = match task_result {
         Ok(graph_out) => {
             task_record.status = TaskStatus::Completed;
-            // The graph result might be stored in the final state messages
-            let final_answer = task_record.state.messages.last()
+            let answer = task_record.state.messages.last()
                 .and_then(|m| m.content.clone())
                 .unwrap_or_else(|| "No output generated".into());
-                
-            task_record.state.result = Some(crate::agent::types::TaskResult::success(task_record.id.clone(), final_answer.clone()));
+            task_record.state.result = Some(crate::agent::types::TaskResult::success(
+                task_record.id.clone(), answer.clone()
+            ));
             println!("\n✅ Task complete ({} graph iterations)", graph_out.total_iterations);
-            println!("\n📤 Result:\n{}", final_answer);
+            println!("\n📤 Result:\n{}", answer);
             let _ = store.save(&mut task_record);
-            Ok(final_answer)
+            answer
+        }
+        Err(e) => {
+            task_record.status = TaskStatus::Failed;
+            task_record.error = Some(e.to_string());
+            let _ = store.save(&mut task_record);
+            return Err(e);
+        }
+    };
+
+    // ── Global Reviewer (runs once after this single task completes) ──────────
+    println!("\n🔍 Starting global code review...");
+    let reviewer_graph = build_reviewer_pipeline(
+        Arc::clone(&provider),
+        registry,
+        llm_config.model.clone(),
+        skills_prompt,
+    ).compile()?;
+
+    use crate::agent::graph::state::DefaultState;
+    use crate::agent::loop_exec::ConversationMessage;
+    let mut review_state = DefaultState::default();
+    review_state.messages.push(ConversationMessage::user(
+        format!("Task: {}\n\nTask Report:\n{}", task, final_answer)
+    ));
+
+    match reviewer_graph.execute_with_events(
+        &mut review_state,
+        |e| println!("🔍 {}", e),
+    ).await {
+        Ok(_) => {
+            let review_output = review_state.messages.last()
+                .and_then(|m| m.content.clone())
+                .unwrap_or_default();
+            println!("\n📋 Review complete:\n{}", review_output);
+        }
+        Err(e) => {
+            // Review failures are non-fatal — log and continue
+            tracing::warn!("[reviewer] Global review failed (non-fatal): {}", e);
+            println!("⚠️  Review step failed (non-fatal): {}", e);
+        }
+    }
+
+    Ok(final_answer)
+}
+
+/// Run a task through only the task pipeline (planner → coder → tester, with fix loop).
+/// Does NOT trigger the reviewer. Used internally by `execute_task`'s RunAll to allow
+/// the reviewer to be called once after all tasks complete.
+async fn execute_run_task_only(task: &str, resume_id: Option<&str>, max_iterations: usize, args: &crate::cli::args::Args) -> Result<String> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+    let store = TaskStore::new(&cwd)?;
+    let mut task_record: TaskRecord = if let Some(id) = resume_id {
+        let mut record = store.load(id)?;
+        if record.status == TaskStatus::Completed {
+            println!("⚠  Task '{}' already completed. Starting fresh.", id);
+            record = store.create(task);
+        } else {
+            println!("▶  Resuming task '{}' from iteration {}.", record.id, record.state.iteration);
+        }
+        record
+    } else {
+        store.create(task)
+    };
+    info!("Task record id={}", task_record.id);
+
+    let mut settings = Settings::load().unwrap_or_default();
+    if let Some(model) = &args.model {
+        settings.llm.model = model.clone();
+    }
+
+    let skills = SkillsLoader::load(&cwd, &settings.skill_dirs);
+    let llm_config = LlmConfig {
+        provider: settings.llm.provider.clone(),
+        model: settings.llm.model.clone(),
+        api_key: settings.llm.api_key.clone(),
+        temperature: settings.llm.temperature,
+        max_tokens: settings.llm.max_tokens,
+    };
+    let provider: Arc<dyn LlmProvider> = Arc::new(RigProvider::new(llm_config.clone()));
+
+    let mut registry = ToolRegistry::new();
+    register_default_tools(&mut registry);
+    use crate::ast::LanguageRegistry;
+    use crate::tools::ast_tools::{AstSearchTool, AstEditTool};
+    let lang_registry = Arc::new(LanguageRegistry::new());
+    registry.register(AstSearchTool::new(Arc::clone(&lang_registry)));
+    registry.register(AstEditTool::new(Arc::clone(&lang_registry)));
+
+    use crate::workspace::Workspace;
+    let ws_config = Workspace::open(&cwd).map(|w| w.config).unwrap_or_default();
+    for mcp_cfg in &settings.mcp_servers {
+        if !mcp_cfg.auto_start { continue; }
+        let exec_args: Vec<&str> = mcp_cfg.args.iter().map(|s| s.as_str()).collect();
+        let client = crate::mcp::client::McpClient::connect_stdio(&mcp_cfg.name, &mcp_cfg.command, &exec_args)?;
+        for adapter in Arc::new(client).create_adapters() { registry.register(adapter); }
+    }
+    for mcp_cfg in ws_config.mcp_servers {
+        if !mcp_cfg.auto_start { continue; }
+        let exec_args: Vec<&str> = mcp_cfg.args.iter().map(|s| s.as_str()).collect();
+        let client = crate::mcp::client::McpClient::connect_stdio(&mcp_cfg.name, &mcp_cfg.command, &exec_args)?;
+        for adapter in Arc::new(client).create_adapters() { registry.register(adapter); }
+    }
+    for mcp_str in &args.mcp {
+        let parts: Vec<&str> = mcp_str.split_whitespace().collect();
+        if parts.is_empty() { continue; }
+        let client = crate::mcp::client::McpClient::connect_stdio("cli_mcp", parts[0], &parts[1..])?;
+        for adapter in Arc::new(client).create_adapters() { registry.register(adapter); }
+    }
+    let registry = Arc::new(registry);
+    let skills_prompt = SkillsLoader::build_system_prompt("", &skills);
+
+    use crate::agent::graph::pipeline::build_task_pipeline;
+    let graph = build_task_pipeline(
+        Arc::clone(&provider),
+        Arc::clone(&registry),
+        llm_config.model.clone(),
+        skills_prompt,
+    ).compile()?;
+
+    let _ = store.save(&mut task_record);
+
+    let task_result = graph.execute_with_events(
+        &mut task_record.state,
+        |e| println!("🌐 {}", e),
+    ).await;
+
+    match task_result {
+        Ok(graph_out) => {
+            task_record.status = TaskStatus::Completed;
+            let answer = task_record.state.messages.last()
+                .and_then(|m| m.content.clone())
+                .unwrap_or_else(|| "No output generated".into());
+            task_record.state.result = Some(crate::agent::types::TaskResult::success(
+                task_record.id.clone(), answer.clone()
+            ));
+            println!("\n✅ Task [{}] complete ({} iterations)", task_record.id, graph_out.total_iterations);
+            let _ = store.save(&mut task_record);
+            Ok(answer)
         }
         Err(e) => {
             task_record.status = TaskStatus::Failed;

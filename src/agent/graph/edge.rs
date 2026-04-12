@@ -116,6 +116,155 @@ pub mod routers {
             _ => Some(retry_node.clone()),
         }
     }
+
+    /// Router: check `test_passed` metadata — pass → pass_node, fail → retry_node
+    /// If `coder_retries` >= `max_retries`, force → pass_node (skip retry)
+    pub fn test_router(
+        retry_node: &str,
+        pass_node: &str,
+        max_retries: u64,
+    ) -> impl Fn(&DefaultState) -> Option<String> + Send + Sync + 'static {
+        let retry_node = retry_node.to_string();
+        let pass_node = pass_node.to_string();
+        move |state: &DefaultState| {
+            let retries = state.metadata.get("coder_retries")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            
+            match state.metadata.get("test_passed") {
+                Some(v) if v.as_bool() == Some(true) => {
+                    tracing::info!("[test_router] Test PASSED → {}", pass_node);
+                    Some(pass_node.clone())
+                }
+                _ if retries >= max_retries => {
+                    tracing::warn!("[test_router] Coder retries exhausted ({}/{}) → forcing {}", retries, max_retries, pass_node);
+                    Some(pass_node.clone())
+                }
+                _ => {
+                    tracing::info!("[test_router] Test FAILED (retry {}/{}) → {}", retries, max_retries, retry_node);
+                    Some(retry_node.clone())
+                }
+            }
+        }
+    }
+
+    /// Router: check `test_passed` metadata — pass AND `is_simple` → fast_end_node
+    /// pass AND NOT `is_simple` → pass_node
+    /// fail → retry_node
+    /// If `coder_retries` >= `max_retries`, force → pass_node (or fast_end_node if simple)
+    pub fn test_fastpath_router(
+        retry_node: &str,
+        pass_node: &str,
+        fast_end_node: &str,
+        max_retries: u64,
+    ) -> impl Fn(&DefaultState) -> Option<String> + Send + Sync + 'static {
+        let retry_node = retry_node.to_string();
+        let pass_node = pass_node.to_string();
+        let fast_end_node = fast_end_node.to_string();
+        move |state: &DefaultState| {
+            let retries = state.metadata.get("coder_retries")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            
+            let is_simple = state.metadata.get("is_simple").and_then(|v| v.as_bool()).unwrap_or(false);
+            let target_node = if is_simple { fast_end_node.clone() } else { pass_node.clone() };
+
+            match state.metadata.get("test_passed") {
+                Some(v) if v.as_bool() == Some(true) => {
+                    if is_simple {
+                        tracing::info!("[test_fastpath_router] Test PASSED & FAST_PATH → {}", target_node);
+                        None // __end__ is represented by None
+                    } else {
+                        tracing::info!("[test_fastpath_router] Test PASSED → {}", target_node);
+                        Some(target_node)
+                    }
+                }
+                _ if retries >= max_retries => {
+                    if is_simple {
+                        tracing::warn!("[test_fastpath_router] Coder retries exhausted & FAST_PATH → forcing END");
+                        None
+                    } else {
+                        tracing::warn!("[test_fastpath_router] Coder retries exhausted ({}/{}) → forcing {}", retries, max_retries, target_node);
+                        Some(target_node)
+                    }
+                }
+                _ => {
+                    tracing::info!("[test_fastpath_router] Test FAILED (retry {}/{}) → {}", retries, max_retries, retry_node);
+                    Some(retry_node.clone())
+                }
+            }
+        }
+    }
+
+    /// Router for per-task test-fix loop.
+    ///
+    /// After each coder run, the tester checks the produced code.
+    /// - `test_passed = true`  → `None` (task done, exit to END)
+    /// - `test_passed = false` AND `coder_retries < max_retries` → `Some(retry_node)` (back to coder with failure info)
+    /// - `test_passed = false` AND `coder_retries >= max_retries` → `None` (retries exhausted, force END)
+    ///
+    /// The `coder_retries` counter must be incremented by the coder node itself each time it runs.
+    pub fn task_test_router(
+        retry_node: &str,
+        max_retries: u64,
+    ) -> impl Fn(&DefaultState) -> Option<String> + Send + Sync + 'static {
+        let retry_node = retry_node.to_string();
+        move |state: &DefaultState| {
+            let retries = state.metadata.get("coder_retries")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+
+            match state.metadata.get("test_passed") {
+                Some(v) if v.as_bool() == Some(true) => {
+                    tracing::info!("[task_test_router] Test PASSED → END (task complete)");
+                    None // END — task successfully verified
+                }
+                _ if retries >= max_retries => {
+                    tracing::warn!(
+                        "[task_test_router] Test FAILED but retries exhausted ({}/{}) → forcing END",
+                        retries, max_retries
+                    );
+                    None // END — give up after max retries
+                }
+                _ => {
+                    tracing::info!(
+                        "[task_test_router] Test FAILED (retry {}/{}) → {}",
+                        retries, max_retries, retry_node
+                    );
+                    Some(retry_node.clone())
+                }
+            }
+        }
+    }
+
+    /// Router: check `review_passed` metadata — pass → END, fail → retry_node
+    /// If `coder_retries` >= `max_retries`, force → END (skip retry)
+    pub fn review_router_with_limit(
+        retry_node: &str,
+        max_retries: u64,
+    ) -> impl Fn(&DefaultState) -> Option<String> + Send + Sync + 'static {
+        let retry_node = retry_node.to_string();
+        move |state: &DefaultState| {
+            let retries = state.metadata.get("coder_retries")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            
+            match state.metadata.get("review_passed") {
+                Some(v) if v.as_bool() == Some(true) => {
+                    tracing::info!("[review_router] Review PASSED → END");
+                    None
+                }
+                _ if retries >= max_retries => {
+                    tracing::warn!("[review_router] Coder retries exhausted ({}/{}) → forcing END", retries, max_retries);
+                    None
+                }
+                _ => {
+                    tracing::info!("[review_router] Review FAILED (retry {}/{}) → {}", retries, max_retries, retry_node);
+                    Some(retry_node.clone())
+                }
+            }
+        }
+    }
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -198,5 +347,189 @@ mod tests {
         let state = DefaultState::new(Task::new("test"));
         let router = routers::review_router("coder");
         assert_eq!(router(&state), Some("coder".to_string()));
+    }
+
+    // ============================================================
+    // test_router tests
+    // ============================================================
+
+    #[test]
+    fn test_test_router_passed() {
+        let mut state = DefaultState::new(Task::new("test"));
+        state.metadata.insert("test_passed".into(), serde_json::json!(true));
+        let router = routers::test_router("coder", "reviewer", 3);
+        assert_eq!(router(&state), Some("reviewer".to_string()));
+    }
+
+    #[test]
+    fn test_test_router_failed_first_attempt() {
+        let mut state = DefaultState::new(Task::new("test"));
+        state.metadata.insert("test_passed".into(), serde_json::json!(false));
+        state.metadata.insert("coder_retries".into(), serde_json::json!(1));
+        let router = routers::test_router("coder", "reviewer", 3);
+        assert_eq!(router(&state), Some("coder".to_string())); // retry
+    }
+
+    #[test]
+    fn test_test_router_failed_retries_exhausted() {
+        let mut state = DefaultState::new(Task::new("test"));
+        state.metadata.insert("test_passed".into(), serde_json::json!(false));
+        state.metadata.insert("coder_retries".into(), serde_json::json!(3));
+        let router = routers::test_router("coder", "reviewer", 3);
+        assert_eq!(router(&state), Some("reviewer".to_string())); // forced forward
+    }
+
+    #[test]
+    fn test_test_router_no_metadata_first_run() {
+        let state = DefaultState::new(Task::new("test"));
+        // No test_passed, no coder_retries → fail + retries=0 < 3 → retry
+        let router = routers::test_router("coder", "reviewer", 3);
+        assert_eq!(router(&state), Some("coder".to_string()));
+    }
+
+    #[test]
+    fn test_test_router_passed_even_with_high_retries() {
+        let mut state = DefaultState::new(Task::new("test"));
+        state.metadata.insert("test_passed".into(), serde_json::json!(true));
+        state.metadata.insert("coder_retries".into(), serde_json::json!(99));
+        let router = routers::test_router("coder", "reviewer", 3);
+        // Pass always wins regardless of retry count
+        assert_eq!(router(&state), Some("reviewer".to_string()));
+    }
+
+    #[test]
+    fn test_test_router_at_exact_limit() {
+        let mut state = DefaultState::new(Task::new("test"));
+        state.metadata.insert("test_passed".into(), serde_json::json!(false));
+        state.metadata.insert("coder_retries".into(), serde_json::json!(3)); // exactly at limit
+        let router = routers::test_router("coder", "reviewer", 3);
+        assert_eq!(router(&state), Some("reviewer".to_string())); // forced forward
+    }
+
+    #[test]
+    fn test_test_router_one_below_limit() {
+        let mut state = DefaultState::new(Task::new("test"));
+        state.metadata.insert("test_passed".into(), serde_json::json!(false));
+        state.metadata.insert("coder_retries".into(), serde_json::json!(2)); // below limit
+        let router = routers::test_router("coder", "reviewer", 3);
+        assert_eq!(router(&state), Some("coder".to_string())); // still retries
+    }
+
+    // ============================================================
+    // review_router_with_limit tests
+    // ============================================================
+
+    #[test]
+    fn test_review_router_with_limit_passed() {
+        let mut state = DefaultState::new(Task::new("test"));
+        state.metadata.insert("review_passed".into(), serde_json::json!(true));
+        let router = routers::review_router_with_limit("coder", 3);
+        assert!(router(&state).is_none()); // END
+    }
+
+    #[test]
+    fn test_review_router_with_limit_failed_first() {
+        let mut state = DefaultState::new(Task::new("test"));
+        state.metadata.insert("review_passed".into(), serde_json::json!(false));
+        state.metadata.insert("coder_retries".into(), serde_json::json!(1));
+        let router = routers::review_router_with_limit("coder", 3);
+        assert_eq!(router(&state), Some("coder".to_string())); // retry
+    }
+
+    #[test]
+    fn test_review_router_with_limit_retries_exhausted() {
+        let mut state = DefaultState::new(Task::new("test"));
+        state.metadata.insert("review_passed".into(), serde_json::json!(false));
+        state.metadata.insert("coder_retries".into(), serde_json::json!(3));
+        let router = routers::review_router_with_limit("coder", 3);
+        assert!(router(&state).is_none()); // forced END
+    }
+
+    #[test]
+    fn test_review_router_with_limit_no_metadata() {
+        let state = DefaultState::new(Task::new("test"));
+        // No review_passed → fail, no coder_retries → 0 < 3 → retry
+        let router = routers::review_router_with_limit("coder", 3);
+        assert_eq!(router(&state), Some("coder".to_string()));
+    }
+
+    #[test]
+    fn test_review_router_with_limit_passed_ignores_retries() {
+        let mut state = DefaultState::new(Task::new("test"));
+        state.metadata.insert("review_passed".into(), serde_json::json!(true));
+        state.metadata.insert("coder_retries".into(), serde_json::json!(99));
+        let router = routers::review_router_with_limit("coder", 3);
+        assert!(router(&state).is_none()); // Pass always wins
+    }
+
+    #[test]
+    fn test_review_router_with_limit_max_retries_zero() {
+        // max_retries=0 means never retry
+        let state = DefaultState::new(Task::new("test"));
+        let router = routers::review_router_with_limit("coder", 0);
+        assert!(router(&state).is_none()); // retries(0) >= 0 → forced END
+    }
+
+    #[test]
+    fn test_test_router_max_retries_zero() {
+        // max_retries=0 means never retry
+        let state = DefaultState::new(Task::new("test"));
+        let router = routers::test_router("coder", "reviewer", 0);
+        assert_eq!(router(&state), Some("reviewer".to_string())); // retries(0) >= 0 → forced forward
+    }
+
+    // ============================================================
+    // task_test_router tests
+    // ============================================================
+
+    #[test]
+    fn test_task_test_router_pass() {
+        let mut state = DefaultState::new(Task::new("test"));
+        state.metadata.insert("test_passed".into(), serde_json::json!(true));
+        let router = routers::task_test_router("coder", 3);
+        assert!(router(&state).is_none()); // PASS → END
+    }
+
+    #[test]
+    fn test_task_test_router_fail_retry() {
+        let mut state = DefaultState::new(Task::new("test"));
+        state.metadata.insert("test_passed".into(), serde_json::json!(false));
+        state.metadata.insert("coder_retries".into(), serde_json::json!(1u64));
+        let router = routers::task_test_router("coder", 3);
+        assert_eq!(router(&state), Some("coder".to_string())); // FAIL + retries < 3 → retry
+    }
+
+    #[test]
+    fn test_task_test_router_fail_exhausted() {
+        let mut state = DefaultState::new(Task::new("test"));
+        state.metadata.insert("test_passed".into(), serde_json::json!(false));
+        state.metadata.insert("coder_retries".into(), serde_json::json!(3u64));
+        let router = routers::task_test_router("coder", 3);
+        assert!(router(&state).is_none()); // FAIL + retries >= 3 → force END
+    }
+
+    #[test]
+    fn test_task_test_router_no_metadata_first_run() {
+        // No test_passed, no coder_retries → fail + retries(0) < 3 → retry
+        let state = DefaultState::new(Task::new("test"));
+        let router = routers::task_test_router("coder", 3);
+        assert_eq!(router(&state), Some("coder".to_string()));
+    }
+
+    #[test]
+    fn test_task_test_router_max_retries_zero() {
+        // max_retries=0 → always forced END even on first failure
+        let state = DefaultState::new(Task::new("test"));
+        let router = routers::task_test_router("coder", 0);
+        assert!(router(&state).is_none()); // retries(0) >= 0 → force END
+    }
+
+    #[test]
+    fn test_task_test_router_pass_ignores_retry_count() {
+        let mut state = DefaultState::new(Task::new("test"));
+        state.metadata.insert("test_passed".into(), serde_json::json!(true));
+        state.metadata.insert("coder_retries".into(), serde_json::json!(99u64));
+        let router = routers::task_test_router("coder", 3);
+        assert!(router(&state).is_none()); // PASS always wins → END
     }
 }

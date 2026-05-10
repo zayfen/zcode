@@ -15,7 +15,7 @@
 | Category | Capability |
 |---|---|
 | **Multi-Agent** | Orchestrator / Planner / Coder / Reviewer agents with async message bus |
-| **LLM Providers** | Anthropic Claude, OpenAI GPT, local Ollama — pluggable via `LlmProvider` trait |
+| **LLM Providers** | OpenAI-compatible chat completions endpoints via `LlmProvider` trait |
 | **Tool System** | Built-in tools (file, shell, search, AST) + custom tools via scripting or MCP |
 | **Scripting** | Lua 5.4, Python, JavaScript (QuickJS), Shell — with lifecycle hooks |
 | **MCP Client** | JSON-RPC 2.0 over stdio — connect any MCP-compatible tool server |
@@ -78,10 +78,10 @@ name = "my-project"
 languages = ["rust", "typescript"]
 frameworks = ["tokio", "react"]
 
-# LLM provider override
 [llm]
-provider = "anthropic"          # anthropic | openai | ollama
-model    = "claude-3-5-sonnet-20241022"
+provider = "openai-compatible"
+model    = "gpt-4o"
+fast_model = "gpt-4o-mini"
 temperature = 0.7
 
 # Tool access controls
@@ -127,9 +127,10 @@ Global settings live in `~/.config/zcode/settings.toml`:
 
 ```toml
 [llm]
-provider   = "anthropic"
-api_key    = "sk-ant-..."
-model      = "claude-3-5-sonnet-20241022"
+provider   = "openai-compatible"
+api_key    = "sk-..."
+model      = "gpt-4o"
+fast_model = "gpt-4o-mini"
 max_tokens = 8192
 
 [tui]

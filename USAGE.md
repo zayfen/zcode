@@ -50,7 +50,7 @@ Launch the interactive TUI chat interface.
 
 ```bash
 zcode chat
-zcode chat --model claude-3-5-sonnet-20241022
+zcode chat --model gpt-4o
 zcode chat --system "You are a senior Rust developer"
 ```
 
@@ -287,7 +287,7 @@ zcode config edit
 zcode config validate
 
 # Set a value
-zcode config set llm.model "claude-3-5-sonnet-20241022"
+zcode config set llm.model "gpt-4o"
 zcode config set snapshots.max_snapshots 100
 ```
 
@@ -379,7 +379,9 @@ For languages not built in (Zig, Gleam, Haskell, etc.):
 |---|---|
 | `ZCODE_CONFIG` | Override config file path |
 | `ZCODE_API_KEY` | LLM API key (overrides config) |
-| `ZCODE_MODEL` | LLM model name (overrides config) |
+| `ZCODE_BASE_URL` | OpenAI-compatible API base URL |
+| `ZCODE_MODEL` | Main LLM model name (overrides config) |
+| `ZCODE_FAST_MODEL` | Optional fast model for simple tasks |
 | `ZCODE_LOG` | Log level: error, warn, info, debug, trace |
 | `ZCODE_NO_COLOR` | Disable color output |
 

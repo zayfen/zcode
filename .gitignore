@@ -1,4 +1,30 @@
 /target
 /.worktrees
-.zcode/tasks/
+
+# Local agent/runtime state
+/.claude/
+/.omc/
+/.zcode/
+.ai-driver
+**/.omc/
+**/.zcode/
 example/.zcode/
+
+# Rust build artifacts
+target/
+
+# Node/Vite example artifacts
+**/node_modules/
+**/dist/
+**/.vite/
+**/test-results/
+*.tsbuildinfo
+
+# Logs and debug leftovers
+*.log
+nohup.out
+errors*.txt
+bt.txt
+debug_*
+test_debug_*
+trace_capture.ts

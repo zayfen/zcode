@@ -1,4 +1,12 @@
 #!/bin/bash
+set -euo pipefail
+
 cd /Users/riven/Github/zcode/examples/xiangqi
+if [ -z "${ZCODE_API_KEY:-}" ]; then
+  echo "ZCODE_API_KEY is required" >&2
+  exit 1
+fi
+
 ../../target/debug/zcode task sync
-env ANTHROPIC_API_KEY=b5e665920fb349e7989ce780d245941b.TqOI2itcGmj1cxkw ANTHROPIC_BASE_URL=https://open.bigmodel.cn/api/anthropic ../../target/debug/zcode task run-all -m "glm-5.1" -j 3 > zcode_execution.log 2>&1
+ZCODE_BASE_URL="${ZCODE_BASE_URL:-https://open.bigmodel.cn/api/paas/v4}" \
+  ../../target/debug/zcode task run-all -m "glm-5.1" -j 3 > zcode_execution.log 2>&1

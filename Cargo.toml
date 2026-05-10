@@ -7,7 +7,28 @@ authors = ["zcode contributors"]
 description = "A programming agent CLI tool"
 license = "MIT"
 
+[workspace]
+members = [
+    ".",
+    "crates/zcode_core",
+    "crates/zcode_ui",
+    "crates/zcode_requirements",
+    "crates/zcode_orchestration",
+    "crates/zcode_llm_provider",
+    "crates/zcode_capabilities",
+    "crates/zcode_session",
+]
+resolver = "2"
+
 [dependencies]
+zcode_core = { path = "crates/zcode_core" }
+zcode_ui = { path = "crates/zcode_ui" }
+zcode_requirements = { path = "crates/zcode_requirements" }
+zcode_orchestration = { path = "crates/zcode_orchestration" }
+zcode_llm_provider = { path = "crates/zcode_llm_provider" }
+zcode_capabilities = { path = "crates/zcode_capabilities" }
+zcode_session = { path = "crates/zcode_session" }
+
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }
 tokio-stream = "0.1"
@@ -93,5 +114,4 @@ path = "src/lib.rs"
 [[bin]]
 name = "zcode"
 path = "src/main.rs"
-
 

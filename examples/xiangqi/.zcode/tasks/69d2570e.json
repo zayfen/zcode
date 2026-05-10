@@ -1,0 +1,68 @@
+{
+  "id": "69d2570e",
+  "task": "Implement `getLegalMoves(board, position)` — generate raw moves for piece at `position`, then filter out any move that would leave own general in check or violate flying-general rule.",
+  "status": "failed",
+  "created_at": 1775392513,
+  "updated_at": 1776010707,
+  "state": {
+    "messages": [
+      {
+        "role": "assistant",
+        "content": "PLAN:\nNow I have a complete understanding of the codebase. Let me analyze the situation and form my plan.\n\n## Analysis Summary\n\nThe `getLegalMoves(board, position)` function **already exists** in `src/engine/specialRules.ts` (lines 66-82) with the exact logic described in the task:\n\n1. Calls `getRawMoves(board, from)` to get all pseudo-legal moves for the piece\n2. Filters each raw move by:\n   - Applying the move on a copy of the board (`applyMove`)\n   - Checking the flying-general rule (`isFlyingGeneral(newBoard)`) \n   - Checking whether own general is in check (`isInCheck(newBoard, piece.player)`)\n\n**However**, there is a **pre-existing bug** causing a test failure in `debug-capture-sequence.test.ts`:\n\n### Bug Analysis\n\nAfter Step 3 of the test sequence (Red knight from `(9,1)` to `(7,2)`), the board has:\n- Red knight at `(7,2)` — **not** on column 4\n- Red cannon at `(7,1)` — **still** at initial position (it was never moved)\n\nWhen Step 4 tries `Black chariot (1,8) → (4,8)`:\n- The black general is at `(0,4)`, red general at `(9,4)`, and all 3 pieces on col 4 are still in place → **no** flying general violation\n- The black general is **not** in check after this move\n- The move should be legal\n\n**The test expectation is wrong** — it expects `(9,1)→(7,2)` to move the red knight, but the actual piece at `(9,1)` on the board is a knight that can't reach `(7,2)` from there. The move `m3` silently returns `valid: false`, so the board state never progresses past Step 2.\n\n---\n\n## Execution Plan\n\n### Step 1 — Fix the broken test in `debug-capture-sequence.test.ts`\n**File:** `src/engine/__tests__/debug-capture-sequence.test.ts`\n\nThe test's Step 3 assumes a move that doesn't actually execute (because the piece position is wrong after the prior moves). We need to fix the move sequence to be a valid, legal game. There are two approaches:\n\n**Option A (preferred):** Fix the move at Step 3 to move a piece that can actually reach the target square legally. For example:\n- Change Step 3 to move `Red knight (9,7) → (7,6)` (right knight forward, which is a valid L-shape: `{dr:-2, dc:-1}` with no block). This piece hasn't moved yet and the target `(7,6)` is empty.\n\n**Option B:** Insert an extra move pair (black move + red move) to set up the desired position, then continue the capture sequence.\n\nWith Option A, verify the remaining steps (4-6) still make sense for the capture scenario.\n\n### Step 2 — Update move sequence validation in the test\nWalk through each step after the fix to ensure:\n- Every `from` position has the correct piece (considering all prior moves)\n- Every `to` position is in the piece's legal move set\n- The capture at the end (Step 6: black chariot captures red chariot on row 4) still works\n\n### Step 3 — Run all engine tests to confirm\nExecute the full test suite (`npx vitest run src/engine/`) and verify all 15 test files pass, including the fixed `debug-capture-sequence.test.ts`.\n\n### Files to modify:\n1. `src/engine/__tests__/debug-capture-sequence.test.ts` — fix the invalid move sequence\n\n### Files that are already correct (no changes needed):\n- `src/engine/specialRules.ts` — `getLegalMoves` implementation is complete and correct\n- `src/engine/moveValidation.ts` — `getRawMoves` generates correct pseudo-legal moves\n- `src/engine/checkDetection.ts` — `isInCheck`, `isSquareAttackedBy`, `isFlyingGeneral` all work correctly\n- All other test files pass successfully\n\n[FAST_PATH] — The core `getLegalMoves` function is already implemented. Only a pre-existing test bug needs fixing."
+      },
+      {
+        "role": "assistant",
+        "content": "PLAN:\nTask acknowledged. No API key found for provider 'anthropic'. Set the corresponding env variable to enable LLM responses."
+      },
+      {
+        "role": "assistant",
+        "content": "CODER_REPORT:\nTask acknowledged. No API key found for provider 'anthropic'. Set the corresponding env variable to enable LLM responses."
+      },
+      {
+        "role": "assistant",
+        "content": "TEST_REPORT:\nTask acknowledged. No API key found for provider 'anthropic'. Set the corresponding env variable to enable LLM responses."
+      },
+      {
+        "role": "assistant",
+        "content": "CODER_REPORT:\nTask acknowledged. No API key found for provider 'anthropic'. Set the corresponding env variable to enable LLM responses."
+      },
+      {
+        "role": "assistant",
+        "content": "TEST_REPORT:\nTask acknowledged. No API key found for provider 'anthropic'. Set the corresponding env variable to enable LLM responses."
+      },
+      {
+        "role": "assistant",
+        "content": "CODER_REPORT:\nTask acknowledged. No API key found for provider 'anthropic'. Set the corresponding env variable to enable LLM responses."
+      },
+      {
+        "role": "assistant",
+        "content": "TEST_REPORT:\nTask acknowledged. No API key found for provider 'anthropic'. Set the corresponding env variable to enable LLM responses."
+      }
+    ],
+    "task": {
+      "id": "3db8c5df-370d-47ad-9f43-f8b583568897",
+      "description": "Implement `getLegalMoves(board, position)` — generate raw moves for piece at `position`, then filter out any move that would leave own general in check or violate flying-general rule.",
+      "cwd": null,
+      "context": {},
+      "priority": "Normal",
+      "parent_id": null
+    },
+    "result": {
+      "task_id": "69d2570e",
+      "success": true,
+      "output": "TEST_REPORT:\nTask acknowledged. No API key found for provider 'anthropic'. Set the corresponding env variable to enable LLM responses.",
+      "files_modified": [],
+      "error": null,
+      "llm_calls": 0,
+      "tool_calls": 0
+    },
+    "agent_state": "Executing",
+    "metadata": {
+      "test_passed": false,
+      "coder_retries": 3,
+      "is_simple": false
+    },
+    "iteration": 8
+  },
+  "error": "LLM API error: Anthropic request failed: error sending request for url (https://open.bigmodel.cn/api/anthropic/v1/messages)"
+}

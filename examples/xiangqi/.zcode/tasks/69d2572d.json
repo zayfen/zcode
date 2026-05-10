@@ -1,0 +1,68 @@
+{
+  "id": "69d2572d",
+  "task": "`legalMoveFilter.test.ts` — verify that moves leaving own king in check are filtered out.",
+  "status": "failed",
+  "created_at": 1775392513,
+  "updated_at": 1776010707,
+  "state": {
+    "messages": [
+      {
+        "role": "assistant",
+        "content": "PLAN:\nNow I have a thorough understanding of the codebase. Let me formulate the execution plan.\n\n---\n\n## Execution Plan\n\n**Goal:** Create `src/engine/__tests__/legalMoveFilter.test.ts` — a dedicated test file that verifies `getLegalMoves` (in `specialRules.ts`) correctly filters out moves that would leave the moving player's own general in check.\n\n### Context\n\nThe legal-move filter lives in `getLegalMoves()` (`src/engine/specialRules.ts:57-72`). It works by:\n1. Generating raw moves via `getRawMoves()` (`moveValidation.ts`).\n2. For each raw move, applying it to a copy of the board, then checking:\n   - `isFlyingGeneral(newBoard)` → reject if true\n   - `isInCheck(newBoard, piece.player)` → reject if true\n\nExisting tests cover flying-general filtering (`flyingGeneral.test.ts`) and one check scenario (`illegalMoveRejection.test.ts` line ~88), but there is **no dedicated test file** for the **check-filtering** aspect of `getLegalMoves`.\n\n### Step 1 — Create the test file\n\nCreate `src/engine/__tests__/legalMoveFilter.test.ts` with the following structure:\n\n### Step 2 — Add helper utilities (reuse patterns from existing tests)\n\n```\n- emptyBoard(): Board           — 10×9 null grid\n- place(board, r, c, piece)     — immutable piece placement\n- moveSet(moves): Set<string>   — \"row,col\" set for easy assertions\n- Piece factories: redGeneral, blackGeneral, redChariot, blackChariot, etc.\n```\n\n### Step 3 — Write test cases\n\n**`describe('getLegalMoves — check filtering')`**\n\n| # | Test name | Setup | What it verifies |\n|---|-----------|-------|------------------|\n| 1 | **Chariot moving off blocking file exposes general** | Red general (9,4), black chariot (7,4), red chariot (8,4) blocking. | Red chariot moving laterally to (8,3) is **excluded** from legal moves. |\n| 2 | **Chariot can capture the checking piece** | Same setup as above. | Red chariot capturing black chariot at (7,4) is **included** (removes the threat). |\n| 3 | **General move out of check** | Red general (9,4), black chariot (7,4) giving check (nothing blocking). | General can move to safe squares (e.g. (9,3)) but NOT to squares still under attack (e.g. (8,4) still on same file). |\n| 4 | **Knight pinned to king by chariot on file** | Red general (9,4), red knight (8,4), black chariot (7,4). Knight at (8,4) is pinned. | All knight moves that leave (8,4) are filtered; knight has **0 legal moves**. |\n| 5 | **Knight pinned but captures checking piece** | Red general (9,4), red knight (8,4), black chariot (7,4). Knight CAN capture at (7,4) via L-move {dr:-1,dc:0}… actually (8,4)→(7,4) is not an L-move for a knight. Redefine: use chariot or cannon. | Verify pinned piece with capture option. |\n| 6 | **Advisor blocking check cannot move** | Red general (9,4), red advisor (8,3), black chariot (9,3) threatening col 3. Advisor at (8,3) blocks the threat on col 3 (actually this doesn't block chariot on same col). Redefine: Red general (9,4), red advisor (8,4), black chariot (7,4). Advisor at (8,4) is sole blocker. | Advisor diagonal moves all leave general in check → 0 legal moves. |\n| 7 | **Cannon pinned on file — cannot move off** | Red general (9,4), red cannon (6,4), black chariot (7,4) on same file. Cannon is pinned. | Cannon moving off file is excluded; only moves staying on file (if any) are legal. |\n| 8 | **Elephant blocked by check after moving** | Red general (9,4), red elephant (7,2), black chariot (7,0). If elephant moves to (5,0), general remains safe. If elephant moves to (5,4), it blocks col 4 (safe). But if elephant at (7,4) and moves away exposing general to black chariot at (5,4) — verify filtered. | Elephant move that exposes general is filtered. |\n| 9 | **Soldier pinned by chariot on file** | Red general (9,4), red soldier (6,4) (crossed river), black chariot (5,4). Soldier moving sideways exposes general. | Sideways moves are filtered; forward (5,4) is capture of the checker → included. |\n| 10 | **Multiple threats — only moves resolving ALL threats are legal** | Red general (9,4), black chariot (9,3), black chariot (8,4). General is under double check. | Only moving the general to a square safe from BOTH chariots is legal (or 0 moves if no escape). |\n| 11 | **Black player's moves are also filtered** | Mirror a scenario for black. Black general (0,4), red chariot (2,4), black chariot (1,4) blocking. Black chariot at (1,4) moves laterally → exposes black general → filtered. | Check filtering works for both players. |\n| 12 | **getLegalMoves returns empty array when piece is empty** | Empty square. | Returns `[]` (edge case / no crash). |\n| 13 | **Non-pinned piece has all raw moves preserved** | No threats on board. Red chariot with clear lines. | `getLegalMoves` returns the same set as `getRawMoves`. |\n\n### Step 4 — Verify with existing infrastructure\n\nRun `npx vitest run src/engine/__tests__/legalMoveFilter.test.ts` to confirm all tests pass.\n\n### Key imports needed\n\n```typescript\nimport { describe, it, expect } from 'vitest';\nimport type { Board, Piece, Position } from '../types';\nimport { getLegalMoves } from '../specialRules';\nimport { getRawMoves } from '../moveValidation';\n```\n\n### Design principles\n\n- **No overlap** with `flyingGeneral.test.ts` — this file focuses purely on the **check-detection filter** (`isInCheck` after applying the move).\n- **No overlap** with `illegalMoveRejection.test.ts` — that file tests `makeMove` (the full pipeline); this file tests the lower-level `getLegalMoves` function directly.\n- Each test constructs a minimal board with `emptyBoard()` + `place()` to isolate the exact scenario being tested.\n- Use `moveSet()` helper for readable assertions (`expect(ms.has('8,3')).toBe(false)`)."
+      },
+      {
+        "role": "assistant",
+        "content": "PLAN:\nTask acknowledged. No API key found for provider 'anthropic'. Set the corresponding env variable to enable LLM responses."
+      },
+      {
+        "role": "assistant",
+        "content": "CODER_REPORT:\nTask acknowledged. No API key found for provider 'anthropic'. Set the corresponding env variable to enable LLM responses."
+      },
+      {
+        "role": "assistant",
+        "content": "TEST_REPORT:\nTask acknowledged. No API key found for provider 'anthropic'. Set the corresponding env variable to enable LLM responses."
+      },
+      {
+        "role": "assistant",
+        "content": "CODER_REPORT:\nTask acknowledged. No API key found for provider 'anthropic'. Set the corresponding env variable to enable LLM responses."
+      },
+      {
+        "role": "assistant",
+        "content": "TEST_REPORT:\nTask acknowledged. No API key found for provider 'anthropic'. Set the corresponding env variable to enable LLM responses."
+      },
+      {
+        "role": "assistant",
+        "content": "CODER_REPORT:\nTask acknowledged. No API key found for provider 'anthropic'. Set the corresponding env variable to enable LLM responses."
+      },
+      {
+        "role": "assistant",
+        "content": "TEST_REPORT:\nTask acknowledged. No API key found for provider 'anthropic'. Set the corresponding env variable to enable LLM responses."
+      }
+    ],
+    "task": {
+      "id": "fb02a748-7843-4990-a743-6c41fdd8452b",
+      "description": "`legalMoveFilter.test.ts` — verify that moves leaving own king in check are filtered out.",
+      "cwd": null,
+      "context": {},
+      "priority": "Normal",
+      "parent_id": null
+    },
+    "result": {
+      "task_id": "69d2572d",
+      "success": true,
+      "output": "TEST_REPORT:\nTask acknowledged. No API key found for provider 'anthropic'. Set the corresponding env variable to enable LLM responses.",
+      "files_modified": [],
+      "error": null,
+      "llm_calls": 0,
+      "tool_calls": 0
+    },
+    "agent_state": "Executing",
+    "metadata": {
+      "is_simple": false,
+      "test_passed": false,
+      "coder_retries": 3
+    },
+    "iteration": 8
+  },
+  "error": "LLM API error: Anthropic request failed: error sending request for url (https://open.bigmodel.cn/api/anthropic/v1/messages)"
+}

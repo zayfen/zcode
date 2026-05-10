@@ -46,6 +46,8 @@ pub enum MessageRole {
     User,
     /// Assistant message
     Assistant,
+    /// Tool result message (response from a tool execution)
+    Tool,
 }
 
 /// A chat message
@@ -53,8 +55,17 @@ pub enum MessageRole {
 pub struct Message {
     /// Role of the message sender
     pub role: MessageRole,
-    /// Content of the message
+    /// Content of the message (text body)
     pub content: String,
+    /// Tool calls requested by the assistant (Anthropic tool_use blocks / OpenAI tool_calls).
+    /// Present only when role == Assistant and the LLM requested tool use.
+    pub tool_calls: Option<Vec<serde_json::Value>>,
+    /// For tool result messages: the tool_use_id / tool_call_id this result corresponds to.
+    /// Present only when role == Tool.
+    pub tool_call_id: Option<String>,
+    /// For tool result messages: the tool name.
+    /// Present only when role == Tool.
+    pub tool_name: Option<String>,
 }
 
 impl Message {
@@ -63,6 +74,9 @@ impl Message {
         Self {
             role: MessageRole::System,
             content: content.into(),
+            tool_calls: None,
+            tool_call_id: None,
+            tool_name: None,
         }
     }
 
@@ -71,14 +85,45 @@ impl Message {
         Self {
             role: MessageRole::User,
             content: content.into(),
+            tool_calls: None,
+            tool_call_id: None,
+            tool_name: None,
         }
     }
 
-    /// Create a new assistant message
+    /// Create a new assistant message (plain text)
     pub fn assistant(content: impl Into<String>) -> Self {
         Self {
             role: MessageRole::Assistant,
             content: content.into(),
+            tool_calls: None,
+            tool_call_id: None,
+            tool_name: None,
+        }
+    }
+
+    /// Create an assistant message that requests tool calls.
+    ///
+    /// `tool_calls` should be the raw JSON blocks from the LLM response
+    /// (Anthropic `tool_use` blocks or OpenAI `tool_calls` array elements).
+    pub fn assistant_with_tool_calls(content: impl Into<String>, tool_calls: Vec<serde_json::Value>) -> Self {
+        Self {
+            role: MessageRole::Assistant,
+            content: content.into(),
+            tool_calls: Some(tool_calls),
+            tool_call_id: None,
+            tool_name: None,
+        }
+    }
+
+    /// Create a tool result message (the output of executing a tool).
+    pub fn tool_result(tool_call_id: impl Into<String>, tool_name: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            role: MessageRole::Tool,
+            content: content.into(),
+            tool_calls: None,
+            tool_call_id: Some(tool_call_id.into()),
+            tool_name: Some(tool_name.into()),
         }
     }
 }

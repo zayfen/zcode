@@ -40,12 +40,13 @@ impl AstSearchTool {
 
 impl Tool for AstSearchTool {
     fn name(&self) -> &str {
-        "ast_search"
+        "analyze_code_structure"
     }
 
     fn description(&self) -> &str {
         "Search for AST nodes of a specific type in a source file. \
-         Requires a grammar to be registered in the LanguageRegistry for the file's extension."
+         Supported languages: Rust (.rs), JavaScript (.js, .jsx, .mjs), \
+         TypeScript (.ts, .tsx), Python (.py), Go (.go), C (.c, .h), C++ (.cpp, .hpp, .cc, .cxx)."
     }
 
     fn anthropic_schema(&self) -> Value {
@@ -149,12 +150,13 @@ impl AstEditTool {
 
 impl Tool for AstEditTool {
     fn name(&self) -> &str {
-        "ast_edit"
+        "apply_structural_edit"
     }
 
     fn description(&self) -> &str {
         "Edit a source file by replacing exact AST node text. \
-         Parses the file first to validate syntax, then performs precise text replacement."
+         Supported languages: Rust (.rs), JavaScript (.js, .jsx, .mjs), \
+         TypeScript (.ts, .tsx), Python (.py), Go (.go), C (.c, .h), C++ (.cpp, .hpp, .cc, .cxx)."
     }
 
     fn anthropic_schema(&self) -> Value {
@@ -228,7 +230,7 @@ impl Tool for AstEditTool {
 
         if replacements == 0 {
             return Err(ZcodeError::ToolExecutionFailed {
-                name: "ast_edit".to_string(),
+                name: "apply_structural_edit".to_string(),
                 message: format!("Text '{}' not found in file", params.old_text),
             });
         }
@@ -360,14 +362,53 @@ mod tests {
     #[test]
     fn test_ast_search_name_and_description() {
         let tool = AstSearchTool::new(empty_registry());
-        assert_eq!(tool.name(), "ast_search");
+        assert_eq!(tool.name(), "analyze_code_structure");
         assert!(!tool.description().is_empty());
     }
 
     #[test]
     fn test_ast_edit_name_and_description() {
         let tool = AstEditTool::new(empty_registry());
-        assert_eq!(tool.name(), "ast_edit");
+        assert_eq!(tool.name(), "apply_structural_edit");
         assert!(!tool.description().is_empty());
+    }
+
+    // A real LanguageProvider for tests
+    struct TestRustProvider;
+    impl crate::ast::LanguageProvider for TestRustProvider {
+        fn name(&self) -> &str { "rust" }
+        fn extensions(&self) -> &[&str] { &[".rs"] }
+        fn language(&self) -> tree_sitter::Language {
+            tree_sitter_rust::language()
+        }
+    }
+
+    #[test]
+    fn test_real_ast_parsing() {
+        let mut registry = LanguageRegistry::new();
+        registry.register(TestRustProvider);
+        let registry = Arc::new(registry);
+        
+        let tool = AstSearchTool::new(registry);
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test_real.rs");
+        
+        // Write some rust code
+        let code = "fn my_awesome_function() { println!(\"hello\"); }";
+        fs::write(&path, code).unwrap();
+        
+        let result = tool.execute(serde_json::json!({
+            "path": path.to_str().unwrap(),
+            "node_type": "function_item",
+        }));
+        
+        assert!(result.is_ok(), "Tool execution failed: {:?}", result.err());
+        let val = result.unwrap();
+        assert_eq!(val["count"].as_u64().unwrap(), 1);
+        let nodes = val["nodes"].as_array().unwrap();
+        assert_eq!(nodes.len(), 1);
+        
+        let text = nodes[0]["text"].as_str().unwrap();
+        assert!(text.contains("my_awesome_function"));
     }
 }

@@ -97,14 +97,14 @@ impl CoderAgent {
         self.execute_task_with(task, None).await
     }
 
-    /// Execute a task using an explicit LLM provider (for testing / injection).
+     /// Execute a task using an explicit LLM provider (for testing / injection).
     pub async fn execute_task_with(
         &self,
         task: &Task,
         provider: Option<std::sync::Arc<dyn crate::llm::provider::LlmProvider>>,
     ) -> TaskResult {
         use crate::llm::provider::{LlmProvider, MockLlmProvider, RigProvider};
-        use crate::llm::{LlmConfig, Message, MessageRole};
+        use crate::llm::{LlmConfig, Message};
         use std::sync::Arc;
 
         let agent_loop = AgentLoop::new(self.loop_config.clone(), self.registry.clone());
@@ -145,19 +145,43 @@ impl CoderAgent {
         let result: crate::error::Result<crate::agent::loop_exec::LoopResult> = agent_loop.run(
             &task.description,
             &[],
+            &[],
             move |messages, tools| {
                 let p = Arc::clone(&effective_provider);
                 async move {
                     let llm_messages: Vec<Message> = messages.iter()
                         .filter_map(|v| {
                             let role_str = v.get("role")?.as_str()?;
-                            let content = v.get("content")?.as_str().unwrap_or("").to_string();
-                            let role = match role_str {
-                                "system" => MessageRole::System,
-                                "assistant" => MessageRole::Assistant,
-                                _ => MessageRole::User,
-                            };
-                            Some(Message { role, content })
+                            match role_str {
+                                "system" => {
+                                    let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                                    Some(Message::system(content))
+                                }
+                                "assistant" => {
+                                    if let Some(tool_calls) = v.get("tool_calls").and_then(|tc| tc.as_array()) {
+                                        if !tool_calls.is_empty() {
+                                            let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                                            Some(Message::assistant_with_tool_calls(content, tool_calls.clone()))
+                                        } else {
+                                            let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                                            Some(Message::assistant(content))
+                                        }
+                                    } else {
+                                        let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                                        Some(Message::assistant(content))
+                                    }
+                                }
+                                "tool" => {
+                                    let tool_call_id = v.get("tool_call_id").and_then(|id| id.as_str()).unwrap_or("").to_string();
+                                    let name = v.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                                    let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                                    Some(Message::tool_result(tool_call_id, name, content))
+                                }
+                                _ => {
+                                    let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
+                                    Some(Message::user(content))
+                                }
+                            }
                         })
                         .collect();
 

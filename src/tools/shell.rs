@@ -80,43 +80,65 @@ impl Tool for ShellTool {
         let params: ShellInput = serde_json::from_value(input)
             .map_err(|e| ZcodeError::InvalidToolInput(e.to_string()))?;
 
-        let mut cmd = Command::new("sh");
-        let mut full_cmd = params.command.clone();
-        for arg in &params.args {
-            full_cmd.push(' ');
-            // Shell escape: wrap in single quotes, replacing ' with '\''
-            let escaped = arg.replace('\'', "'\\''");
-            full_cmd.push('\'');
-            full_cmd.push_str(&escaped);
-            full_cmd.push('\'');
-        }
-        cmd.arg("-c").arg(&full_cmd);
+        tokio::task::block_in_place(move || {
+            tokio::runtime::Handle::current().block_on(async move {
+                let mut cmd = tokio::process::Command::new("sh");
+                let mut full_cmd = params.command.clone();
+                for arg in &params.args {
+                    full_cmd.push(' ');
+                    // Shell escape: wrap in single quotes, replacing ' with '\''
+                    let escaped = arg.replace('\'', "'\\''");
+                    full_cmd.push('\'');
+                    full_cmd.push_str(&escaped);
+                    full_cmd.push('\'');
+                }
+                cmd.arg("-c").arg(&full_cmd);
 
-        if let Some(ref cwd) = params.cwd {
-            cmd.current_dir(cwd);
-        }
+                if let Some(ref cwd) = params.cwd {
+                    cmd.current_dir(cwd);
+                }
 
-        for (key, value) in &params.env {
-            cmd.env(key, value);
-        }
+                for (key, value) in &params.env {
+                    cmd.env(key, value);
+                }
 
-        let output = cmd.output().map_err(|e| ZcodeError::ToolExecutionFailed {
-            name: "shell".to_string(),
-            message: format!("Failed to execute '{}': {}", params.command, e),
-        })?;
+                cmd.kill_on_drop(true);
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let exit_code = output.status.code().unwrap_or(-1);
+                let duration = std::time::Duration::from_millis(params.timeout_ms);
+                match tokio::time::timeout(duration, cmd.output()).await {
+                    Ok(Ok(output)) => {
+                        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                        let exit_code = output.status.code().unwrap_or(-1);
 
-        Ok(serde_json::json!({
-            "stdout": stdout,
-            "stderr": stderr,
-            "exit_code": exit_code,
-            "success": output.status.success(),
-            "command": params.command,
-            "timeout_ms": params.timeout_ms
-        }))
+                        Ok(serde_json::json!({
+                            "stdout": stdout,
+                            "stderr": stderr,
+                            "exit_code": exit_code,
+                            "success": output.status.success(),
+                            "command": params.command,
+                            "timeout_ms": params.timeout_ms
+                        }))
+                    }
+                    Ok(Err(e)) => {
+                        Err(ZcodeError::ToolExecutionFailed {
+                            name: "shell".to_string(),
+                            message: format!("Failed to execute '{}': {}", params.command, e),
+                        })
+                    }
+                    Err(_) => {
+                        Ok(serde_json::json!({
+                            "stdout": "",
+                            "stderr": format!("Execution timed out after {} ms", params.timeout_ms),
+                            "exit_code": -1,
+                            "success": false,
+                            "command": params.command,
+                            "timeout_ms": params.timeout_ms
+                        }))
+                    }
+                }
+            })
+        })
     }
 }
 

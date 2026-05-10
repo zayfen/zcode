@@ -1,0 +1,68 @@
+{
+  "id": "69d2571d",
+  "task": "Implement `GameOverModal` component: displays on checkmate/stalemate with winner announcement and \"Play Again\" button.",
+  "status": "failed",
+  "created_at": 1775392513,
+  "updated_at": 1776010707,
+  "state": {
+    "messages": [
+      {
+        "role": "assistant",
+        "content": "PLAN:\nNow I have a complete understanding of the codebase and the exact issue. Let me formulate the plan.\n\n---\n\n## Execution Plan\n\n**Context:** The `GameOverModal` component is already fully implemented and integrated into `App.tsx`. The component correctly renders on checkmate/stalemate with winner announcements and a \"Play Again\" button. However, **5 tests are failing** because of an `aria-label` mismatch on the button.\n\n### Root Cause\n\nThe `GameOverModal` passes `label=\"再局 · Play Again\"` to `<ResetButton>`. Inside `ResetButton`, the rendered button has a **hardcoded** `aria-label=\"Reset game\"`. The tests query for `getByRole('button', { name: /play again/i })`, which checks the accessible name. Since the `aria-label` is \"Reset game\" (not matching \"Play Again\"), the query fails.\n\nThe accessible name precedence in the DOM is: `aria-label` > text content. So even though the visible text contains \"Play Again\", `aria-label=\"Reset game\"` overrides it for accessibility queries.\n\n### Fix (single file change)\n\n**Step 1 — Edit `src/components/ResetButton.tsx`:**\n\nChange the `ResetButton` component to accept an optional `ariaLabel` prop, so callers can customize the accessible label:\n\n- Add `ariaLabel?: string` to the `ResetButtonProps` interface.\n- Use `ariaLabel ?? 'Reset game'` as the `aria-label` value on the `<button>`.\n\n**Step 2 — Edit `src/components/GameOverModal.tsx`:**\n\nPass `ariaLabel=\"Play Again\"` alongside `label=\"再局 · Play Again\"` to the `<ResetButton>`:\n\n```\n<ResetButton onClick={onPlayAgain} label=\"再局 · Play Again\" ariaLabel=\"Play Again\" />\n```\n\n**Step 3 — Verify:**\n\nRun `npx vitest run src/components/__tests__/GameOverModal.test.tsx` — all 13 tests should pass.\n\n---\n\n[FAST_PATH] — This is a single accessibility-label fix: add an `ariaLabel` prop to `ResetButton` and pass it from `GameOverModal`. Two small edits, one test verification."
+      },
+      {
+        "role": "assistant",
+        "content": "PLAN:\nTask acknowledged. No API key found for provider 'anthropic'. Set the corresponding env variable to enable LLM responses."
+      },
+      {
+        "role": "assistant",
+        "content": "CODER_REPORT:\nTask acknowledged. No API key found for provider 'anthropic'. Set the corresponding env variable to enable LLM responses."
+      },
+      {
+        "role": "assistant",
+        "content": "TEST_REPORT:\nTask acknowledged. No API key found for provider 'anthropic'. Set the corresponding env variable to enable LLM responses."
+      },
+      {
+        "role": "assistant",
+        "content": "CODER_REPORT:\nTask acknowledged. No API key found for provider 'anthropic'. Set the corresponding env variable to enable LLM responses."
+      },
+      {
+        "role": "assistant",
+        "content": "TEST_REPORT:\nTask acknowledged. No API key found for provider 'anthropic'. Set the corresponding env variable to enable LLM responses."
+      },
+      {
+        "role": "assistant",
+        "content": "CODER_REPORT:\nTask acknowledged. No API key found for provider 'anthropic'. Set the corresponding env variable to enable LLM responses."
+      },
+      {
+        "role": "assistant",
+        "content": "TEST_REPORT:\nTask acknowledged. No API key found for provider 'anthropic'. Set the corresponding env variable to enable LLM responses."
+      }
+    ],
+    "task": {
+      "id": "c94ba548-7d7d-440f-8b09-a828e22b6806",
+      "description": "Implement `GameOverModal` component: displays on checkmate/stalemate with winner announcement and \"Play Again\" button.",
+      "cwd": null,
+      "context": {},
+      "priority": "Normal",
+      "parent_id": null
+    },
+    "result": {
+      "task_id": "69d2571d",
+      "success": true,
+      "output": "TEST_REPORT:\nTask acknowledged. No API key found for provider 'anthropic'. Set the corresponding env variable to enable LLM responses.",
+      "files_modified": [],
+      "error": null,
+      "llm_calls": 0,
+      "tool_calls": 0
+    },
+    "agent_state": "Executing",
+    "metadata": {
+      "test_passed": false,
+      "coder_retries": 3,
+      "is_simple": false
+    },
+    "iteration": 8
+  },
+  "error": "LLM API error: Anthropic request failed: error sending request for url (https://open.bigmodel.cn/api/anthropic/v1/messages)"
+}

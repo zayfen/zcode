@@ -1,0 +1,13 @@
+[2m2026-04-05T05:39:53.540585Z[0m [32m INFO[0m [2mzcode[0m[2m:[0m Starting zcode
+
+╔══════════════════════════════════════════════════════════╗
+║  Harness Engineering: docs/ validation FAILED            ║
+╚══════════════════════════════════════════════════════════╝
+  1. Missing docs/ directory
+     → Run `zcode docs init` to generate the required scaffolding.
+
+  Run `zcode docs init` to generate the required scaffolding.
+  Run `zcode docs check` to see this report again.
+  Use `--skip-docs-check` to bypass this validation.
+
+Error: Configuration error: docs/ validation failed. Fix the issues above before running zcode.

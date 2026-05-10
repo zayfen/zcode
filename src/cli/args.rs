@@ -95,6 +95,23 @@ pub enum TaskAction {
         /// Task ID to display
         id: String,
     },
+    /// Run a single task: pass a task ID to run from store, or a string as direct task content
+    Run {
+        /// Task ID or task description string
+        task_or_id: String,
+        /// Maximum number of LLM ↔ tool iterations (default: 50)
+        #[arg(long, short = 'n', default_value = "50")]
+        max_iterations: usize,
+    },
+    /// Run all pending tasks in the store concurrently
+    RunAll {
+        /// Maximum number of tasks to run concurrently (default: 1)
+        #[arg(long, short = 'j', default_value = "1")]
+        concurrency: usize,
+        /// Maximum number of LLM ↔ tool iterations per task (default: 50)
+        #[arg(long, short = 'n', default_value = "50")]
+        max_iterations: usize,
+    },
     /// Delete all completed, failed or interrupted tasks
     Clean,
     /// Parse and sync tasks from docs/tasks/*.md
@@ -485,5 +502,148 @@ mod tests {
 
         assert_eq!(args1.verbose, args2.verbose);
         assert_eq!(args1.model, args2.model);
+    }
+
+    // ============================================================
+    // Task Run command tests
+    // ============================================================
+
+    #[test]
+    fn test_task_run_by_id() {
+        let args = Args::try_parse_from(["zcode", "task", "run", "abc12345"]).unwrap();
+        if let Some(Command::Task { action: TaskAction::Run { task_or_id, max_iterations } }) = args.command {
+            assert_eq!(task_or_id, "abc12345");
+            assert_eq!(max_iterations, 50); // default
+        } else {
+            panic!("Expected Task Run command");
+        }
+    }
+
+    #[test]
+    fn test_task_run_by_description() {
+        let args = Args::try_parse_from(["zcode", "task", "run", "Fix the login bug"]).unwrap();
+        if let Some(Command::Task { action: TaskAction::Run { task_or_id, .. } }) = args.command {
+            assert_eq!(task_or_id, "Fix the login bug");
+        } else {
+            panic!("Expected Task Run command");
+        }
+    }
+
+    #[test]
+    fn test_task_run_custom_iterations() {
+        let args = Args::try_parse_from(["zcode", "task", "run", "abc12345", "-n", "100"]).unwrap();
+        if let Some(Command::Task { action: TaskAction::Run { task_or_id, max_iterations } }) = args.command {
+            assert_eq!(task_or_id, "abc12345");
+            assert_eq!(max_iterations, 100);
+        } else {
+            panic!("Expected Task Run command");
+        }
+    }
+
+    #[test]
+    fn test_task_run_missing_arg() {
+        let result = Args::try_parse_from(["zcode", "task", "run"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_task_run_unicode() {
+        let args = Args::try_parse_from(["zcode", "task", "run", "修复登录问题"]).unwrap();
+        if let Some(Command::Task { action: TaskAction::Run { task_or_id, .. } }) = args.command {
+            assert_eq!(task_or_id, "修复登录问题");
+        } else {
+            panic!("Expected Task Run command");
+        }
+    }
+
+    // ============================================================
+    // Task RunAll command tests
+    // ============================================================
+
+    #[test]
+    fn test_task_run_all_defaults() {
+        let args = Args::try_parse_from(["zcode", "task", "run-all"]).unwrap();
+        if let Some(Command::Task { action: TaskAction::RunAll { concurrency, max_iterations } }) = args.command {
+            assert_eq!(concurrency, 1); // default
+            assert_eq!(max_iterations, 50); // default
+        } else {
+            panic!("Expected Task RunAll command");
+        }
+    }
+
+    #[test]
+    fn test_task_run_all_custom_concurrency() {
+        let args = Args::try_parse_from(["zcode", "task", "run-all", "-j", "4"]).unwrap();
+        if let Some(Command::Task { action: TaskAction::RunAll { concurrency, max_iterations } }) = args.command {
+            assert_eq!(concurrency, 4);
+            assert_eq!(max_iterations, 50);
+        } else {
+            panic!("Expected Task RunAll command");
+        }
+    }
+
+    #[test]
+    fn test_task_run_all_custom_iterations() {
+        let args = Args::try_parse_from(["zcode", "task", "run-all", "-n", "200"]).unwrap();
+        if let Some(Command::Task { action: TaskAction::RunAll { concurrency, max_iterations } }) = args.command {
+            assert_eq!(concurrency, 1);
+            assert_eq!(max_iterations, 200);
+        } else {
+            panic!("Expected Task RunAll command");
+        }
+    }
+
+    #[test]
+    fn test_task_run_all_both_flags() {
+        let args = Args::try_parse_from(["zcode", "task", "run-all", "-j", "3", "-n", "100"]).unwrap();
+        if let Some(Command::Task { action: TaskAction::RunAll { concurrency, max_iterations } }) = args.command {
+            assert_eq!(concurrency, 3);
+            assert_eq!(max_iterations, 100);
+        } else {
+            panic!("Expected Task RunAll command");
+        }
+    }
+
+    #[test]
+    fn test_task_run_all_with_model_flag() {
+        let args = Args::try_parse_from(["zcode", "-m", "claude-3", "task", "run-all", "-j", "2"]).unwrap();
+        assert_eq!(args.model, Some("claude-3".to_string()));
+        if let Some(Command::Task { action: TaskAction::RunAll { concurrency, .. } }) = args.command {
+            assert_eq!(concurrency, 2);
+        } else {
+            panic!("Expected Task RunAll command");
+        }
+    }
+
+    // ============================================================
+    // Existing task commands still work
+    // ============================================================
+
+    #[test]
+    fn test_task_list_still_works() {
+        let args = Args::try_parse_from(["zcode", "task", "list"]).unwrap();
+        assert!(matches!(args.command, Some(Command::Task { action: TaskAction::List })));
+    }
+
+    #[test]
+    fn test_task_show_still_works() {
+        let args = Args::try_parse_from(["zcode", "task", "show", "abc123"]).unwrap();
+        if let Some(Command::Task { action: TaskAction::Show { id } }) = args.command {
+            assert_eq!(id, "abc123");
+        } else {
+            panic!("Expected Task Show command");
+        }
+    }
+
+    #[test]
+    fn test_task_sync_still_works() {
+        let args = Args::try_parse_from(["zcode", "task", "sync"]).unwrap();
+        assert!(matches!(args.command, Some(Command::Task { action: TaskAction::Sync })));
+    }
+
+    #[test]
+    fn test_task_clean_still_works() {
+        let args = Args::try_parse_from(["zcode", "task", "clean"]).unwrap();
+        assert!(matches!(args.command, Some(Command::Task { action: TaskAction::Clean })));
     }
 }

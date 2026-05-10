@@ -211,10 +211,7 @@ impl TuiApp {
             if msg.role == "user" {
                 messages.push(Message::user(&msg.content));
             } else if msg.role == "assistant" {
-                messages.push(Message {
-                    role: MessageRole::Assistant,
-                    content: msg.content.clone(),
-                });
+                messages.push(Message::assistant(&msg.content));
             }
         }
         // Include the current user message (it was already pushed to chat)

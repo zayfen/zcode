@@ -26,6 +26,7 @@ use crate::agent::graph::edge::Edge;
 use crate::agent::graph::node::{FnNode, GraphNode};
 use crate::agent::graph::state::{DefaultState, GraphState, NodeOutput};
 use crate::error::{Result, ZcodeError};
+use tracing::{info, warn, error, debug};
 
 // ─── EndReason ────────────────────────────────────────────────────────────────
 
@@ -267,10 +268,12 @@ impl CompiledGraph {
     {
         let mut output = GraphOutput::new();
         let mut current = self.entry.clone();
+        info!(graph_id = %self.graph_id, entry = %current, max_iter = self.max_iterations, "Graph execution starting");
 
         loop {
             // Safety: max iterations
             if output.total_iterations >= self.max_iterations {
+                warn!(graph_id = %self.graph_id, iterations = output.total_iterations, "Graph hit max iterations safety limit");
                 output.end_reason = EndReason::MaxIterations;
                 on_event(GraphEvent::End {
                     reason: output.end_reason.clone(),
@@ -284,6 +287,7 @@ impl CompiledGraph {
                 ZcodeError::InternalError(format!("Node '{}' not found", current))
             })?;
 
+            info!(graph_id = %self.graph_id, node = %current, iteration = output.total_iterations, "Executing node");
             on_event(GraphEvent::NodeStart {
                 node: current.clone(),
                 iteration: output.total_iterations,
@@ -293,10 +297,12 @@ impl CompiledGraph {
             match result {
                 Ok(node_output) => {
                     let summary = format!("{:?}", node_output);
+                    debug!(graph_id = %self.graph_id, node = %current, "Node output: {}", &summary[..summary.len().min(200)]);
                     state.reduce(node_output);
                     state.inc_iteration();
                     output.nodes_executed.push(current.clone());
                     output.total_iterations += 1;
+                    info!(graph_id = %self.graph_id, node = %current, "Node completed (iteration {})", output.total_iterations);
 
                     on_event(GraphEvent::NodeComplete {
                         node: current.clone(),
@@ -304,6 +310,7 @@ impl CompiledGraph {
                     });
                 }
                 Err(e) => {
+                    error!(graph_id = %self.graph_id, node = %current, error = %e, "Node failed");
                     output.end_reason = EndReason::Error(e.to_string());
                     on_event(GraphEvent::End {
                         reason: output.end_reason.clone(),
@@ -317,6 +324,7 @@ impl CompiledGraph {
             let next = self.resolve_next(&current, state);
             match next {
                 Some(target) => {
+                    info!(graph_id = %self.graph_id, from = %current, to = %target, "Edge traversed");
                     on_event(GraphEvent::EdgeTraversed {
                         from: current.clone(),
                         to: Some(target.clone()),
@@ -333,6 +341,13 @@ impl CompiledGraph {
                     } else {
                         EndReason::NaturalEnd
                     };
+                    info!(
+                        graph_id = %self.graph_id, 
+                        reason = %output.end_reason,
+                        total_iterations = output.total_iterations,
+                        nodes = ?output.nodes_executed,
+                        "Graph execution finished"
+                    );
                     on_event(GraphEvent::End {
                         reason: output.end_reason.clone(),
                         output: output.clone(),

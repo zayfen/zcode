@@ -142,6 +142,7 @@ impl AgentLoop {
     pub async fn run<F, Fut>(
         &self,
         user_message: &str,
+        seed_messages: &[ConversationMessage],
         _tool_schemas: &[Value],
         mut llm_call: F,
     ) -> Result<LoopResult>
@@ -151,8 +152,16 @@ impl AgentLoop {
     {
         let mut history: Vec<ConversationMessage> = vec![
             ConversationMessage::system(&self.config.system_prompt),
-            ConversationMessage::user(user_message),
         ];
+
+        // Inject shared context bus history from previous nodes (filter old system prompts)
+        for msg in seed_messages {
+            if msg.role != "system" {
+                history.push(msg.clone());
+            }
+        }
+
+        history.push(ConversationMessage::user(user_message));
 
         // Build tool schemas from registry once
         let tool_schemas = self.registry.anthropic_schemas();
@@ -196,7 +205,8 @@ impl AgentLoop {
 
                     info!("Agent requested {} tool call(s).", requests.len());
                     for req in &requests {
-                        debug!("Executing tool: {} with input: {:?}", req.name, req.arguments);
+                        let args_str = serde_json::to_string(&req.arguments).unwrap_or_default();
+                        info!("  ⮑ Tool '{}' inputs: {}", req.name, args_str);
                     }
 
                     // Record assistant tool call message
@@ -208,10 +218,17 @@ impl AgentLoop {
 
                     // Add tool results to history (Anthropic format: role=user, content=[tool_result])
                     for resp in &responses {
-                        if resp.success {
-                            debug!("Tool {} execution succeeded.", resp.name);
+                        let snippet = if resp.content.len() > 1000 {
+                            let safe_end = resp.content.floor_char_boundary(1000);
+                            format!("{}... (truncated, total {} chars)", &resp.content[..safe_end], resp.content.len())
                         } else {
-                            warn!("Tool {} execution failed: {}", resp.name, resp.content);
+                            resp.content.clone()
+                        };
+
+                        if resp.success {
+                            info!("  ✅ Tool '{}' succeeded. Result:\n{}", resp.name, snippet);
+                        } else {
+                            warn!("  ❌ Tool '{}' failed. Error:\n{}", resp.name, snippet);
                         }
                         history.push(ConversationMessage::tool_result(resp));
                     }
@@ -423,6 +440,7 @@ mod tests {
         let result = agent_loop.run(
             "What is 2+2?",
             &[],
+            &[],
             |_messages: Vec<serde_json::Value>, _tools: Vec<serde_json::Value>| async { Ok(LlmResponse::Text("The answer is 4.".to_string())) },
         ).await.unwrap();
 
@@ -444,6 +462,7 @@ mod tests {
         let call_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let result = agent_loop.run(
             "Can you add 3 and 4?",
+            &[],
             &[],
             |_msgs: Vec<serde_json::Value>, _tools: Vec<serde_json::Value>| {
                 let n = call_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
@@ -479,6 +498,7 @@ mod tests {
         // Mock that always requests tools (never returns text)
         let result = agent_loop.run(
             "Loop forever",
+            &[],
             &[],
             |_: Vec<serde_json::Value>, _: Vec<serde_json::Value>| async {
                 Ok(LlmResponse::ToolCalls(vec![json!({

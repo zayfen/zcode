@@ -305,26 +305,7 @@ impl ChatInterface {
                 _ => (Style::default(), ""),
             };
 
-            // Calculate indentation manually for word wrapping if we wanted, 
-            // but textwrap can do initial_indent and subsequent_indent!
-            let max_width = area.width.saturating_sub(4) as usize; // Provide breathing room
-            
-            let options = textwrap::Options::new(max_width)
-                .initial_indent(prefix)
-                .subsequent_indent("           "); // Align with prefix length
-
-            let wrapped = textwrap::wrap(&message.content, options);
-
-            for (i, line) in wrapped.iter().enumerate() {
-                if i == 0 {
-                    // First line already has the prefix built-in by textwrap, but we want to colorize the prefix distinctly!
-                    // Wait, textwrap injected the prefix. We must strip it or recreate it for coloring.
-                    // Easier: use textwrap WITHOUT indent, and just handle it manually.
-                }
-            }
-
-            // Let's do manual indent wrap for coloring precision:
-            let content_width = area.width.saturating_sub(14) as usize; // width - prefix space
+            let content_width = area.width.saturating_sub(14) as usize;
             let wrapped_lines = textwrap::wrap(&message.content, content_width);
 
             for (i, line) in wrapped_lines.iter().enumerate() {

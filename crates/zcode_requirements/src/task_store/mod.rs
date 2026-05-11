@@ -16,7 +16,7 @@
 use zcode_core::agent::{DefaultState, Task};
 use zcode_core::{Result, ZcodeError};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // ─────────────────────────────────────────────

@@ -1,10 +1,10 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-03-29 | Updated: 2026-03-29 -->
+<!-- Generated: 2026-03-29 | Updated: 2026-05-11 -->
 
 # agent
 
 ## Purpose
-Multi-agent orchestration system with tokio-based message passing. Implements Orchestrator (task routing), Planner (task decomposition), Coder (code generation), Reviewer (static analysis), and an AgentLoop for conversation + tool call management.
+Multi-agent orchestration system with graph-based workflows and optional tokio message passing. Implements Orchestrator (root coordination), Planner (task decomposition), Coder (ReAct execution), Reviewer (review/test feedback), SelfLearning (mistake-book entries), and `AgentLoop` for conversation + tool call management.
 
 ## Key Files
 | File | Description |
@@ -17,14 +17,17 @@ Multi-agent orchestration system with tokio-based message passing. Implements Or
 | `planner.rs` | `PlannerAgent` — breaks complex tasks into ordered subtasks |
 | `coder.rs` | `CoderAgent` — writes/edits code via LLM + tools |
 | `reviewer.rs` | `ReviewerAgent` — static analysis of code diffs (Logic, Security, Performance, Style, Testing) |
+| `self_learning.rs` | `SelfLearningAgent` — summarizes recurring failures and corrections |
 | `loop_exec.rs` | `AgentLoop` — conversation state, tool call dispatch, LLM response parsing, token counting |
 
 ## For AI Agents
 
 ### Working In This Directory
 - All agents implement `AgentTrait` from `traits.rs`
-- Communication between agents goes through the `MessageBus` (tokio mpsc channels)
-- `AgentLoop` is the core execution loop: send messages to LLM, parse tool calls, execute, repeat
+- `StateGraph` is the primary workflow engine for CLI task execution
+- Communication between standalone agents can go through the `MessageBus` (tokio mpsc channels)
+- `AgentLoop` is the core ReAct loop: send messages to LLM, parse tool calls, execute, observe, repeat
+- Coder behavior must remain ReAct-based
 - The `ReviewerAgent` has 5 review categories — see `ARCHITECTURE.md` for details
 
 ### Testing Requirements
@@ -39,10 +42,9 @@ Multi-agent orchestration system with tokio-based message passing. Implements Or
 ## Dependencies
 
 ### Internal
-- `crate::llm` — LLM provider for chat completions
-- `crate::tools` — Tool registry for tool call execution
-- `crate::memory` — Context assembly for prompts
-- `crate::error` — Error types
+- `zcode_llm_provider` — OpenAI-compatible LLM provider for chat completions
+- `zcode_capabilities` — Tool registry and MCP/capability tool call execution
+- `zcode_core` — Shared DTOs and error types
 
 ### External
 - `tokio` (mpsc channels), `async-trait`, `uuid`, `serde_json`

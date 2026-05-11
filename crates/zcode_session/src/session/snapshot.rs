@@ -318,7 +318,6 @@ impl SnapshotManager {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-    use std::io::Write;
 
     fn setup() -> (TempDir, SnapshotManager) {
         let dir = TempDir::new().unwrap();
@@ -476,7 +475,7 @@ mod tests {
 
     #[test]
     fn test_skip_nonexistent_files() {
-        let (dir, mut mgr) = setup();
+        let (_dir, mut mgr) = setup();
         // "ghost.rs" does not exist
         let id = mgr.save_files("ghost", None, &["ghost.rs"]).unwrap();
         let files = mgr.get_files(id).unwrap();

@@ -233,6 +233,7 @@ impl LlmResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use zcode_capabilities::{Tool, ToolCallResponse, ToolRegistry, ToolResult};
 
     struct AddTool;

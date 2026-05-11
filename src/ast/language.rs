@@ -363,8 +363,8 @@ mod tests {
     #[test]
     fn test_registry_extension_not_found() {
         let reg = LanguageRegistry::new();
-        assert!(reg.from_extension(".rs").is_none());
-        assert!(reg.language_name_for_extension(".rs").is_none());
+        assert!(reg.from_extension(".zzz").is_none());
+        assert!(reg.language_name_for_extension(".zzz").is_none());
     }
 
     #[test]

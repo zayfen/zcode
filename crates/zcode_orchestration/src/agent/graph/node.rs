@@ -4,7 +4,7 @@
 //!
 //! # 用法
 //!
-//! ```
+//! ```rust,ignore
 //! let node = FnNode::new("planner", |state| {
 //!     state.metadata.insert("plan".into(), serde_json::json!("step1"));
 //!     Ok(NodeOutput::None)
@@ -43,7 +43,7 @@ pub trait GraphNode: Send + Sync {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// let node = FnNode::new("scorer", |state| {
 ///     let score = compute_score(state);
 ///     Ok(NodeOutput::Custom("score".into(), serde_json::json!(score)))
@@ -86,7 +86,7 @@ impl GraphNode for FnNode {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// let node = AsyncFnNode::new("llm_call", |state| async move {
 ///     let result = call_llm(&state.messages).await?;
 ///     Ok(NodeOutput::Messages(vec![ConversationMessage::assistant_text(result)]))

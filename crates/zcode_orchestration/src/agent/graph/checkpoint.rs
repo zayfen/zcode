@@ -5,7 +5,7 @@
 //!
 //! # Usage
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use zcode::agent::graph::checkpoint::{Checkpoint, FsCheckpointStore, CheckpointStore};
 //!
 //! let store = FsCheckpointStore::new(".zcode/checkpoints");

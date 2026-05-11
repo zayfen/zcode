@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-03-29 | Updated: 2026-03-29 -->
+<!-- Generated: 2026-03-29 | Updated: 2026-05-11 -->
 
 # mcp
 
@@ -26,8 +26,8 @@ Model Context Protocol client implementing JSON-RPC 2.0 over stdio. Manages MCP 
 ## Dependencies
 
 ### Internal
-- `crate::tools` — `Tool` trait for `McpToolAdapter`
-- `crate::error` — error types
+- `crate::tool` — `Tool` trait for `McpToolAdapter`
+- `zcode_core` — shared error types
 
 ### External
 - `serde`, `serde_json`, `tokio`, `reqwest`

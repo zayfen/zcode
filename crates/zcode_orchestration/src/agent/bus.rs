@@ -161,7 +161,6 @@ impl Default for BusDispatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::types::*;
 
     #[tokio::test]
     async fn test_bus_register_and_send() {

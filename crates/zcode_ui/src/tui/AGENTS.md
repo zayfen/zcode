@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-03-29 | Updated: 2026-03-29 -->
+<!-- Generated: 2026-03-29 | Updated: 2026-05-11 -->
 
 # tui
 
@@ -26,8 +26,8 @@ Terminal user interface built with ratatui + crossterm. Provides a chat interfac
 ## Dependencies
 
 ### Internal
-- `crate::llm` — `LlmProvider`, `Message`, `MessageRole`
-- `crate::error` — wraps crossterm/ratatui errors
+- `zcode_llm_provider` — `LlmProvider`, `Message`, `MessageRole`
+- `zcode_core` — wraps crossterm/ratatui errors
 
 ### External
 - `ratatui`, `crossterm`, `textwrap`

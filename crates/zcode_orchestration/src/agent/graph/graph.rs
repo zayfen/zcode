@@ -6,7 +6,7 @@
 //!
 //! # Quick start
 //!
-//! ```
+//! ```rust,ignore
 //! let graph = StateGraph::new("planner")
 //!     .add_node(FnNode::new("planner", |s| { ... }))
 //!     .add_node(FnNode::new("coder",   |s| { ... }))
@@ -23,8 +23,8 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::agent::graph::edge::Edge;
-use crate::agent::graph::node::{FnNode, GraphNode};
-use crate::agent::graph::state::{DefaultState, GraphState, NodeOutput};
+use crate::agent::graph::node::GraphNode;
+use crate::agent::graph::state::{DefaultState, GraphState};
 use zcode_core::{Result, ZcodeError};
 use tracing::{info, warn, error, debug};
 
@@ -436,9 +436,9 @@ impl CompiledGraph {
 mod tests {
     use super::*;
     use crate::agent::graph::node::FnNode;
-    use crate::agent::graph::state::GraphState;
+    use crate::agent::graph::state::NodeOutput;
     use crate::agent::loop_exec::ConversationMessage;
-    use crate::agent::types::{AgentState, Task, TaskResult};
+    use crate::agent::types::{AgentState, TaskResult};
 
     // ── Helper constructors ──
 

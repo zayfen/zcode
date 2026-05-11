@@ -6,7 +6,11 @@ use crate::cli::args::{Command, DocsAction, TaskAction};
 use crate::workspace::Workspace;
 use zcode_capabilities::{McpClient, SkillsLoader, ToolRegistry};
 use zcode_core::{LlmConfig, Result, Settings, ZcodeError};
-use zcode_llm_provider::{LlmProvider, Message, RigProvider};
+use zcode_llm_provider::{LlmProvider, Message};
+#[cfg(test)]
+use zcode_llm_provider::MockLlmProvider;
+#[cfg(not(test))]
+use zcode_llm_provider::RigProvider;
 use zcode_orchestration::{
     build_reviewer_pipeline, build_task_pipeline_with_limit, AgentLoop, ConversationMessage,
     DefaultState, LlmResponse as AgentLlmResponse, LoopConfig, TaskResult,
@@ -89,6 +93,16 @@ fn fast_llm_config(config: &LlmConfig) -> LlmConfig {
         .clone()
         .unwrap_or_else(|| config.model.clone());
     fast
+}
+
+#[cfg(not(test))]
+fn make_llm_provider(config: &LlmConfig) -> Arc<dyn LlmProvider> {
+    Arc::new(RigProvider::new(config.clone()))
+}
+
+#[cfg(test)]
+fn make_llm_provider(_config: &LlmConfig) -> Arc<dyn LlmProvider> {
+    Arc::new(MockLlmProvider::new("PASS"))
 }
 
 fn build_tool_registry(
@@ -269,7 +283,7 @@ async fn execute_task(action: &TaskAction, args: &crate::cli::args::Args) -> Res
                 let handle = tokio::spawn(async move {
                     let _permit = sem.acquire().await.expect("semaphore closed");
                     println!("\n▶ [{}/{}] Starting: {} [id={}]", i + 1, total_count, task_desc, task_id);
-                    // execute_run runs: planner→coder→tester (with fix loop) only — no reviewer
+                    // execute_run_task_only runs the per-task orchestrator graph.
                     let result = execute_run_task_only(&task_desc, Some(&task_id), max_iter, &args_clone).await;
                     match &result {
                         Ok(_) => println!("✅ [{}] Completed: {}", task_id, task_desc),
@@ -316,7 +330,7 @@ async fn execute_task(action: &TaskAction, args: &crate::cli::args::Args) -> Res
                 settings.llm.model = model.clone();
             }
             let llm_config = llm_config_from_settings(&settings);
-            let provider: Arc<dyn LlmProvider> = Arc::new(RigProvider::new(llm_config.clone()));
+            let provider = make_llm_provider(&llm_config);
             let registry = build_tool_registry(
                 &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
                 &settings,
@@ -400,9 +414,10 @@ async fn execute_task(action: &TaskAction, args: &crate::cli::args::Args) -> Res
 
 /// Feed raw requirements to generate/update the docs/ structure using a lightweight AgentLoop.
 ///
-/// Unlike `execute_run` which spins up the full 4-stage pipeline (planner → coder → tester → reviewer),
+/// Unlike `execute_run` which spins up the full task pipeline
+/// (orchestrator → planner → coder(ReAct) → reviewer),
 /// `execute_feed` runs each step as a single AgentLoop — just one LLM agent with tools, no
-/// unnecessary planner/tester/reviewer overhead.
+/// unnecessary planner/coder/reviewer overhead.
 async fn execute_feed(path: &str, investigate: bool, max_iterations: usize, args: &crate::cli::args::Args) -> Result<()> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
@@ -418,7 +433,7 @@ async fn execute_feed(path: &str, investigate: bool, max_iterations: usize, args
     }
 
     let llm_config = llm_config_from_settings(&settings);
-    let provider: Arc<dyn LlmProvider> = Arc::new(RigProvider::new(llm_config.clone()));
+    let provider = make_llm_provider(&llm_config);
 
     let registry = build_tool_registry(&cwd, &settings, args)?;
 
@@ -580,16 +595,16 @@ async fn execute_run(task: &str, resume_id: Option<&str>, max_iterations: usize,
 
     // ── Model / LLM config ────────────────────────────────────────────
     let llm_config = llm_config_from_settings(&settings);
-    let provider: Arc<dyn LlmProvider> = Arc::new(RigProvider::new(llm_config.clone()));
+    let provider = make_llm_provider(&llm_config);
     let fast_llm_config = fast_llm_config(&llm_config);
-    let fast_provider: Arc<dyn LlmProvider> = Arc::new(RigProvider::new(fast_llm_config.clone()));
+    let fast_provider = make_llm_provider(&fast_llm_config);
 
     // ── Capability registry (MCP-only) ────────────────────────────────
     let registry = build_tool_registry(&cwd, &settings, args)?;
 
     let skills_prompt = SkillsLoader::build_system_prompt("", &skills);
     
-    // ── Graph Engine (per-task: planner → coder → tester, max 3 fix retries) ──
+    // ── Graph Engine (orchestrator → planner → coder(ReAct) → reviewer) ──
     let graph = build_task_pipeline_with_limit(
         Arc::clone(&provider),
         Arc::clone(&fast_provider),
@@ -618,7 +633,8 @@ async fn execute_run(task: &str, resume_id: Option<&str>, max_iterations: usize,
     // Save task-level status
     let final_answer = match task_result {
         Ok(graph_out) => {
-            let test_passed = task_record.state.metadata.get("test_passed")
+            let test_passed = task_record.state.metadata.get("review_passed")
+                .or_else(|| task_record.state.metadata.get("test_passed"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
 
@@ -687,9 +703,9 @@ async fn execute_run(task: &str, resume_id: Option<&str>, max_iterations: usize,
     Ok(final_answer)
 }
 
-/// Run a task through only the task pipeline (planner → coder → tester, with fix loop).
-/// Does NOT trigger the reviewer. Used internally by `execute_task`'s RunAll to allow
-/// the reviewer to be called once after all tasks complete.
+/// Run a task through only the per-task orchestrator pipeline.
+/// Does NOT trigger the global reviewer. Used internally by `execute_task`'s RunAll
+/// to allow the global reviewer to be called once after all tasks complete.
 async fn execute_run_task_only(task: &str, resume_id: Option<&str>, max_iterations: usize, args: &crate::cli::args::Args) -> Result<String> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
@@ -715,9 +731,9 @@ async fn execute_run_task_only(task: &str, resume_id: Option<&str>, max_iteratio
 
     let skills = SkillsLoader::load(&cwd, &settings.skill_dirs);
     let llm_config = llm_config_from_settings(&settings);
-    let provider: Arc<dyn LlmProvider> = Arc::new(RigProvider::new(llm_config.clone()));
+    let provider = make_llm_provider(&llm_config);
     let fast_llm_config = fast_llm_config(&llm_config);
-    let fast_provider: Arc<dyn LlmProvider> = Arc::new(RigProvider::new(fast_llm_config.clone()));
+    let fast_provider = make_llm_provider(&fast_llm_config);
 
     let registry = build_tool_registry(&cwd, &settings, args)?;
     let skills_prompt = SkillsLoader::build_system_prompt("", &skills);
@@ -741,7 +757,8 @@ async fn execute_run_task_only(task: &str, resume_id: Option<&str>, max_iteratio
 
     match task_result {
         Ok(graph_out) => {
-            let test_passed = task_record.state.metadata.get("test_passed")
+            let test_passed = task_record.state.metadata.get("review_passed")
+                .or_else(|| task_record.state.metadata.get("test_passed"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
 
@@ -796,7 +813,7 @@ async fn execute_chat(args: &crate::cli::args::Args) -> Result<()> {
     // Build LLM provider from settings
     let llm_config = llm_config_from_settings(&settings);
 
-    let provider: Arc<dyn LlmProvider> = Arc::new(RigProvider::new(llm_config.clone()));
+    let provider = make_llm_provider(&llm_config);
 
     // Initialize terminal
     let mut terminal = init_terminal()?;
@@ -905,7 +922,7 @@ mod tests {
                 resume: None,
                 max_iterations: 50,
             }),
-            model: Some("claude-3-opus".to_string()),
+            model: Some(std::env::var("ZCODE_MODEL").unwrap_or_else(|_| "gpt-4o".to_string())),
             mcp: vec![],
             verbose: false,
             skip_docs_check: false,
@@ -1255,7 +1272,7 @@ mod tests {
                 resume: None,
                 max_iterations: 50,
             }),
-            model: Some("claude-3-opus".to_string()),
+            model: Some(std::env::var("ZCODE_MODEL").unwrap_or_else(|_| "gpt-4o".to_string())),
             mcp: vec!["mcp-server".to_string()],
             verbose: true,
             skip_docs_check: false,

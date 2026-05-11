@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-03-29 | Updated: 2026-03-29 -->
+<!-- Generated: 2026-03-29 | Updated: 2026-05-11 -->
 
 # task_store
 
@@ -25,8 +25,8 @@ Task progress persistence for `zcode run` invocations. Stores each task as a JSO
 ## Dependencies
 
 ### Internal
-- `crate::agent::loop_exec::ConversationMessage` — for conversation history
-- `crate::error` — wraps IO and serialization errors
+- `zcode_core::agent` — shared task, state, and conversation DTOs
+- `zcode_core` — wraps IO and serialization errors
 
 ### External
 - `serde`, `serde_json`, `uuid`

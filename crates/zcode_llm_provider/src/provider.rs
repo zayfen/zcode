@@ -368,6 +368,19 @@ impl LlmProvider for MockLlmProvider {
 mod tests {
     use super::*;
     use zcode_core::llm::{LlmConfig, Message};
+    use std::sync::{Mutex, OnceLock};
+
+    fn with_zcode_api_key_removed<T>(f: impl FnOnce() -> T) -> T {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let original = std::env::var("ZCODE_API_KEY").ok();
+        std::env::remove_var("ZCODE_API_KEY");
+        let result = f();
+        if let Some(val) = original {
+            std::env::set_var("ZCODE_API_KEY", val);
+        }
+        result
+    }
 
     // ============================================================
     // MockLlmProvider tests
@@ -708,19 +721,21 @@ mod tests {
 
     #[test]
     fn test_rig_provider_complete_missing_api_key() {
-        let config = LlmConfig {
-            api_key: None,
-            ..Default::default()
-        };
-        let provider = RigProvider::new(config);
-        let result = provider.complete("test");
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            ZcodeError::MissingApiKey(provider_name) => {
-                assert_eq!(provider_name, "ZCODE_API_KEY");
+        with_zcode_api_key_removed(|| {
+            let config = LlmConfig {
+                api_key: None,
+                ..Default::default()
+            };
+            let provider = RigProvider::new(config);
+            let result = provider.complete("test");
+            assert!(result.is_err());
+            match result.unwrap_err() {
+                ZcodeError::MissingApiKey(provider_name) => {
+                    assert_eq!(provider_name, "ZCODE_API_KEY");
+                }
+                _ => panic!("Expected MissingApiKey error"),
             }
-            _ => panic!("Expected MissingApiKey error"),
-        }
+        });
     }
 
     #[test]
@@ -781,14 +796,16 @@ mod tests {
 
     #[test]
     fn test_rig_provider_chat_missing_api_key() {
-        let config = LlmConfig {
-            api_key: None,
-            ..Default::default()
-        };
-        let provider = RigProvider::new(config);
-        let messages = vec![Message::user("Hello")];
-        let result = provider.chat(&messages, &[]);
-        assert!(result.is_err());
+        with_zcode_api_key_removed(|| {
+            let config = LlmConfig {
+                api_key: None,
+                ..Default::default()
+            };
+            let provider = RigProvider::new(config);
+            let messages = vec![Message::user("Hello")];
+            let result = provider.chat(&messages, &[]);
+            assert!(result.is_err());
+        });
     }
 
     #[tokio::test]
@@ -825,13 +842,15 @@ mod tests {
 
     #[test]
     fn test_rig_provider_stream_complete_missing_api_key() {
-        let config = LlmConfig {
-            api_key: None,
-            ..Default::default()
-        };
-        let provider = RigProvider::new(config);
-        let result = provider.stream_complete("test");
-        assert!(result.is_err());
+        with_zcode_api_key_removed(|| {
+            let config = LlmConfig {
+                api_key: None,
+                ..Default::default()
+            };
+            let provider = RigProvider::new(config);
+            let result = provider.stream_complete("test");
+            assert!(result.is_err());
+        });
     }
 
     // ============================================================
@@ -857,25 +876,16 @@ mod tests {
 
     #[test]
     fn test_rig_provider_zcode_api_key_env() {
-        // Save original env var
-        let original = std::env::var("ZCODE_API_KEY").ok();
-
-        let config = LlmConfig {
-            provider: "openai-compatible".to_string(),
-            api_key: None,
-            ..Default::default()
-        };
-        let provider = RigProvider::new(config);
-
-        // Without env var set
-        std::env::remove_var("ZCODE_API_KEY");
-        let result = provider.complete("test");
-        assert!(result.is_err());
-
-        // Restore original
-        if let Some(val) = original {
-            std::env::set_var("ZCODE_API_KEY", val);
-        }
+        with_zcode_api_key_removed(|| {
+            let config = LlmConfig {
+                provider: "openai-compatible".to_string(),
+                api_key: None,
+                ..Default::default()
+            };
+            let provider = RigProvider::new(config);
+            let result = provider.complete("test");
+            assert!(result.is_err());
+        });
     }
 
     // ============================================================
@@ -944,22 +954,15 @@ mod tests {
 
     #[test]
     fn test_rig_provider_custom_provider_uses_zcode_api_key_env() {
-        let config = LlmConfig {
-            provider: "custom_provider".to_string(),
-            api_key: None,
-            ..Default::default()
-        };
-        let provider = RigProvider::new(config);
-
-        let original = std::env::var("ZCODE_API_KEY").ok();
-        std::env::remove_var("ZCODE_API_KEY");
-
-        let result = provider.complete("test");
-        assert!(result.is_err());
-
-        // Restore
-        if let Some(val) = original {
-            std::env::set_var("ZCODE_API_KEY", val);
-        }
+        with_zcode_api_key_removed(|| {
+            let config = LlmConfig {
+                provider: "custom_provider".to_string(),
+                api_key: None,
+                ..Default::default()
+            };
+            let provider = RigProvider::new(config);
+            let result = provider.complete("test");
+            assert!(result.is_err());
+        });
     }
 }

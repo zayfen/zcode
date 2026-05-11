@@ -6,7 +6,6 @@ use std::io::Write;
 use tempfile::NamedTempFile;
 use zcode::script::{ScriptContext, ScriptEngine};
 use zcode::script::lua::LuaEngine;
-use zcode::script::python::PythonEngine;
 use zcode::script::javascript::JsEngine;
 use zcode::script::shell::ShellEngine;
 

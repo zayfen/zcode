@@ -2,10 +2,12 @@
 //!
 //! Two pipelines are provided:
 //!
-//! - `build_task_pipeline()`: per-task graph (`planner → coder → tester`).
-//!   After the tester the graph either ends (PASS or retries exhausted) or
-//!   loops back to the coder (FAIL, retries remaining).  Maximum 3 coder
-//!   retries per task.
+//! - `build_task_pipeline()`: per-task graph
+//!   (`orchestrator → planner → coder(ReAct) → reviewer`).
+//!   The root orchestrator schedules the planner/coder/reviewer nodes. After
+//!   the reviewer the graph either ends (PASS or retries exhausted) or loops
+//!   back to the coder (FAIL, retries remaining). Maximum 3 coder retries per
+//!   task.
 //!
 //! - `build_reviewer_pipeline()`: global review graph run **once** after all
 //!   tasks have completed.  The reviewer receives a combined report of all
@@ -29,14 +31,11 @@ use zcode_core::Result;
 /// Build the per-task agentic workflow:
 ///
 /// ```text
-/// planner → coder → tester
-///                     ├─ PASS ──────────────────────────→ END
-///                     └─ FAIL + retries < 3 ── → coder (with failure context)
-///                     └─ FAIL + retries >= 3 ─→ END (force-stop)
+/// orchestrator → planner → coder(ReAct) → reviewer
+///                                      ├─ PASS ──────────────────────────→ END
+///                                      └─ FAIL + retries < 3 ── → coder (with failure context)
+///                                      └─ FAIL + retries >= 3 ─→ END (force-stop)
 /// ```
-///
-/// The reviewer is **not** part of this graph — it is invoked separately via
-/// `build_reviewer_pipeline()` after all tasks have finished.
 pub fn build_task_pipeline(
     provider: Arc<dyn LlmProvider>,
     fast_provider: Arc<dyn LlmProvider>,
@@ -66,7 +65,25 @@ pub fn build_task_pipeline_with_limit(
     skills_prompt: String,
     max_iterations: usize,
 ) -> StateGraph {
-    let mut g = StateGraph::new("planner");
+    let mut g = StateGraph::new("orchestrator");
+
+    // ── Root Orchestrator Node ───────────────────────────────────────────────
+    g.add_node(AsyncFnNode::new("orchestrator", move |state| {
+        let task = state.task.clone().map(|t| t.description).unwrap_or_default();
+        state.agent_state = AgentState::Planning;
+
+        async move {
+            tracing::info!(
+                "[orchestrator] Scheduling task pipeline for: {}...",
+                task.chars().take(80).collect::<String>()
+            );
+
+            Ok(NodeOutput::Multiple(vec![
+                NodeOutput::Custom("root_agent".into(), serde_json::json!("orchestrator")),
+                NodeOutput::Custom("next_agent".into(), serde_json::json!("planner")),
+            ]))
+        }
+    }));
 
     // ── Planner Node ──────────────────────────────────────────────────────────
     let p1 = Arc::clone(&provider);
@@ -127,7 +144,7 @@ pub fn build_task_pipeline_with_limit(
         let sp = sp2.clone();
 
         let task = state.task.clone().map(|t| t.description).unwrap_or_default();
-        // Retrieve the plan or test-failure feedback from the last message
+        // Retrieve the plan or review-failure feedback from the last message
         let last_msg = state.messages.last().and_then(|m| m.content.clone()).unwrap_or_default();
         state.agent_state = AgentState::Executing;
 
@@ -149,7 +166,7 @@ pub fn build_task_pipeline_with_limit(
                     "You are zcode Coder Agent (Model: {}).\n\
                      Execute the provided technical plan through a ReAct workflow: reason, call available MCP/capability tools, observe, and continue.\n\
                      You may only use tools exposed in this session; do not assume local built-in file or shell tools exist.\n\
-                     If you received a TEST FAILURE REPORT, you MUST fix the reported issues before finishing.\n\
+                     If you received a REVIEW FAILURE REPORT, you MUST fix the reported issues before finishing.\n\
                      Always verify your changes before reporting completion.\n\n\
                      {}",
                      active_model, sp
@@ -160,7 +177,7 @@ pub fn build_task_pipeline_with_limit(
                 format!("Original Task: {}\n\nExecution Plan:\n{}", task, last_msg)
             } else {
                 format!(
-                    "Original Task: {}\n\nTEST FAILURE REPORT (attempt {}/{}):\n{}\n\nPlease fix the issues described above.",
+                    "Original Task: {}\n\nREVIEW FAILURE REPORT (attempt {}/{}):\n{}\n\nPlease fix the issues described above.",
                     task, new_retries, 3, last_msg
                 )
             };
@@ -172,47 +189,48 @@ pub fn build_task_pipeline_with_limit(
             }).await?;
 
             tracing::info!("[coder] Coder completed (attempt {}), output: {} chars", new_retries, result.answer.len());
-            // Update retry counter; reset test_passed so tester re-evaluates
+            // Update retry counter; reset review/test metadata so reviewer re-evaluates
             Ok(NodeOutput::Multiple(vec![
                 NodeOutput::Custom("coder_retries".into(), serde_json::json!(new_retries)),
+                NodeOutput::Custom("review_passed".into(), serde_json::Value::Null),
                 NodeOutput::Custom("test_passed".into(), serde_json::Value::Null),
                 NodeOutput::Messages(vec![ConversationMessage::assistant_text(format!("CODER_REPORT:\n{}", result.answer))]),
             ]))
         }
     }));
 
-    // ── Tester Node ───────────────────────────────────────────────────────────
-    let p_test = Arc::clone(&provider);
-    let fp_test = Arc::clone(&fast_provider);
-    let r_test = Arc::clone(&registry);
-    let m_test = model.clone();
-    let fm_test = fast_model.clone();
-    let sp_test = skills_prompt.clone();
-    g.add_node(AsyncFnNode::new("tester", move |state| {
-        let p = Arc::clone(&p_test);
-        let fp = Arc::clone(&fp_test);
-        let r = Arc::clone(&r_test);
-        let m = m_test.clone();
-        let fm = fm_test.clone();
-        let sp = sp_test.clone();
+    // ── Reviewer/Test Gate Node ──────────────────────────────────────────────
+    let p_review = Arc::clone(&provider);
+    let fp_review = Arc::clone(&fast_provider);
+    let r_review = Arc::clone(&registry);
+    let m_review = model.clone();
+    let fm_review = fast_model.clone();
+    let sp_review = skills_prompt.clone();
+    g.add_node(AsyncFnNode::new("reviewer", move |state| {
+        let p = Arc::clone(&p_review);
+        let fp = Arc::clone(&fp_review);
+        let r = Arc::clone(&r_review);
+        let m = m_review.clone();
+        let fm = fm_review.clone();
+        let sp = sp_review.clone();
 
         let task = state.task.clone().map(|t| t.description).unwrap_or_default();
         let coder_report = state.messages.last().and_then(|m| m.content.clone()).unwrap_or_default();
 
-        state.agent_state = AgentState::Executing;
+        state.agent_state = AgentState::Reviewing;
         let state_msgs = state.messages.clone();
         let is_simple = state.metadata.get("is_simple").and_then(|v| v.as_bool()).unwrap_or(false);
 
         async move {
-            tracing::info!("[tester] Starting test verification for this task...");
+            tracing::info!("[reviewer] Starting red/green review and test verification for this task...");
             let active_model = if is_simple { fm.clone() } else { m.clone() };
             let config = LoopConfig {
                 max_iterations: 15,
                 system_prompt: format!(
-                    "You are zcode Tester Agent (Model: {}).\n\
-                     Your job is to test ONLY the code changes made for the current task against its requirements.\n\
+                    "You are zcode Reviewer Agent (Model: {}).\n\
+                     Your job is to review and test ONLY the code changes made for the current task against its requirements.\n\
                      Run the relevant tests, build commands, or inspect outputs to verify correctness.\n\
-                     Produce a Test Report detailing what was checked, the commands run, and the outcomes.\n\
+                     Produce a red/green Review Report detailing what was checked, the commands run, and the outcomes.\n\
                      If all checks pass and the task is fulfilled, you MUST include the exact word 'PASS' in your final answer.\n\
                      If any check fails or the task is not fulfilled, do NOT include 'PASS' — \
                      describe the failures in detail so the Coder can fix them.\n\n\
@@ -234,26 +252,28 @@ pub fn build_task_pipeline_with_limit(
 
             let is_pass = result.answer.contains("PASS");
             tracing::info!(
-                "[tester] Test verdict: {} (output: {} chars)",
+                "[reviewer] Review verdict: {} (output: {} chars)",
                 if is_pass { "PASS ✅" } else { "FAIL ❌" },
                 result.answer.len()
             );
 
             Ok(NodeOutput::Multiple(vec![
+                NodeOutput::Custom("review_passed".into(), serde_json::json!(is_pass)),
                 NodeOutput::Custom("test_passed".into(), serde_json::json!(is_pass)),
-                NodeOutput::Messages(vec![ConversationMessage::assistant_text(format!("TEST_REPORT:\n{}", result.answer))]),
+                NodeOutput::Messages(vec![ConversationMessage::assistant_text(format!("REVIEW_REPORT:\n{}", result.answer))]),
             ]))
         }
     }));
 
     // ── Edges ─────────────────────────────────────────────────────────────────
+    g.add_edge("orchestrator", "planner");
     g.add_edge("planner", "coder");
-    g.add_edge("coder", "tester");
+    g.add_edge("coder", "reviewer");
 
-    // Tester → PASS: END | FAIL + retries < 3: back to coder | FAIL + exhausted: force END
+    // Reviewer → PASS: END | FAIL + retries < 3: back to coder | FAIL + exhausted: force END
     g.add_conditional_edge(
-        "tester",
-        routers::task_test_router("coder", 3),
+        "reviewer",
+        routers::review_router_with_limit("coder", 3),
         vec!["coder", "__end__"],
     );
 
@@ -414,5 +434,143 @@ async fn call_llm(p: Arc<dyn LlmProvider>, msgs: Vec<serde_json::Value>, tools: 
             )))
         }
         Err(e) => Err(e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+    use zcode_core::agent::{DefaultState, Task};
+    use zcode_core::llm::{LlmResponse as ProviderLlmResponse, UsageStats};
+
+    struct ScriptedProvider {
+        responses: Mutex<VecDeque<String>>,
+    }
+
+    impl ScriptedProvider {
+        fn new(responses: impl IntoIterator<Item = &'static str>) -> Self {
+            Self {
+                responses: Mutex::new(responses.into_iter().map(String::from).collect()),
+            }
+        }
+    }
+
+    impl LlmProvider for ScriptedProvider {
+        fn complete(&self, _prompt: &str) -> Result<String> {
+            Ok(self
+                .responses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| "PASS".to_string()))
+        }
+
+        fn chat(
+            &self,
+            _messages: &[Message],
+            _tools: &[serde_json::Value],
+        ) -> Result<ProviderLlmResponse> {
+            let content = self
+                .responses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| "PASS".to_string());
+            Ok(ProviderLlmResponse {
+                content: content.clone(),
+                model: "scripted".to_string(),
+                usage: Some(UsageStats {
+                    input_tokens: 1,
+                    output_tokens: 1,
+                }),
+                raw_response: serde_json::json!({ "content": content }),
+            })
+        }
+
+        fn stream_complete(&self, _prompt: &str) -> Result<zcode_llm_provider::StreamingResponse> {
+            Err(zcode_core::ZcodeError::InternalError(
+                "streaming is not used by pipeline tests".to_string(),
+            ))
+        }
+    }
+
+    fn empty_registry() -> Arc<ToolRegistry> {
+        Arc::new(ToolRegistry::new())
+    }
+
+    #[tokio::test]
+    async fn test_task_pipeline_starts_with_orchestrator_and_reviewer_gate() {
+        let provider: Arc<dyn LlmProvider> = Arc::new(ScriptedProvider::new([
+            "PLAN: do it",
+            "CODER: done",
+            "PASS",
+        ]));
+        let graph = build_task_pipeline_with_limit(
+            Arc::clone(&provider),
+            Arc::clone(&provider),
+            empty_registry(),
+            "model".to_string(),
+            "fast-model".to_string(),
+            String::new(),
+            10,
+        )
+        .compile()
+        .unwrap();
+
+        let mut state = DefaultState::new(Task::new("implement task"));
+        let output = graph.execute(&mut state).await.unwrap();
+
+        assert_eq!(
+            output.nodes_executed,
+            vec!["orchestrator", "planner", "coder", "reviewer"]
+        );
+        assert_eq!(
+            state.metadata.get("root_agent").and_then(|v| v.as_str()),
+            Some("orchestrator")
+        );
+        assert_eq!(
+            state.metadata.get("review_passed").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_task_pipeline_retries_coder_after_reviewer_failure() {
+        let provider: Arc<dyn LlmProvider> = Arc::new(ScriptedProvider::new([
+            "PLAN: do it",
+            "CODER: first attempt",
+            "FAIL: missing behavior",
+            "CODER: fixed",
+            "PASS",
+        ]));
+        let graph = build_task_pipeline_with_limit(
+            Arc::clone(&provider),
+            Arc::clone(&provider),
+            empty_registry(),
+            "model".to_string(),
+            "fast-model".to_string(),
+            String::new(),
+            10,
+        )
+        .compile()
+        .unwrap();
+
+        let mut state = DefaultState::new(Task::new("implement task"));
+        let output = graph.execute(&mut state).await.unwrap();
+
+        assert_eq!(
+            output.nodes_executed,
+            vec!["orchestrator", "planner", "coder", "reviewer", "coder", "reviewer"]
+        );
+        assert_eq!(
+            state.metadata.get("coder_retries").and_then(|v| v.as_u64()),
+            Some(2)
+        );
+        assert_eq!(
+            state.metadata.get("review_passed").and_then(|v| v.as_bool()),
+            Some(true)
+        );
     }
 }

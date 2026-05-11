@@ -258,7 +258,9 @@ fn test_review_git_diff_pipeline() {
 
     // Should not panic even on empty diff
     let result = reviewer.review_diff(&diff).unwrap();
-    // Any result is acceptable — just ensure the pipeline works
+    // Any verdict is acceptable here because the current working tree may be
+    // dirty; this test only verifies GitDiff output can flow through reviewer.
     assert!(result.quality_score <= 100);
-    assert!(result.quality_score > 0 || result.issues.is_empty());
+    assert!(!result.summary.is_empty());
+    assert!(result.issues.len() <= ReviewConfig::default().max_issues);
 }

@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn test_workspace_info_is_not_git_for_tmp() {
-        let (dir, ws) = make_workspace();
+        let (_dir, ws) = make_workspace();
         let info = ws.info();
         // Temp dirs are typically not git repos
         // (they could be, but the test just ensures no panic)

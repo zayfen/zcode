@@ -3,10 +3,8 @@
 //! Tests the full Workspace workflow across multiple modules:
 //! config loading, snapshot save/restore, file context building.
 
-use std::io::Write;
 use tempfile::TempDir;
-use zcode::workspace::{Workspace, WorkspaceContext};
-use zcode::config::ProjectConfig;
+use zcode::workspace::Workspace;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

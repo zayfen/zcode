@@ -198,7 +198,7 @@ pub mod routers {
 
     /// Router for per-task test-fix loop.
     ///
-    /// After each coder run, the tester checks the produced code.
+    /// After each coder run, the reviewer/test gate checks the produced code.
     /// - `test_passed = true`  → `None` (task done, exit to END)
     /// - `test_passed = false` AND `coder_retries < max_retries` → `Some(retry_node)` (back to coder with failure info)
     /// - `test_passed = false` AND `coder_retries >= max_retries` → `None` (retries exhausted, force END)

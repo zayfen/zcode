@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-03-29 | Updated: 2026-03-29 -->
+<!-- Generated: 2026-03-29 | Updated: 2026-05-11 -->
 
 # session
 
@@ -25,7 +25,7 @@ Session snapshot management backed by SQLite. Persists workspace state (file con
 ## Dependencies
 
 ### Internal
-- `crate::error` — wraps IO and SQLite errors
+- `zcode_core` — wraps IO, serialization, and SQLite errors
 
 ### External
 - `rusqlite` (bundled), `serde`, `chrono`

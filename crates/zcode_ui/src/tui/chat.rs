@@ -3,7 +3,7 @@
 //! This module provides a chat interface with input and message display.
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect, Alignment},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, BorderType, Paragraph, Wrap},

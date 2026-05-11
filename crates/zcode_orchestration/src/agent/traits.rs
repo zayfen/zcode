@@ -56,7 +56,6 @@ pub trait AgentTrait: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent::types::*;
 
     /// A minimal test agent implementation
     struct MockAgent {

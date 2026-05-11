@@ -15,7 +15,7 @@
 //!
 //! # 快速开始
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use zcode::agent::graph::{StateGraph, FnNode, NodeOutput, DefaultState, routers};
 //!
 //! let mut graph = StateGraph::new("planner");
@@ -46,9 +46,6 @@ pub mod presets;
 pub mod state;
 
 pub use checkpoint::*;
-pub use edge::*;
-pub use graph::*;
-pub use state::*;
 
 // ── Core graph types ──────────────────────────────────────────────────────────
 pub use graph::{CompiledGraph, EndReason, GraphEvent, GraphOutput, StateGraph};

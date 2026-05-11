@@ -10,6 +10,6 @@ pub use agent::{
     BusDispatcher, BusHandle, CoderAgent, CompiledGraph, ConversationMessage, DefaultState,
     Edge, EndReason, FnNode, GraphEvent, GraphNode, GraphOutput, GraphState, LoopConfig,
     LoopResult, LlmResponse, MessageBus, NodeOutput, OrchestratorAgent, PlannerAgent,
-    LearningEntry, ReviewCategory, ReviewConfig, ReviewIssue, ReviewResult, ReviewerAgent,
-    SelfLearningAgent, StateGraph, Task, TaskPriority, TaskResult,
+    IssueSeverity, LearningEntry, ReviewCategory, ReviewConfig, ReviewIssue, ReviewResult,
+    ReviewerAgent, SelfLearningAgent, StateGraph, Task, TaskPriority, TaskResult,
 };

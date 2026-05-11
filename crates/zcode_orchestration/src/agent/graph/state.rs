@@ -5,7 +5,7 @@
 
 use zcode_core::agent::ConversationMessage;
 pub use zcode_core::agent::DefaultState;
-use crate::agent::types::{AgentState, Task, TaskResult};
+use crate::agent::types::{AgentState, TaskResult};
 
 // ─── NodeOutput ───────────────────────────────────────────────────────────────
 
@@ -87,6 +87,7 @@ impl GraphState for DefaultState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::types::Task;
 
     #[test]
     fn test_default_state_new() {

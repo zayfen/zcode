@@ -350,7 +350,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_coder_handle_task_assigned() {
-        let mut coder = make_coder();
+        let coder = make_coder();
         let task = Task::new("Write a hello world function");
         // Inject MockLlmProvider so the test doesn't depend on env vars or network
         let provider: Arc<dyn zcode_llm_provider::provider::LlmProvider> =

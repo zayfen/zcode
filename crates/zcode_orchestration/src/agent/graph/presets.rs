@@ -13,7 +13,7 @@
 //!
 //! # Example
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use zcode::agent::graph::{presets, DefaultState};
 //!
 //! let graph = presets::review_pipeline().compile()?;

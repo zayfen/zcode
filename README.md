@@ -1,221 +1,72 @@
 # zcode
 
-> 🤖 A modular, extensible AI coding agent — built in Rust.
+`zcode` is a Rust AI coding agent CLI organized as a layered Cargo workspace.
 
-[![Rust](https://img.shields.io/badge/rust-2021_edition-orange.svg)](https://www.rust-lang.org)
-[![Tests](https://img.shields.io/badge/tests-867_passing-brightgreen.svg)](#)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-
-**zcode** is a terminal-based programming assistant that combines a multi-agent orchestration system, multi-language scripting, LSP integration, and session management into a single, dependency-light binary.
-
----
-
-## ✨ Features
+## Features
 
 | Category | Capability |
 |---|---|
-| **Multi-Agent** | Orchestrator / Planner / Coder / Reviewer agents with async message bus |
-| **LLM Providers** | Anthropic Claude, OpenAI GPT, local Ollama — pluggable via `LlmProvider` trait |
-| **Tool System** | Built-in tools (file, shell, search, AST) + custom tools via scripting or MCP |
-| **Scripting** | Lua 5.4, Python, JavaScript (QuickJS), Shell — with lifecycle hooks |
-| **MCP Client** | JSON-RPC 2.0 over stdio — connect any MCP-compatible tool server |
-| **LSP Client** | goto-definition, find-references, hover, completion for any LSP server |
-| **Session Snapshots** | SQLite-backed workspace snapshots with save / restore / diff |
-| **Git-Aware Context** | Only loads changed files into LLM context (token-budget-aware) |
-| **Grammar Registry** | 17 built-in languages + runtime custom Tree-sitter grammar loading |
-| **TUI** | Ratatui-based chat interface with syntax highlighting |
+| Workspace layers | UI, requirements, orchestration, LLM provider, capabilities, session, core |
+| Agent workflow | Planner, ReAct coder, reviewer/test gate, self-learning summaries |
+| LLM provider | OpenAI-compatible chat completions |
+| Models | `ZCODE_MODEL` plus optional `ZCODE_FAST_MODEL` for simple tasks |
+| Capabilities | MCP tools, skills, and global shared context |
+| Requirements | `docs/` scaffold, validation, task parsing, and task persistence |
+| Session | Message history, load/list/delete, and deterministic compression |
+| TUI | Ratatui chat interface |
 
----
-
-## 🚀 Quick Start
-
-### Installation
+## Build
 
 ```bash
-# Clone and build
-git clone https://github.com/zayfen/zcode.git
-cd zcode
-cargo build --release
-
-# Run
-./target/release/zcode
+cargo build --workspace
+cargo test --workspace
 ```
 
-### Initialize a project
+## LLM Configuration
+
+Set these environment variables before running real LLM workflows:
 
 ```bash
-# Create .zcode/config.toml in current directory
-zcode init
+export ZCODE_BASE_URL="https://api.openai.com/v1"
+export ZCODE_API_KEY="sk-..."
+export ZCODE_MODEL="gpt-4o"
+export ZCODE_FAST_MODEL="gpt-4o-mini"
 ```
 
-### Chat with the agent
+`ZCODE_BASE_URL` can be a service root, a `/v1` root, or a full `/chat/completions` endpoint.
+
+## Basic Usage
 
 ```bash
-# Start TUI chat
-zcode chat
+# Start the TUI chat
+cargo run -- chat
 
-# One-shot query
-zcode ask "Refactor the error handling in src/main.rs to use ? operator"
+# Initialize/validate standardized requirement docs
+cargo run -- docs init
+cargo run -- docs check
 
-# Review current git changes
-zcode review
+# Run a task through the agent workflow
+cargo run -- run "Implement the next task from docs"
 
-# Save a snapshot before a big change
-zcode snapshot save "before-refactor"
-
-# Restore a snapshot
-zcode snapshot restore <id>
+# Manage persisted task records
+cargo run -- task list
+cargo run -- task sync
+cargo run -- task run <task-id-or-description>
+cargo run -- task run-all -j 2
 ```
 
----
+Use `--skip-docs-check` if you need to run before the `docs/` scaffold is valid.
 
-## ⚙️ Configuration
+## Workspace Crates
 
-`zcode` is configured via `.zcode/config.toml` in your project root:
-
-```toml
-name = "my-project"
-languages = ["rust", "typescript"]
-frameworks = ["tokio", "react"]
-
-# LLM provider override
-[llm]
-provider = "anthropic"          # anthropic | openai | ollama
-model    = "claude-3-5-sonnet-20241022"
-temperature = 0.7
-
-# Tool access controls
-[tools]
-disabled = ["delete_file"]
-
-# MCP servers (auto-started on project open)
-[[mcp_servers]]
-name    = "filesystem"
-command = "mcp-server-filesystem"
-args    = ["/workspace"]
-
-# LSP servers
-[[lsp_servers]]
-language = "rust"
-command  = "rust-analyzer"
-
-[[lsp_servers]]
-language = "python"
-command  = "pylsp"
-
-# Custom scripting hooks
-[scripts]
-script_dirs = [".zcode/scripts"]
-[scripts.hooks]
-before_tool       = ".zcode/scripts/before_tool.lua"
-on_task_complete  = ".zcode/scripts/notify.py"
-
-# Session snapshots
-[snapshots]
-db_path       = ".zcode/snapshots.db"
-max_snapshots = 50
-auto_snapshot = true
-
-# Custom Tree-sitter grammars
-[[grammars]]
-language     = "zig"
-library_path = "/usr/lib/tree-sitter-zig.so"
-extensions   = ["zig"]
-```
-
-Global settings live in `~/.config/zcode/settings.toml`:
-
-```toml
-[llm]
-provider   = "anthropic"
-api_key    = "sk-ant-..."
-model      = "claude-3-5-sonnet-20241022"
-max_tokens = 8192
-
-[tui]
-theme = "dark"
-```
-
----
-
-## 📝 Writing Scripts
-
-Scripts in `.zcode/scripts/` are automatically loaded as tools. Each script exposes a `process(args_json)` function:
-
-**Lua** (`.lua`):
-```lua
-function process(args_json)
-    local content = zcode.read_file("src/main.rs")
-    zcode.log("Processing: " .. content:len() .. " bytes")
-    return content:upper()
-end
-```
-
-**JavaScript** (`.js`):
-```js
-function process(args) {
-    const content = zcode.read_file("package.json");
-    const pkg = JSON.parse(content);
-    return `Project: ${pkg.name} v${pkg.version}`;
-}
-```
-
-**Python** (`.py`):
-```python
-def process(args):
-    result = zcode.shell("pytest --tb=short")
-    return result["stdout"]
-```
-
-**Shell** (`.sh`):
-```sh
-function process() {
-    echo "Build output:"
-    cargo build --release 2>&1
-}
-```
-
-### Available Script API
-
-| Function | Description |
+| Crate | Responsibility |
 |---|---|
-| `zcode.read_file(path)` | Read file contents as string |
-| `zcode.write_file(path, content)` | Write string to file, returns bool |
-| `zcode.shell(cmd)` | Run shell command, returns `{stdout, stderr, exit_code}` |
-| `zcode.log(message)` | Log to agent output |
+| `zcode_ui` | CLI/TUI screen rendering |
+| `zcode_requirements` | Requirement docs and task store |
+| `zcode_orchestration` | Agent graph and ReAct execution |
+| `zcode_llm_provider` | OpenAI-compatible provider |
+| `zcode_capabilities` | Skills, MCP, tool calls, shared context |
+| `zcode_session` | Session messages and compression |
+| `zcode_core` | Shared errors, config, and DTOs |
 
----
-
-## 🧪 Testing
-
-```bash
-# Unit tests
-cargo test
-
-# Integration tests only
-cargo test --tests
-
-# Specific test file
-cargo test --test workspace_integration
-cargo test --test scripting_integration
-cargo test --test reviewer_integration
-cargo test --test grammar_integration
-```
-
----
-
-## 🏗️ Architecture
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system design.
-
----
-
-## 📖 Usage Reference
-
-See [USAGE.md](USAGE.md) for the complete CLI reference.
-
----
-
-## 📄 License
-
-MIT — see [LICENSE](LICENSE).
+See [ARCHITECTURE.md](ARCHITECTURE.md) and [USAGE.md](USAGE.md) for details.

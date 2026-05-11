@@ -3,15 +3,21 @@
 //! This module implements the handlers for each CLI command.
 
 use crate::cli::args::{Command, DocsAction, TaskAction};
-use crate::docs::{generate_docs_scaffold, DocsValidator};
-use crate::error::Result;
-use crate::llm::provider::{LlmProvider, RigProvider};
-use crate::llm::LlmConfig;
-use crate::skills::SkillsLoader;
-use crate::task_store::{TaskRecord, TaskStatus, TaskStore};
-use crate::tools::{register_default_tools, ToolRegistry};
-use crate::tui::{init_terminal, restore_terminal, TuiApp};
-use crate::Settings;
+use crate::workspace::Workspace;
+use zcode_capabilities::{McpClient, SkillsLoader, ToolRegistry};
+use zcode_core::{LlmConfig, Result, Settings, ZcodeError};
+use zcode_llm_provider::{LlmProvider, Message};
+#[cfg(test)]
+use zcode_llm_provider::MockLlmProvider;
+#[cfg(not(test))]
+use zcode_llm_provider::RigProvider;
+use zcode_orchestration::{
+    build_reviewer_pipeline, build_task_pipeline_with_limit, AgentLoop, ConversationMessage,
+    DefaultState, LlmResponse as AgentLlmResponse, LoopConfig, TaskResult,
+};
+use zcode_requirements::docs::parser::parse_all_tasks;
+use zcode_requirements::{generate_docs_scaffold, DocsValidator, TaskRecord, TaskStatus, TaskStore};
+use zcode_ui::{init_terminal, restore_terminal, TuiApp};
 use std::path::Path;
 use std::sync::Arc;
 use tracing::info;
@@ -64,9 +70,89 @@ fn run_docs_validation(project_dir: &Path) -> Result<()> {
     eprintln!("  Run `zcode docs check` to see this report again.");
     eprintln!("  Use `--skip-docs-check` to bypass this validation.");
     eprintln!();
-    Err(crate::error::ZcodeError::ConfigError(
+    Err(ZcodeError::ConfigError(
         "docs/ validation failed. Fix the issues above before running zcode.".to_string(),
     ))
+}
+
+fn llm_config_from_settings(settings: &Settings) -> LlmConfig {
+    LlmConfig {
+        provider: settings.llm.provider.clone(),
+        model: settings.llm.model.clone(),
+        fast_model: settings.llm.fast_model.clone(),
+        api_key: settings.llm.api_key.clone(),
+        temperature: settings.llm.temperature,
+        max_tokens: settings.llm.max_tokens,
+    }
+}
+
+fn fast_llm_config(config: &LlmConfig) -> LlmConfig {
+    let mut fast = config.clone();
+    fast.model = config
+        .fast_model
+        .clone()
+        .unwrap_or_else(|| config.model.clone());
+    fast
+}
+
+#[cfg(not(test))]
+fn make_llm_provider(config: &LlmConfig) -> Arc<dyn LlmProvider> {
+    Arc::new(RigProvider::new(config.clone()))
+}
+
+#[cfg(test)]
+fn make_llm_provider(_config: &LlmConfig) -> Arc<dyn LlmProvider> {
+    Arc::new(MockLlmProvider::new("PASS"))
+}
+
+fn build_tool_registry(
+    cwd: &Path,
+    settings: &Settings,
+    args: &crate::cli::args::Args,
+) -> Result<Arc<ToolRegistry>> {
+    let mut registry = ToolRegistry::new();
+
+    let ws_config = Workspace::open(cwd).map(|w| w.config).unwrap_or_default();
+
+    for mcp_cfg in &settings.mcp_servers {
+        if !mcp_cfg.auto_start {
+            continue;
+        }
+        let exec_args: Vec<&str> = mcp_cfg.args.iter().map(|s| s.as_str()).collect();
+        info!("Starting global MCP server: {} {:?}", mcp_cfg.command, exec_args);
+        let client = McpClient::connect_stdio(&mcp_cfg.name, &mcp_cfg.command, &exec_args)?;
+        for adapter in Arc::new(client).create_adapters() {
+            registry.register(adapter);
+        }
+    }
+
+    for mcp_cfg in ws_config.mcp_servers {
+        if !mcp_cfg.auto_start {
+            continue;
+        }
+        let exec_args: Vec<&str> = mcp_cfg.args.iter().map(|s| s.as_str()).collect();
+        info!("Starting workspace MCP server: {} {:?}", mcp_cfg.command, exec_args);
+        let client = McpClient::connect_stdio(&mcp_cfg.name, &mcp_cfg.command, &exec_args)?;
+        for adapter in Arc::new(client).create_adapters() {
+            registry.register(adapter);
+        }
+    }
+
+    for mcp_str in &args.mcp {
+        let parts: Vec<&str> = mcp_str.split_whitespace().collect();
+        if parts.is_empty() {
+            continue;
+        }
+        let command = parts[0];
+        let exec_args: Vec<&str> = parts[1..].to_vec();
+        info!("Starting CLI MCP server: {} {:?}", command, exec_args);
+        let client = McpClient::connect_stdio("cli_mcp", command, &exec_args)?;
+        for adapter in Arc::new(client).create_adapters() {
+            registry.register(adapter);
+        }
+    }
+
+    Ok(Arc::new(registry))
 }
 
 /// Handle `zcode docs {init|check}` commands.
@@ -75,7 +161,7 @@ fn execute_docs(action: &DocsAction) -> Result<()> {
     match action {
         DocsAction::Init => {
             let created = generate_docs_scaffold(&cwd).map_err(|e| {
-                crate::error::ZcodeError::ConfigError(format!("Failed to create docs scaffold: {}", e))
+                ZcodeError::ConfigError(format!("Failed to create docs scaffold: {}", e))
             })?;
             if created.is_empty() {
                 println!("docs/ scaffolding already exists — nothing to create.");
@@ -197,10 +283,10 @@ async fn execute_task(action: &TaskAction, args: &crate::cli::args::Args) -> Res
                 let handle = tokio::spawn(async move {
                     let _permit = sem.acquire().await.expect("semaphore closed");
                     println!("\n▶ [{}/{}] Starting: {} [id={}]", i + 1, total_count, task_desc, task_id);
-                    // execute_run runs: planner→coder→tester (with fix loop) only — no reviewer
+                    // execute_run_task_only runs the per-task orchestrator graph.
                     let result = execute_run_task_only(&task_desc, Some(&task_id), max_iter, &args_clone).await;
                     match &result {
-                        Ok(output) => println!("✅ [{}] Completed: {}", task_id, task_desc),
+                        Ok(_) => println!("✅ [{}] Completed: {}", task_id, task_desc),
                         Err(e)    => println!("❌ [{}] Failed: {} — {}", task_id, task_desc, e),
                     }
                     (task_id, task_desc, result)
@@ -243,22 +329,13 @@ async fn execute_task(action: &TaskAction, args: &crate::cli::args::Args) -> Res
             if let Some(model) = &args.model {
                 settings.llm.model = model.clone();
             }
-            let llm_config = crate::llm::LlmConfig {
-                provider: settings.llm.provider.clone(),
-                model: settings.llm.model.clone(),
-                api_key: settings.llm.api_key.clone(),
-                temperature: settings.llm.temperature,
-                max_tokens: settings.llm.max_tokens,
-            };
-            let provider: Arc<dyn LlmProvider> = Arc::new(RigProvider::new(llm_config.clone()));
-            let mut reg = ToolRegistry::new();
-            register_default_tools(&mut reg);
-            use crate::ast::LanguageRegistry;
-            use crate::tools::ast_tools::{AstSearchTool, AstEditTool};
-            let lang_reg = Arc::new(LanguageRegistry::new());
-            reg.register(AstSearchTool::new(Arc::clone(&lang_reg)));
-            reg.register(AstEditTool::new(Arc::clone(&lang_reg)));
-            let registry = Arc::new(reg);
+            let llm_config = llm_config_from_settings(&settings);
+            let provider = make_llm_provider(&llm_config);
+            let registry = build_tool_registry(
+                &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+                &settings,
+                args,
+            )?;
 
             let skills = SkillsLoader::load(
                 &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
@@ -266,13 +343,10 @@ async fn execute_task(action: &TaskAction, args: &crate::cli::args::Args) -> Res
             );
             let skills_prompt = SkillsLoader::build_system_prompt("", &skills);
 
-            use crate::agent::graph::pipeline::build_reviewer_pipeline;
             let reviewer_graph = build_reviewer_pipeline(
                 provider, registry, llm_config.model.clone(), skills_prompt
             ).compile()?;
 
-            use crate::agent::graph::state::DefaultState;
-            use crate::agent::loop_exec::ConversationMessage;
             let mut review_state = DefaultState::default();
             review_state.messages.push(ConversationMessage::user(
                 format!("Combined Task Completion Report:\n\n{}", combined_report)
@@ -295,7 +369,7 @@ async fn execute_task(action: &TaskAction, args: &crate::cli::args::Args) -> Res
             }
 
             if failed > 0 {
-                Err(crate::error::ZcodeError::InternalError(
+                Err(ZcodeError::InternalError(
                     format!("{} task(s) failed", failed)
                 ))
             } else {
@@ -312,7 +386,7 @@ async fn execute_task(action: &TaskAction, args: &crate::cli::args::Args) -> Res
             Ok(())
         }
         TaskAction::Sync => {
-            let all_tasks = crate::docs::parser::parse_all_tasks(&cwd)?;
+            let all_tasks = parse_all_tasks(&cwd)?;
             let saved_tasks = store.list()?;
             
             let mut added = 0;
@@ -340,13 +414,11 @@ async fn execute_task(action: &TaskAction, args: &crate::cli::args::Args) -> Res
 
 /// Feed raw requirements to generate/update the docs/ structure using a lightweight AgentLoop.
 ///
-/// Unlike `execute_run` which spins up the full 4-stage pipeline (planner → coder → tester → reviewer),
+/// Unlike `execute_run` which spins up the full task pipeline
+/// (orchestrator → planner → coder(ReAct) → reviewer),
 /// `execute_feed` runs each step as a single AgentLoop — just one LLM agent with tools, no
-/// unnecessary planner/tester/reviewer overhead.
+/// unnecessary planner/coder/reviewer overhead.
 async fn execute_feed(path: &str, investigate: bool, max_iterations: usize, args: &crate::cli::args::Args) -> Result<()> {
-    use crate::agent::loop_exec::{AgentLoop, LoopConfig, LlmResponse as AgentLlmResponse};
-    use crate::llm::Message;
-
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
     // Ensure docs scaffolding exists before feeding LLM
@@ -360,51 +432,10 @@ async fn execute_feed(path: &str, investigate: bool, max_iterations: usize, args
         settings.llm.model = model.clone();
     }
 
-    let llm_config = LlmConfig {
-        provider: settings.llm.provider.clone(),
-        model: settings.llm.model.clone(),
-        api_key: settings.llm.api_key.clone(),
-        temperature: settings.llm.temperature,
-        max_tokens: settings.llm.max_tokens,
-    };
-    let provider: Arc<dyn LlmProvider> = Arc::new(RigProvider::new(llm_config.clone()));
+    let llm_config = llm_config_from_settings(&settings);
+    let provider = make_llm_provider(&llm_config);
 
-    let mut registry = ToolRegistry::new();
-    register_default_tools(&mut registry);
-    
-    // Register AST tools
-    use crate::ast::LanguageRegistry;
-    use crate::tools::ast_tools::{AstSearchTool, AstEditTool};
-    let lang_registry = Arc::new(LanguageRegistry::new());
-    registry.register(AstSearchTool::new(Arc::clone(&lang_registry)));
-    registry.register(AstEditTool::new(Arc::clone(&lang_registry)));
-
-    // MCP servers (global + workspace + CLI)
-    use crate::workspace::Workspace;
-    let ws_config = Workspace::open(&cwd).map(|w| w.config).unwrap_or_default();
-    for mcp_cfg in &settings.mcp_servers {
-        if !mcp_cfg.auto_start { continue; }
-        let exec_args: Vec<&str> = mcp_cfg.args.iter().map(|s| s.as_str()).collect();
-        let client = crate::mcp::client::McpClient::connect_stdio(&mcp_cfg.name, &mcp_cfg.command, &exec_args)?;
-        let adapters = Arc::new(client).create_adapters();
-        for adapter in adapters { registry.register(adapter); }
-    }
-    for mcp_cfg in ws_config.mcp_servers {
-        if !mcp_cfg.auto_start { continue; }
-        let exec_args: Vec<&str> = mcp_cfg.args.iter().map(|s| s.as_str()).collect();
-        let client = crate::mcp::client::McpClient::connect_stdio(&mcp_cfg.name, &mcp_cfg.command, &exec_args)?;
-        let adapters = Arc::new(client).create_adapters();
-        for adapter in adapters { registry.register(adapter); }
-    }
-    for mcp_str in &args.mcp {
-        let parts: Vec<&str> = mcp_str.split_whitespace().collect();
-        if parts.is_empty() { continue; }
-        let client = crate::mcp::client::McpClient::connect_stdio("cli_mcp", parts[0], &parts[1..])?;
-        let adapters = Arc::new(client).create_adapters();
-        for adapter in adapters { registry.register(adapter); }
-    }
-
-    let registry = Arc::new(registry);
+    let registry = build_tool_registry(&cwd, &settings, args)?;
 
     println!("🧠 Model: {}", llm_config.model);
 
@@ -480,10 +511,7 @@ async fn feed_call_llm(
     p: Arc<dyn LlmProvider>,
     msgs: Vec<serde_json::Value>,
     tools: Vec<serde_json::Value>,
-) -> Result<crate::agent::loop_exec::LlmResponse> {
-    use crate::agent::loop_exec::LlmResponse as AgentLlmResponse;
-    use crate::llm::Message;
-
+) -> Result<AgentLlmResponse> {
     let llm_messages: Vec<Message> = msgs.iter()
         .filter_map(|v| {
             let role_str = v.get("role")?.as_str()?;
@@ -522,7 +550,7 @@ async fn feed_call_llm(
 
     match p.chat(&llm_messages, &tools) {
         Ok(resp) => {
-            if let Ok(agent_resp) = AgentLlmResponse::from_anthropic_response(&resp.raw_response) {
+            if let Ok(agent_resp) = AgentLlmResponse::from_openai_response(&resp.raw_response) {
                 Ok(agent_resp)
             } else {
                 Ok(AgentLlmResponse::Text(resp.content))
@@ -566,86 +594,31 @@ async fn execute_run(task: &str, resume_id: Option<&str>, max_iterations: usize,
     }
 
     // ── Model / LLM config ────────────────────────────────────────────
-    let llm_config = LlmConfig {
-        provider: settings.llm.provider.clone(),
-        model: settings.llm.model.clone(),
-        api_key: settings.llm.api_key.clone(),
-        temperature: settings.llm.temperature,
-        max_tokens: settings.llm.max_tokens,
-    };
-    let provider: Arc<dyn LlmProvider> = Arc::new(RigProvider::new(llm_config.clone()));
+    let llm_config = llm_config_from_settings(&settings);
+    let provider = make_llm_provider(&llm_config);
+    let fast_llm_config = fast_llm_config(&llm_config);
+    let fast_provider = make_llm_provider(&fast_llm_config);
 
-    // ── Tool registry ─────────────────────────────────────────────────
-    let mut registry = ToolRegistry::new();
-    register_default_tools(&mut registry);
-    
-    // Register AST tools
-    use crate::ast::LanguageRegistry;
-    use crate::tools::ast_tools::{AstSearchTool, AstEditTool};
-    let lang_registry = Arc::new(LanguageRegistry::new());
-    registry.register(AstSearchTool::new(Arc::clone(&lang_registry)));
-    registry.register(AstEditTool::new(Arc::clone(&lang_registry)));
-    
-    // ── MCP Servers ───────────────────────────────────────────────────
-    use crate::workspace::Workspace;
-    let ws_config = Workspace::open(&cwd).map(|w| w.config).unwrap_or_default();
-    
-    // 0. Process Global Settings MCP configs
-    for mcp_cfg in &settings.mcp_servers {
-        if !mcp_cfg.auto_start { continue; }
-        let exec_args: Vec<&str> = mcp_cfg.args.iter().map(|s| s.as_str()).collect();
-        info!("Starting global MCP server: {} {:?}", mcp_cfg.command, exec_args);
-        let client = crate::mcp::client::McpClient::connect_stdio(&mcp_cfg.name, &mcp_cfg.command, &exec_args)?;
-        let adapters = Arc::new(client).create_adapters();
-        for adapter in adapters {
-            registry.register(adapter);
-        }
-    }
-
-    // 1. Process workspace config
-    for mcp_cfg in ws_config.mcp_servers {
-        if !mcp_cfg.auto_start { continue; }
-        let exec_args: Vec<&str> = mcp_cfg.args.iter().map(|s| s.as_str()).collect();
-        info!("Starting MCP server from config: {} {:?}", mcp_cfg.command, exec_args);
-        let client = crate::mcp::client::McpClient::connect_stdio(&mcp_cfg.name, &mcp_cfg.command, &exec_args)?;
-        let adapters = Arc::new(client).create_adapters();
-        for adapter in adapters {
-            registry.register(adapter);
-        }
-    }
-
-    // 2. Process CLI args
-    for mcp_str in &args.mcp {
-        // Simple shlex: splits by space, doesn't handle quotes yet
-        let parts: Vec<&str> = mcp_str.split_whitespace().collect();
-        if parts.is_empty() { continue; }
-        let command = parts[0];
-        let exec_args: Vec<&str> = parts[1..].to_vec();
-        
-        info!("Starting MCP server from CLI: {} {:?}", command, exec_args);
-        let client = crate::mcp::client::McpClient::connect_stdio("cli_mcp", command, &exec_args)?;
-        let adapters = Arc::new(client).create_adapters();
-        for adapter in adapters {
-            registry.register(adapter);
-        }
-    }
-
-    let registry = Arc::new(registry);
+    // ── Capability registry (MCP-only) ────────────────────────────────
+    let registry = build_tool_registry(&cwd, &settings, args)?;
 
     let skills_prompt = SkillsLoader::build_system_prompt("", &skills);
     
-    // ── Graph Engine (per-task: planner → coder → tester, max 3 fix retries) ──
-    use crate::agent::graph::pipeline::{build_task_pipeline, build_reviewer_pipeline};
-    let graph = build_task_pipeline(
+    // ── Graph Engine (orchestrator → planner → coder(ReAct) → reviewer) ──
+    let graph = build_task_pipeline_with_limit(
         Arc::clone(&provider),
+        Arc::clone(&fast_provider),
         Arc::clone(&registry),
         llm_config.model.clone(),
+        fast_llm_config.model.clone(),
         skills_prompt.clone(),
+        max_iterations,
     ).compile()?;
 
     println!("🤖 zcode Task Agent starting...");
     println!("📋 Task: {} [id={}]", task, task_record.id);
     println!("🧠 Model: {}", llm_config.model);
+    println!("⚡ Fast model: {}", fast_llm_config.model);
     println!("💾 Progress saved to .zcode/tasks/{}.json", task_record.id);
     println!();
 
@@ -660,7 +633,8 @@ async fn execute_run(task: &str, resume_id: Option<&str>, max_iterations: usize,
     // Save task-level status
     let final_answer = match task_result {
         Ok(graph_out) => {
-            let test_passed = task_record.state.metadata.get("test_passed")
+            let test_passed = task_record.state.metadata.get("review_passed")
+                .or_else(|| task_record.state.metadata.get("test_passed"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
 
@@ -670,14 +644,14 @@ async fn execute_run(task: &str, resume_id: Option<&str>, max_iterations: usize,
 
             if test_passed {
                 task_record.status = TaskStatus::Completed;
-                task_record.state.result = Some(crate::agent::types::TaskResult::success(
+                task_record.state.result = Some(TaskResult::success(
                     task_record.id.clone(), answer.clone()
                 ));
                 println!("\n✅ Task complete ({} graph iterations)", graph_out.total_iterations);
             } else {
                 task_record.status = TaskStatus::Failed;
                 task_record.error = Some("Tests failed after max retries".into());
-                task_record.state.result = Some(crate::agent::types::TaskResult::failure(
+                task_record.state.result = Some(TaskResult::failure(
                     task_record.id.clone(), "Tests failed after max retries"
                 ));
                 println!("\n❌ Task failed: Tests failed after max retries ({} iterations)", graph_out.total_iterations);
@@ -704,8 +678,6 @@ async fn execute_run(task: &str, resume_id: Option<&str>, max_iterations: usize,
         skills_prompt,
     ).compile()?;
 
-    use crate::agent::graph::state::DefaultState;
-    use crate::agent::loop_exec::ConversationMessage;
     let mut review_state = DefaultState::default();
     review_state.messages.push(ConversationMessage::user(
         format!("Task: {}\n\nTask Report:\n{}", task, final_answer)
@@ -731,9 +703,9 @@ async fn execute_run(task: &str, resume_id: Option<&str>, max_iterations: usize,
     Ok(final_answer)
 }
 
-/// Run a task through only the task pipeline (planner → coder → tester, with fix loop).
-/// Does NOT trigger the reviewer. Used internally by `execute_task`'s RunAll to allow
-/// the reviewer to be called once after all tasks complete.
+/// Run a task through only the per-task orchestrator pipeline.
+/// Does NOT trigger the global reviewer. Used internally by `execute_task`'s RunAll
+/// to allow the global reviewer to be called once after all tasks complete.
 async fn execute_run_task_only(task: &str, resume_id: Option<&str>, max_iterations: usize, args: &crate::cli::args::Args) -> Result<String> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
@@ -758,52 +730,22 @@ async fn execute_run_task_only(task: &str, resume_id: Option<&str>, max_iteratio
     }
 
     let skills = SkillsLoader::load(&cwd, &settings.skill_dirs);
-    let llm_config = LlmConfig {
-        provider: settings.llm.provider.clone(),
-        model: settings.llm.model.clone(),
-        api_key: settings.llm.api_key.clone(),
-        temperature: settings.llm.temperature,
-        max_tokens: settings.llm.max_tokens,
-    };
-    let provider: Arc<dyn LlmProvider> = Arc::new(RigProvider::new(llm_config.clone()));
+    let llm_config = llm_config_from_settings(&settings);
+    let provider = make_llm_provider(&llm_config);
+    let fast_llm_config = fast_llm_config(&llm_config);
+    let fast_provider = make_llm_provider(&fast_llm_config);
 
-    let mut registry = ToolRegistry::new();
-    register_default_tools(&mut registry);
-    use crate::ast::LanguageRegistry;
-    use crate::tools::ast_tools::{AstSearchTool, AstEditTool};
-    let lang_registry = Arc::new(LanguageRegistry::new());
-    registry.register(AstSearchTool::new(Arc::clone(&lang_registry)));
-    registry.register(AstEditTool::new(Arc::clone(&lang_registry)));
-
-    use crate::workspace::Workspace;
-    let ws_config = Workspace::open(&cwd).map(|w| w.config).unwrap_or_default();
-    for mcp_cfg in &settings.mcp_servers {
-        if !mcp_cfg.auto_start { continue; }
-        let exec_args: Vec<&str> = mcp_cfg.args.iter().map(|s| s.as_str()).collect();
-        let client = crate::mcp::client::McpClient::connect_stdio(&mcp_cfg.name, &mcp_cfg.command, &exec_args)?;
-        for adapter in Arc::new(client).create_adapters() { registry.register(adapter); }
-    }
-    for mcp_cfg in ws_config.mcp_servers {
-        if !mcp_cfg.auto_start { continue; }
-        let exec_args: Vec<&str> = mcp_cfg.args.iter().map(|s| s.as_str()).collect();
-        let client = crate::mcp::client::McpClient::connect_stdio(&mcp_cfg.name, &mcp_cfg.command, &exec_args)?;
-        for adapter in Arc::new(client).create_adapters() { registry.register(adapter); }
-    }
-    for mcp_str in &args.mcp {
-        let parts: Vec<&str> = mcp_str.split_whitespace().collect();
-        if parts.is_empty() { continue; }
-        let client = crate::mcp::client::McpClient::connect_stdio("cli_mcp", parts[0], &parts[1..])?;
-        for adapter in Arc::new(client).create_adapters() { registry.register(adapter); }
-    }
-    let registry = Arc::new(registry);
+    let registry = build_tool_registry(&cwd, &settings, args)?;
     let skills_prompt = SkillsLoader::build_system_prompt("", &skills);
 
-    use crate::agent::graph::pipeline::build_task_pipeline;
-    let graph = build_task_pipeline(
+    let graph = build_task_pipeline_with_limit(
         Arc::clone(&provider),
+        fast_provider,
         Arc::clone(&registry),
         llm_config.model.clone(),
+        fast_llm_config.model.clone(),
         skills_prompt,
+        max_iterations,
     ).compile()?;
 
     let _ = store.save(&mut task_record);
@@ -815,7 +757,8 @@ async fn execute_run_task_only(task: &str, resume_id: Option<&str>, max_iteratio
 
     match task_result {
         Ok(graph_out) => {
-            let test_passed = task_record.state.metadata.get("test_passed")
+            let test_passed = task_record.state.metadata.get("review_passed")
+                .or_else(|| task_record.state.metadata.get("test_passed"))
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
 
@@ -825,14 +768,14 @@ async fn execute_run_task_only(task: &str, resume_id: Option<&str>, max_iteratio
 
             if test_passed {
                 task_record.status = TaskStatus::Completed;
-                task_record.state.result = Some(crate::agent::types::TaskResult::success(
+                task_record.state.result = Some(TaskResult::success(
                     task_record.id.clone(), answer.clone()
                 ));
                 println!("\n✅ Task [{}] complete ({} iterations)", task_record.id, graph_out.total_iterations);
             } else {
                 task_record.status = TaskStatus::Failed;
                 task_record.error = Some("Tests failed after max retries".into());
-                task_record.state.result = Some(crate::agent::types::TaskResult::failure(
+                task_record.state.result = Some(TaskResult::failure(
                     task_record.id.clone(), "Tests failed after max retries"
                 ));
                 println!("\n❌ Task [{}] failed: Tests failed after max retries ({} iterations)", task_record.id, graph_out.total_iterations);
@@ -868,15 +811,9 @@ async fn execute_chat(args: &crate::cli::args::Args) -> Result<()> {
     }
 
     // Build LLM provider from settings
-    let llm_config = LlmConfig {
-        provider: settings.llm.provider.clone(),
-        model: settings.llm.model.clone(),
-        api_key: settings.llm.api_key.clone(),
-        temperature: settings.llm.temperature,
-        max_tokens: settings.llm.max_tokens,
-    };
+    let llm_config = llm_config_from_settings(&settings);
 
-    let provider: Arc<dyn LlmProvider> = Arc::new(RigProvider::new(llm_config.clone()));
+    let provider = make_llm_provider(&llm_config);
 
     // Initialize terminal
     let mut terminal = init_terminal()?;
@@ -886,7 +823,6 @@ async fn execute_chat(args: &crate::cli::args::Args) -> Result<()> {
     for m in &settings.mcp_servers {
         active_mcps.push(m.name.clone());
     }
-    use crate::workspace::Workspace;
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     if let Ok(ws) = Workspace::open(&cwd) {
         for m in ws.config.mcp_servers {
@@ -895,7 +831,7 @@ async fn execute_chat(args: &crate::cli::args::Args) -> Result<()> {
     }
     
     // Read Skills active
-    let skills = crate::skills::SkillsLoader::load(&cwd, &settings.skill_dirs);
+    let skills = SkillsLoader::load(&cwd, &settings.skill_dirs);
     let active_skills: Vec<String> = skills.into_iter().map(|s| s.name).collect();
 
     // Create TUI application with real LLM provider
@@ -903,7 +839,7 @@ async fn execute_chat(args: &crate::cli::args::Args) -> Result<()> {
     app.active_mcps = active_mcps;
     app.active_skills = active_skills;
     
-    app.chat.add_message(crate::tui::chat::ChatMessage::system(
+    app.chat.add_message(zcode_ui::tui::chat::ChatMessage::system(
         format!(
             "Model: {} | Press Esc or Ctrl+C to quit",
             llm_config.model
@@ -986,7 +922,7 @@ mod tests {
                 resume: None,
                 max_iterations: 50,
             }),
-            model: Some("claude-3-opus".to_string()),
+            model: Some(std::env::var("ZCODE_MODEL").unwrap_or_else(|_| "gpt-4o".to_string())),
             mcp: vec![],
             verbose: false,
             skip_docs_check: false,
@@ -1336,7 +1272,7 @@ mod tests {
                 resume: None,
                 max_iterations: 50,
             }),
-            model: Some("claude-3-opus".to_string()),
+            model: Some(std::env::var("ZCODE_MODEL").unwrap_or_else(|_| "gpt-4o".to_string())),
             mcp: vec!["mcp-server".to_string()],
             verbose: true,
             skip_docs_check: false,
@@ -1363,7 +1299,7 @@ mod tests {
 
     #[test]
     fn test_result_err() {
-        let result: Result<()> = Err(crate::error::ZcodeError::Cancelled);
+        let result: Result<()> = Err(ZcodeError::Cancelled);
         assert!(result.is_err());
     }
 }

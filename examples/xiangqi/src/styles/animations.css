@@ -1,0 +1,27 @@
+/* ── Move Animation Styles ── */
+
+:root {
+  --move-animation-duration: 280ms;
+  --move-animation-timing: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.piece-animated {
+  position: absolute;
+  pointer-events: none;
+  z-index: 50;
+  /* Only apply will-change during animation via JS to avoid permanent GPU cost */
+  backface-visibility: hidden;
+  transition-property: transform;
+  transition-duration: var(--move-animation-duration);
+  transition-timing-function: var(--move-animation-timing);
+}
+
+.piece-animated.will-animate {
+  will-change: transform;
+}
+
+/* ── Move highlight entrance animation class ── */
+
+.move-highlight-enter {
+  animation: highlightAppear 200ms ease forwards;
+}

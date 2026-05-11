@@ -1,0 +1,185 @@
+/* ── Piece Appearance: Gradients, Shadows, Fonts ── */
+
+:root {
+  /* Red piece wood gradient stops */
+  --piece-wood-red-light: #fce4c0;
+  --piece-wood-red-mid: #e8c88a;
+  --piece-wood-red-dark: #a07830;
+
+  /* Black piece wood gradient stops */
+  --piece-wood-black-light: #d4c8b0;
+  --piece-wood-black-mid: #b8a88a;
+  --piece-wood-black-dark: #7a6a4c;
+
+  /* Border colors */
+  --piece-border-red: #b33a2a;
+  --piece-border-black: #2c3e50;
+
+  /* Text colors */
+  --piece-text-red: #b33a2a;
+  --piece-text-black: #1a1a2e;
+
+  /* Shadows — layered drop shadow + enhanced glow for dramatic lift */
+  --piece-shadow-default: 3px 4px 10px rgba(0, 0, 0, 0.45),
+    1px 2px 4px rgba(0, 0, 0, 0.20);
+  --piece-shadow-selected: 0 0 12px 5px rgba(255, 215, 0, 0.80),
+    3px 4px 10px rgba(0, 0, 0, 0.45),
+    1px 2px 4px rgba(0, 0, 0, 0.20);
+  /* Elevated shadow for animated/phantom pieces — conveys "lift during flight" */
+  --piece-shadow-animated: 0 8px 20px rgba(0, 0, 0, 0.50),
+    3px 4px 10px rgba(0, 0, 0, 0.35);
+}
+
+.piece {
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  user-select: none;
+  box-sizing: border-box;
+  cursor: pointer;
+  transition: box-shadow 150ms ease;
+
+  /* Font rendering — crisp CJK calligraphy */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  letter-spacing: normal;
+
+  /* Isolation for pseudo-element compositing */
+  isolation: isolate;
+}
+
+/* ── Responsive layout ── */
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* Keep board centred when viewport is wide */
+.board-container {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ── Responsive board scaling (1024 px – 1920 px) ── */
+
+/*
+ * On smaller viewports (≤ 1024 px) reduce default spacing so the
+ * board plus chrome fits inside the viewport height without scrolling.
+ */
+@media (max-height: 700px) {
+  #root > div > h1 {
+    margin-top: 4px;
+    margin-bottom: 2px;
+  }
+  #root > div > button {
+    margin-top: 4px;
+    margin-bottom: 4px;
+    padding: 4px 16px;
+  }
+}
+
+@media (max-width: 1024px) {
+  #root > div > h1 {
+    font-size: 1rem;
+    margin-top: 8px;
+    margin-bottom: 4px;
+  }
+}
+
+/*
+ * On large viewports (≥ 1440 px) allow a bit more breathing room
+ * around the board.  The board container already centres itself.
+ */
+@media (min-width: 1440px) {
+  .board-container {
+    /* Small visual cushion so the board doesn't sit flush */
+  }
+}
+
+/* ── Captured Pieces Display ── */
+
+.captured-pieces {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.captured-row {
+  /* Intentionally minimal — inline styles handle most of the layout */
+}
+
+.captured-piece {
+  /* Inner decorative groove ring (matches full-size piece aesthetic) */
+  isolation: isolate;
+}
+
+.captured-piece::after {
+  content: '';
+  position: absolute;
+  top: 14%;
+  right: 14%;
+  bottom: 14%;
+  left: 14%;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  pointer-events: none;
+}
+
+/* ── Inner decorative groove ring (traditional double-ring look) ── */
+
+.piece::after {
+  content: '';
+  position: absolute;
+  top: 12%;
+  right: 12%;
+  bottom: 12%;
+  left: 12%;
+  border-radius: 50%;
+  border: 1.5px solid rgba(0, 0, 0, 0.15);
+  pointer-events: none;
+}
+
+/* ── Turn indicator pulse animation ── */
+
+@keyframes turnPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(0.85); }
+}
+
+/* ── Move highlight entrance animation ── */
+
+@keyframes highlightAppear {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.4); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+/* ── Game over modal entrance animation ── */
+
+@keyframes modalEnter {
+  from { opacity: 0; transform: scale(0.92); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes modalOverlayEnter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ── SVG text font smoothing ── */
+
+.board-grid text {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}

@@ -3,12 +3,11 @@
 //! Provides a unified facade over all zcode capabilities:
 //! agents, tools, memory, scripting, MCP, session snapshots, git diff.
 
-use crate::config::ProjectConfig;
-use crate::error::{Result, ZcodeError};
 use crate::git::GitDiff;
-use crate::session::SnapshotManager;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use zcode_core::{ProjectConfig, Result, ZcodeError};
+use zcode_session::SnapshotManager;
 
 // ─── WorkspaceInfo ─────────────────────────────────────────────────────────────
 
@@ -224,7 +223,7 @@ impl Workspace {
     }
 
     /// List all snapshots
-    pub fn snapshot_list(&self) -> Result<Vec<crate::session::Snapshot>> {
+    pub fn snapshot_list(&self) -> Result<Vec<zcode_session::Snapshot>> {
         let mgr = self.snapshot_mgr.as_ref()
             .ok_or_else(|| ZcodeError::InternalError("Snapshot manager not initialized".to_string()))?;
         mgr.list()
@@ -391,7 +390,7 @@ mod tests {
 
     #[test]
     fn test_workspace_info_is_not_git_for_tmp() {
-        let (dir, ws) = make_workspace();
+        let (_dir, ws) = make_workspace();
         let info = ws.info();
         // Temp dirs are typically not git repos
         // (they could be, but the test just ensures no panic)

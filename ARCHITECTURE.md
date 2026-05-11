@@ -1,292 +1,137 @@
 # zcode Architecture
 
-> This document describes the internal design of `zcode`, a modular AI coding agent.
+`zcode` is a layered Rust workspace for an AI coding agent CLI. The root package keeps the CLI shell and compatibility exports; core behavior lives in focused crates.
 
----
+## Workspace Layers
 
-## Overview
-
-`zcode` follows a **modular monolith** pattern — all components live in one crate but communicate through well-defined trait boundaries. This makes it easy to swap components (e.g., replace the LLM provider or add a new scripting engine) without restructuring the whole system.
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         CLI / TUI Layer                          │
-│              (clap commands  ·  ratatui chat interface)          │
-└───────────────────────────────┬─────────────────────────────────┘
-                                │
-┌───────────────────────────────▼─────────────────────────────────┐
-│                        Workspace Facade                          │
-│   Workspace::open/init · build_diff_context · snapshot_save     │
-└──────┬──────────────┬────────────────────┬───────────────────────┘
-       │              │                    │
-┌──────▼──────┐ ┌─────▼──────┐  ┌─────────▼───────────────────────┐
-│  Agent Bus  │ │  Git Diff  │  │         Session Snapshots        │
-│  (tokio     │ │  Context   │  │  (SQLite · save/restore/diff)    │
-│  mpsc)      │ │  Builder   │  └─────────────────────────────────-┘
-└──────┬──────┘ └────────────┘
-       │
-┌──────▼───────────────────────────────────────────────────────────┐
-│                        Agent System                               │
-│                                                                   │
-│  ┌─────────────────┐  ┌──────────────┐  ┌──────────────────────┐ │
-│  │  Orchestrator   │  │   Planner    │  │       Coder          │ │
-│  │  (task routing) │  │  (task split)│  │  (code generation)   │ │
-│  └────────┬────────┘  └──────────────┘  └──────────────────────┘ │
-│           │                                                        │
-│  ┌────────▼────────┐  ┌──────────────────────────────────────────┐│
-│  │  ReviewerAgent  │  │            AgentLoop                     ││
-│  │  (code review)  │  │  (conversation · tool calls · history)   ││
-│  └─────────────────┘  └──────────────────────────────────────────┘│
-└─────────────────────────┬────────────────────────────────────────-┘
-                          │
-       ┌──────────────────┼─────────────────────┐
-       │                  │                     │
-┌──────▼───────┐  ┌───────▼──────┐  ┌──────────▼──────────────────┐
-│ LLM Provider │  │ Tool Registry│  │      Memory System           │
-│              │  │              │  │                               │
-│ • Anthropic  │  │ • file tools │  │ WorkingMemory (in-proc)       │
-│ • OpenAI     │  │ • shell      │  │ ProjectMemory (disk, git)     │
-│ • Ollama     │  │ • search     │  │ SemanticIndex (vec embed)     │
-│              │  │ • AST tools  │  │ ContextAssembler (budget)     │
-└──────────────┘  │ • MCP tools  │  └───────────────────────────────┘
-                  │ • Script     │
-                  │   tools ─────┼──────────────────────────────────┐
-                  └──────────────┘                                  │
-                                                         ┌──────────▼──────────┐
-                                                         │   Script Engines     │
-                                                         │                      │
-                                                         │  LuaEngine (mlua)    │
-                                                         │  PythonEngine (pyo3) │
-                                                         │  JsEngine (quickjs)  │
-                                                         │  ShellEngine (sh)    │
-                                                         └──────────────────────┘
+```text
+src/main.rs + src/cli
+        |
+        v
+crates/zcode_ui
+  Renders the CLI/TUI screen for the current session: conversation,
+  active agents, skills, MCP servers, and status.
+        |
+        v
+crates/zcode_requirements
+  Owns docs/ scaffolding, validation, task parsing, and task storage.
+  This layer standardizes requirement/test documents before they become
+  LLM prompt input.
+        |
+        v
+crates/zcode_orchestration
+  Defines the agent graph workflow. The root orchestrator coordinates
+  planner, ReAct coder, reviewer, and self-learning behavior. Child
+  agents communicate through the root/orchestration graph rather than
+  directly with each other.
+        |
+        v
+crates/zcode_llm_provider
+  OpenAI-compatible chat completions implementation. Uses:
+  ZCODE_BASE_URL, ZCODE_API_KEY, ZCODE_MODEL, ZCODE_FAST_MODEL.
+        |
+        v
+crates/zcode_capabilities
+  Skills, MCP client/adapters, global shared prompt/context, and
+  OpenAI-compatible tool-call schema/execution helpers.
+        |
+        v
+crates/zcode_session
+  Session message storage, list/load/delete, and deterministic message
+  compression that preserves summary plus recent/key messages.
+        |
+        v
+crates/zcode_core
+  Shared config, error types, LLM DTOs, and agent/session DTOs.
 ```
 
----
+## Runtime Flow
 
-## Module Breakdown
-
-### `error` — Unified Error Type
-`ZcodeError` covers all failure modes: IO, JSON, config parse, tool not found, LLM errors, script errors. Implements `From<io::Error>` and `From<serde_json::Error>` for ergonomic use of `?`.
-
----
-
-### `config` — Configuration
-
-| Struct | Purpose |
-|---|---|
-| `Settings` | Global user settings (~/.config/zcode/settings.toml) |
-| `ProjectConfig` | Per-project config (.zcode/config.toml) |
-| `McpServerConfig` | MCP server definition |
-| `LspServerConfig` | LSP server definition |
-| `ScriptConfig` + `HookConfig` | Script directories + lifecycle hooks |
-| `SnapshotConfig` | SQLite snapshot parameters |
-| `GrammarConfig` | Custom Tree-sitter shared library |
-
----
-
-### `tools` — Tool System
-
-```
-Tool (trait)
-  ├── FileTool (read/write/list/delete)
-  ├── ShellTool (subprocess execution)
-  ├── SearchTool (ripgrep-style search)
-  ├── AstTool (Tree-sitter parse queries)
-  ├── McpToolAdapter (wraps remote MCP tools)
-  └── ScriptTool (wraps a script file as a tool)
-
-ToolRegistry
-  └── HashMap<name, Box<dyn Tool>>
+```text
+1. CLI parses a command in src/cli.
+2. zcode_requirements validates or generates docs/ as needed.
+3. zcode_capabilities loads skills and connects configured MCP servers.
+4. zcode_orchestration builds an agent graph:
+   planner -> coder(ReAct) -> reviewer/test gate -> self-learning
+5. zcode_llm_provider sends OpenAI-compatible chat completion requests.
+6. Tool calls are returned in OpenAI function-call format.
+7. AgentLoop executes tool calls through ToolRegistry and appends tool
+   messages back into the conversation.
+8. zcode_session stores and compresses session messages for history reuse.
+9. zcode_ui displays conversation and agent/capability status.
 ```
 
-All tools implement `fn execute(&self, input: Value) -> ToolResult<Value>`.
+## Agent Graph
 
----
+The orchestration layer keeps the workflow explicit:
 
-### `llm` — LLM Integration
+| Agent | Responsibility |
+|-------|----------------|
+| Orchestrator | Root coordinator. Assigns work and handles retry decisions. |
+| Planner | Reads standardized requirement docs/context and produces an executable plan. |
+| Coder | Uses ReAct: reason, call available MCP/capability tools, observe results, repeat, report. Simple tasks can use the fast model. |
+| Reviewer | Performs review and red/green test verification. Failures are reported back to orchestration for coder retries. |
+| Self-learning | Summarizes recurring errors and corrections into learning entries. |
 
-```
-LlmProvider (trait)
-  ├── AnthropicProvider (claude-3-5-sonnet, streaming SSE)
-  ├── OpenAiProvider (gpt-4o, function calling)
-  └── OllamaProvider (local models)
+The runtime currently models these responsibilities with `StateGraph` nodes and shared `DefaultState`. The CLI constructs task and reviewer pipelines from `crates/zcode_orchestration/src/agent/graph/pipeline.rs`.
 
-LlmConfig    — model, temperature, max_tokens, system_prompt
-Message      — role (system/user/assistant/tool), content
-ToolCallSpec — JSON schema definition of a tool for function calling
-```
+## LLM Provider
 
----
+All LLM requests use an OpenAI-compatible chat completions endpoint.
 
-### `agent` — Multi-Agent System
+| Variable | Purpose |
+|----------|---------|
+| `ZCODE_BASE_URL` | Service root, `/v1` root, or full `/chat/completions` URL |
+| `ZCODE_API_KEY` | Bearer token for the provider |
+| `ZCODE_MODEL` | Default model |
+| `ZCODE_FAST_MODEL` | Optional fast model for simple tasks |
 
-```
-AgentTrait
-  ├── OrchestratorAgent — receives user requests, routes to specialists
-  ├── PlannerAgent      — breaks complex tasks into ordered subtasks
-  ├── CoderAgent        — writes/edits code via LLM + tools
-  └── ReviewerAgent     — static analysis of code diffs (5 categories)
+`RigProvider` converts internal `Message` values into OpenAI chat messages, sends the request with `reqwest`, and parses text/tool-call responses.
 
-MessageBus (tokio mpsc)
-  └── BusHandle — per-agent sender/receiver
+## Capabilities And Tools
 
-AgentLoop — conversation state, tool call dispatch, token counting
-```
+`zcode_capabilities` owns the runtime tool boundary.
 
-**ReviewerAgent categories:**
+- MCP tools are discovered through `tools/list` and executed through `tools/call`.
+- `ToolRegistry` exposes OpenAI-compatible function schemas to LLM calls.
+- Built-in local file, shell, search, glob, and AST tools are intentionally not registered by default.
+- Skills and global shared context are rendered into system prompts for LLM providers and agents.
 
-| Category | What's checked |
-|---|---|
-| `Logic` | `.unwrap()`, `panic!()` |
-| `Security` | Hardcoded credentials, SQL injection risks |
-| `Performance` | Unnecessary `.clone()` on collections |
-| `Style` | Lines > 120 chars |
-| `Testing` | New functions without corresponding `#[test]` |
+## Session Management
 
----
+`zcode_session` stores session messages under `.zcode/sessions/` and supports:
 
-### `memory` — Context Management
+- creating and saving sessions
+- listing and loading history
+- deleting specific sessions
+- compressing older messages into a deterministic summary while retaining recent messages
 
-```
-WorkingMemory   — in-process ephemeral state (key/value + conversation)
-ProjectMemory   — persisted to .zcode/ directory (markdown files)
-SemanticIndex   — vector embedding for semantic search
-ContextAssembler — TokenBudget-aware assembly of context for LLM
-```
+The compression path is intentionally LLM-free so it can run reliably without network access; callers can replace or augment the summary with an LLM summary later.
 
----
+## Compatibility Modules
 
-### `script` — Multi-Language Scripting
+Some older modules remain under `src/`:
 
-All engines implement `ScriptEngine`:
+| Module | Current Role |
+|--------|--------------|
+| `src/cli` | Binary command parsing and orchestration wiring |
+| `src/workspace` | Compatibility facade for config, snapshots, and context helpers |
+| `src/ast`, `src/git`, `src/lsp`, `src/memory`, `src/script` | Retained subsystems used by tests or compatibility exports |
 
-```rust
-trait ScriptEngine: Send + Sync {
-    fn name(&self) -> &str;
-    fn extensions(&self) -> &[&str];
-    fn eval(&self, code: &str, ctx: &ScriptContext) -> Result<ScriptOutput>;
-    fn call_function(&self, path, fn_name, args, ctx) -> Result<ScriptOutput>;
-    fn handles(&self, path: &Path) -> bool;
-}
-```
+New core behavior should go into the owning `crates/zcode_*` layer rather than recreating removed old modules.
 
-Engines inject a `zcode` global API: `read_file`, `write_file`, `shell`, `log`.
+## Dependency Direction
 
-`ScriptManager` scans configured directories, converts each script file into a `ScriptTool`, and registers them in `ToolRegistry`.
+Dependencies flow downward:
 
----
-
-### `mcp` — MCP Client
-
-Implements the [Model Context Protocol](https://modelcontextprotocol.io/) spec:
-- `McpClient` manages a stdio subprocess (Content-Length framing)
-- `McpToolAdapter` wraps remote tool definitions as local `Tool` trait objects  
-- Supports `tools/list` + `tools/call` JSON-RPC 2.0 methods
-
----
-
-### `lsp` — LSP Client
-
-`LspClient` speaks [Language Server Protocol](https://microsoft.github.io/language-server-protocol/):
-- Stdio transport with `Content-Length` header framing
-- Methods: `initialize`, `textDocument/didOpen`, `textDocument/definition`, `textDocument/references`, `textDocument/hover`, `textDocument/completion`
-- Language auto-detection from file extension
-
----
-
-### `git` — Git Integration
-
-`GitDiff` uses `git` subprocess (no libgit2 dependency):
-
-| Method | Description |
-|---|---|
-| `is_git_repo(path)` | Detect if path is under git |
-| `repo_root(path)` | Find repository root |
-| `changed_files(path)` | List modified/added/deleted files |
-| `full_diff(path)` | Get complete unified diff |
-| `recent_commits(path, n)` | Last N commit messages |
-| `build_context(path)` | Build `DiffContext` with patch + file list |
-
-`DiffContext::load_changed_contents()` — lazy-loads only the changed files (not entire repo).
-
----
-
-### `session` — Snapshot Manager
-
-`SnapshotManager` persists workspace snapshots to SQLite:
-
-```
-snapshots table  — id, name, description, timestamp
-files table      — snapshot_id, relative_path, content
+```text
+ui / cli
+  -> requirements
+  -> orchestration
+  -> llm_provider
+  -> capabilities
+  -> session
+  -> core
 ```
 
-Key operations: `save_workspace()`, `restore()`, `list()`, `diff()`.
-
----
-
-### `ast` — Language & Grammar
-
-```
-LanguageRegistry   — registers LanguageProvider per language
-LanguageProvider   — parses source into AstTree via tree-sitter
-
-GrammarRegistry    — maps file extensions to language names
-  ├── 17 built-in languages (Rust, Python, JS/TS, Go, C/C++, …)
-  └── register_from_path() — runtime custom grammar (.so/.dylib)
-```
-
----
-
-### `workspace` — Integration Facade
-
-`Workspace` is the top-level API that wires everything together:
-
-```rust
-let mut ws = Workspace::open("./my-project")?;
-
-// Git diff-aware context (only changed files, token-budgeted)
-let ctx = ws.build_diff_context(32_000)?;
-let prompt_addition = ctx.as_prompt_context();
-
-// Snapshot before a big change
-let id = ws.snapshot_save("before-refactor", None)?;
-
-// Restore if something goes wrong
-ws.snapshot_restore(id)?;
-```
-
----
-
-## Data Flow: User Request → LLM Response
-
-```
-1. User types request in TUI / CLI
-2. Workspace::build_diff_context() loads only changed files (token-budget)
-3. ContextAssembler assembles: system prompt + memory + diff + file snippets
-4. OrchestratorAgent routes to Planner or Coder
-5. CoderAgent calls LLM with assembled context
-6. LLM responds with text + optional tool_calls JSON
-7. AgentLoop dispatches tool calls → ToolRegistry::execute()
-8. Results injected back as tool messages → loop continues
-9. Final response displayed in TUI / printed to stdout
-10. ReviewerAgent optionally reviews any new diff
-11. SnapshotManager auto-saves if config.snapshots.auto_snapshot = true
-```
-
----
-
-## Dependency Philosophy
-
-| Concern | Choice | Rationale |
-|---|---|---|
-| Async runtime | tokio | Industry standard, great ecosystem |
-| Serialization | serde + serde_json | Ubiquitous, zero-cost |
-| TUI | ratatui | Maintained fork of tui-rs |
-| Lua scripting | mlua (vendored) | No external lua runtime needed |
-| JS scripting | rquickjs (vendored) | No V8/Node dependency |
-| Python scripting | pyo3 | Leverages system Python |
-| SQLite | rusqlite | Single-file, no server |
-| LSP/MCP | pure stdio | No extra lib, max portability |
-| Git | subprocess | No libgit2 linking complexity |
-| Tree-sitter | runtime dlopen | Custom grammars without recompiling |
+`zcode_core` should not depend on higher layers. Higher layers share DTOs through `zcode_core` to avoid dependency cycles.

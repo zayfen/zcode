@@ -23,4 +23,4 @@
 - [ ] `LlmProvider::chat` 必须能严密地支持传入和接收 `ToolCallSpecs` json 结构化定义规范，兼容目前主线厂商能力。
 - [ ] 面向不同服务商的 HTTP 调用失败（403 Auth error, 429 Rate Limit）时必须抛出一个格式化良好，带有明确指纹的 `ZcodeError` 结构到宿主环境。
 - [ ] 包含基于超长 `tokens` 输出的截断自动控制阈值机制（`max_tokens` 参数有效落实）。
-- [ ] 系统级别对于底层敏感秘钥 (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) 等数据不得在日志与回溯堆栈里被泄露出来。
+- [ ] 系统级别对于底层敏感秘钥 (`ZCODE_API_KEY`) 等数据不得在日志与回溯堆栈里被泄露出来。

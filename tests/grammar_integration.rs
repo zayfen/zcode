@@ -1,10 +1,9 @@
 //! Integration tests: GrammarRegistry + custom grammar loading
 
-use std::io::Write;
 use tempfile::NamedTempFile;
 use zcode::ast::GrammarRegistry;
 use zcode::config::GrammarConfig;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 // ─── Built-in grammar tests ───────────────────────────────────────────────────
 

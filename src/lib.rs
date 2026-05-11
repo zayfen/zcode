@@ -1,75 +1,85 @@
 //! Zcode - A programming agent CLI tool
 //!
-//! This crate provides the core functionality for the zcode programming agent,
-//! including tool execution, LLM integration, and configuration management.
-//!
-//! # Architecture
-//!
-//! Zcode is built as a modular monolith with the following main components:
-//!
-//! - **error**: Error types and result aliases
-//! - **config**: Configuration management (user-level settings and project-level configs)
-//! - **tools**: Tool registry and execution system
-//! - **llm**: LLM provider integration with streaming support
-//! - **agent**: Agent orchestration and state management
-//! - **tui**: Terminal user interface with chat capabilities
-//!
-//! # Example
-//!
-//! ```rust,no_run
-//! use zcode::{Settings, ToolRegistry};
-//!
-//! // Load user settings
-//! let settings = Settings::load().unwrap_or_default();
-//!
-//! // Initialize tool registry
-//! let registry = ToolRegistry::new();
-//! ```
+//! This package is the CLI/application shell. Core behavior lives in layered
+//! workspace crates:
+//! `zcode_ui`, `zcode_requirements`, `zcode_orchestration`,
+//! `zcode_llm_provider`, `zcode_capabilities`, `zcode_session`, and
+//! `zcode_core`.
 
-pub mod error;
-pub mod config;
-pub mod tools;
-pub mod llm;
-pub mod agent;
-pub mod tui;
 pub mod cli;
 pub mod ast;
 pub mod memory;
-pub mod mcp;
 pub mod script;
-pub mod session;
 pub mod git;
 pub mod lsp;
 pub mod workspace;
-pub mod docs;
-pub mod task_store;
-pub mod skills;
 
-// Re-exports for convenience
-pub use error::{ZcodeError, Result};
-pub use config::{Settings, ProjectConfig};
-pub use tools::{ToolRegistry, Tool, ToolResult, register_default_tools};
-pub use llm::{LlmProvider, LlmConfig, Message};
-pub use tui::{TuiApp, ChatInterface};
-pub use agent::{
-    // LangGraph-style orchestration
-    StateGraph, CompiledGraph, GraphOutput, GraphEvent, EndReason,
-    GraphNode, FnNode, AsyncFnNode,
-    Edge, routers,
-    DefaultState, NodeOutput, GraphState,
-    // Agent types
-    AgentId, AgentState, AgentType, Task, TaskResult,
-    OrchestratorAgent, CoderAgent, PlannerAgent,
-    ReviewerAgent, ReviewResult,
+pub use zcode_capabilities as capabilities;
+pub mod tools {
+    pub use zcode_capabilities::*;
+    pub mod ast_tools {}
+}
+pub use zcode_capabilities::{register_default_tools, Tool, ToolRegistry, ToolResult};
+pub use zcode_capabilities::{McpClient, McpServerConfig, McpTool, McpToolAdapter, McpTransport};
+pub use zcode_capabilities::{Skill, SkillPriority, SkillsLoader};
+pub use zcode_core as core;
+pub use zcode_core::config;
+pub use zcode_core::error;
+pub use zcode_core::{
+    GrammarConfig, HookConfig, LspServerConfig, ProjectConfig, Result, ScriptConfig, Settings,
+    SnapshotConfig, ZcodeError,
 };
+pub use zcode_llm_provider as llm;
+pub use zcode_llm_provider::{LlmConfig, LlmProvider, Message, RigProvider};
+pub mod agent {
+    pub use zcode_orchestration::*;
+    pub mod graph {
+        pub use zcode_orchestration::agent::graph::*;
+        pub mod pipeline {
+            pub use zcode_orchestration::agent::graph::pipeline::*;
+        }
+        pub mod state {
+            pub use zcode_orchestration::agent::graph::state::*;
+        }
+    }
+    pub mod loop_exec {
+        pub use zcode_orchestration::agent::loop_exec::*;
+    }
+    pub mod types {
+        pub use zcode_orchestration::agent::types::*;
+    }
+}
+pub use zcode_orchestration::{
+    build_reviewer_pipeline, build_task_pipeline, build_task_pipeline_with_limit, routers, AgentId,
+    AgentState, AgentType, AsyncFnNode, CoderAgent, CompiledGraph, ConversationMessage,
+    DefaultState, Edge, EndReason, FnNode, GraphEvent, GraphNode, GraphOutput, GraphState,
+    NodeOutput, OrchestratorAgent, PlannerAgent, ReviewResult, ReviewerAgent, StateGraph, Task,
+    TaskResult,
+};
+pub use zcode_requirements as requirements;
+pub mod docs {
+    pub use zcode_requirements::docs::*;
+    pub mod parser {
+        pub use zcode_requirements::docs::parser::*;
+    }
+}
+pub use zcode_requirements::task_store;
+pub use zcode_requirements::{generate_docs_scaffold, DocsValidator, TaskRecord, TaskStatus, TaskStore};
+pub use zcode_session as session;
+pub use zcode_session::{Snapshot, SnapshotManager};
+pub mod tui {
+    pub use zcode_ui::*;
+    pub mod chat {
+        pub use zcode_ui::tui::chat::*;
+    }
+}
+pub use zcode_ui::{ChatInterface, TuiApp};
+
 pub use ast::{LanguageProvider, LanguageRegistry, GrammarRegistry};
 pub use memory::{WorkingMemory, ProjectMemory, SemanticIndex, ContextAssembler, TokenBudget};
 pub use script::{ScriptManager, ScriptContext, HookRegistry, HookType, default_script_manager};
-pub use mcp::{McpTool, McpTransport, McpServerConfig};
-pub use session::{SnapshotManager, Snapshot};
 pub use git::{GitDiff, DiffContext};
 pub use workspace::{Workspace, WorkspaceContext, WorkspaceInfo};
-pub use config::{LspServerConfig, GrammarConfig, ScriptConfig, SnapshotConfig, HookConfig};
 
 
 #[cfg(test)]
@@ -79,7 +89,7 @@ mod tests {
     #[test]
     fn test_settings_load_or_default() {
         let settings = Settings::load().unwrap_or_default();
-        assert_eq!(settings.llm.provider, "anthropic");
+        assert_eq!(settings.llm.provider, "openai-compatible");
     }
 
     #[test]

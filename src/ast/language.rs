@@ -38,12 +38,53 @@ pub struct LanguageRegistry {
 }
 
 impl LanguageRegistry {
-    /// Create an empty registry
+    /// Create an empty registry, loaded with built-in grammars
     pub fn new() -> Self {
-        Self {
+        let mut reg = Self {
             by_name: HashMap::new(),
             by_extension: HashMap::new(),
+        };
+        reg.register_builtins();
+        reg
+    }
+
+    /// Register statically compiled builtin tree-sitter grammars
+    fn register_builtins(&mut self) {
+        macro_rules! register_lang_fn {
+            ($provider_name:ident, $name:expr, $exts:expr, $lang_fn:path) => {
+                struct $provider_name;
+                impl LanguageProvider for $provider_name {
+                    fn name(&self) -> &str { $name }
+                    fn extensions(&self) -> &[&str] { $exts }
+                    fn language(&self) -> Language {
+                        $lang_fn().into()
+                    }
+                }
+                self.register($provider_name);
+            };
         }
+
+        macro_rules! register_lang_const {
+            ($provider_name:ident, $name:expr, $exts:expr, $lang_const:path) => {
+                struct $provider_name;
+                impl LanguageProvider for $provider_name {
+                    fn name(&self) -> &str { $name }
+                    fn extensions(&self) -> &[&str] { $exts }
+                    fn language(&self) -> Language {
+                        $lang_const.into()
+                    }
+                }
+                self.register($provider_name);
+            };
+        }
+
+        register_lang_fn!(RustProvider, "rust", &[".rs"], tree_sitter_rust::language);
+        register_lang_const!(JsProvider, "javascript", &[".js", ".jsx", ".mjs"], tree_sitter_javascript::LANGUAGE);
+        register_lang_const!(TsProvider, "typescript", &[".ts", ".tsx"], tree_sitter_typescript::LANGUAGE_TYPESCRIPT);
+        register_lang_const!(PyProvider, "python", &[".py"], tree_sitter_python::LANGUAGE);
+        register_lang_const!(GoProvider, "go", &[".go"], tree_sitter_go::LANGUAGE);
+        register_lang_const!(CProvider, "c", &[".c", ".h"], tree_sitter_c::LANGUAGE);
+        register_lang_const!(CppProvider, "cpp", &[".cpp", ".cc", ".cxx", ".hpp"], tree_sitter_cpp::LANGUAGE);
     }
 
     /// Register a language provider
@@ -275,23 +316,24 @@ mod tests {
     }
 
     #[test]
-    fn test_registry_new_is_empty() {
+    fn test_registry_new_is_not_empty() {
         let reg = LanguageRegistry::new();
-        assert!(reg.is_empty());
-        assert_eq!(reg.len(), 0);
+        assert!(!reg.is_empty());
+        assert!(reg.len() >= 7); // At least the builtins we added
     }
 
     #[test]
-    fn test_registry_default_is_empty() {
+    fn test_registry_default_is_not_empty() {
         let reg = LanguageRegistry::default();
-        assert!(reg.is_empty());
+        assert!(!reg.is_empty());
     }
 
     #[test]
     fn test_registry_register_increments_count() {
         let mut reg = LanguageRegistry::new();
+        let initial_len = reg.len();
         reg.register(MockLangProvider { name: "test_lang", exts: &[".tl"] });
-        assert_eq!(reg.len(), 1);
+        assert_eq!(reg.len(), initial_len + 1);
         assert!(!reg.is_empty());
     }
 
@@ -321,8 +363,8 @@ mod tests {
     #[test]
     fn test_registry_extension_not_found() {
         let reg = LanguageRegistry::new();
-        assert!(reg.from_extension(".rs").is_none());
-        assert!(reg.language_name_for_extension(".rs").is_none());
+        assert!(reg.from_extension(".zzz").is_none());
+        assert!(reg.language_name_for_extension(".zzz").is_none());
     }
 
     #[test]
@@ -336,10 +378,11 @@ mod tests {
     #[test]
     fn test_registry_registered_languages() {
         let mut reg = LanguageRegistry::new();
+        let initial_len = reg.len();
         reg.register(MockLangProvider { name: "lang_a", exts: &[".a"] });
         reg.register(MockLangProvider { name: "lang_b", exts: &[".b"] });
         let langs = reg.registered_languages();
-        assert_eq!(langs.len(), 2);
+        assert_eq!(langs.len(), initial_len + 2);
         assert!(langs.contains(&"lang_a"));
         assert!(langs.contains(&"lang_b"));
     }
@@ -347,10 +390,12 @@ mod tests {
     #[test]
     fn test_registry_overwrite_same_name() {
         let mut reg = LanguageRegistry::new();
-        reg.register(MockLangProvider { name: "rust", exts: &[".rs"] });
-        reg.register(MockLangProvider { name: "rust", exts: &[".rs"] });
-        // Still one entry
-        assert_eq!(reg.len(), 1);
+        let initial_len = reg.len();
+        // Use a random name to ensure it increments, then overwrites
+        reg.register(MockLangProvider { name: "customrust", exts: &[".rs"] });
+        assert_eq!(reg.len(), initial_len + 1);
+        reg.register(MockLangProvider { name: "customrust", exts: &[".rs"] });
+        assert_eq!(reg.len(), initial_len + 1);
     }
 
     #[test]

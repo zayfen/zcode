@@ -253,7 +253,6 @@ mod tests {
     #[test]
     fn test_load_scripts_from_dir() {
         use tempfile::TempDir;
-        use std::io::Write;
         let dir = TempDir::new().unwrap();
         std::fs::write(dir.path().join("deploy.sh"), "call() { echo done; }").unwrap();
         std::fs::write(dir.path().join("analyze.py"), "def call(args): return 42").unwrap();

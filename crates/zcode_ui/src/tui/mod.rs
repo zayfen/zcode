@@ -7,7 +7,9 @@ pub mod chat;
 pub use chat::ChatInterface;
 
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -16,10 +18,14 @@ use futures::StreamExt;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::collections::VecDeque;
 use std::io::{self, Stdout};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Arc;
+use zcode_core::agent::ConversationMessage;
 use zcode_core::ZcodeError;
 use zcode_llm_provider::{LlmProvider, LlmStreamEvent, Message, MessageRole};
+use zcode_session::{Session, SessionManager};
 
 /// Type alias for the terminal backend
 pub type TuiBackend = CrosstermBackend<Stdout>;
@@ -97,12 +103,21 @@ pub struct TuiApp {
     llm_in_flight: bool,
     /// Stream event receiver from the worker thread.
     stream_rx: Option<Receiver<UiStreamEvent>>,
+    /// Cancellation flag for the active stream worker.
+    cancel_flag: Option<Arc<AtomicBool>>,
+    /// Optional session manager for slash commands.
+    session_manager: Option<SessionManager>,
+    /// Project root used to lazily initialize session storage.
+    project_root: PathBuf,
+    /// Current session id, if the visible chat came from a saved session.
+    current_session_id: Option<String>,
 }
 
 enum UiStreamEvent {
     Content(String),
     Thinking(String),
     Done,
+    Cancelled,
     Error(String),
 }
 
@@ -128,6 +143,10 @@ impl TuiApp {
             pending_prompts: VecDeque::new(),
             llm_in_flight: false,
             stream_rx: None,
+            cancel_flag: None,
+            session_manager: None,
+            project_root: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            current_session_id: None,
         }
     }
 
@@ -143,14 +162,18 @@ impl TuiApp {
 
     /// Handle a terminal event
     pub fn handle_event(&mut self, event: Event) -> zcode_core::Result<()> {
-        if let Event::Key(key) = event {
-            match (key.modifiers, key.code) {
+        match event {
+            Event::Key(key) => match (key.modifiers, key.code) {
                 // Quit
                 (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                     self.should_quit = true;
                 }
                 (KeyModifiers::NONE, KeyCode::Esc) => {
-                    self.should_quit = true;
+                    if self.llm_in_flight {
+                        self.cancel_active_stream();
+                    } else {
+                        self.should_quit = true;
+                    }
                 }
                 // --- Newline insertion ---
                 // Shift+Enter (requires keyboard enhancement / kitty protocol)
@@ -175,7 +198,9 @@ impl TuiApp {
                 // Plain Enter: send message
                 (KeyModifiers::NONE, KeyCode::Enter) => {
                     if let Some(user_text) = self.chat.take_current_input() {
-                        if self.provider.is_some() {
+                        if user_text.trim_start().starts_with('/') {
+                            self.handle_slash_command(&user_text);
+                        } else if self.provider.is_some() {
                             self.pending_prompts.push_back(user_text);
                             self.chat.pending_count = self.pending_prompts.len();
                             self.start_next_prompt_if_idle();
@@ -211,7 +236,13 @@ impl TuiApp {
                     self.chat.scroll_down();
                 }
                 _ => {}
-            }
+            },
+            Event::Mouse(mouse) => match mouse.kind {
+                MouseEventKind::ScrollUp => self.chat.scroll_up(),
+                MouseEventKind::ScrollDown => self.chat.scroll_down(),
+                _ => {}
+            },
+            _ => {}
         }
         Ok(())
     }
@@ -268,12 +299,19 @@ impl TuiApp {
 
         let messages = self.build_messages_for_prompt(&user_text);
         let (tx, rx) = mpsc::channel();
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let worker_cancel_flag = Arc::clone(&cancel_flag);
+        self.cancel_flag = Some(cancel_flag);
         self.stream_rx = Some(rx);
 
         std::thread::spawn(move || {
             let result = (|| {
                 let mut stream = provider.stream_chat(&messages, &[])?;
                 while let Some(event) = block_on(stream.next()) {
+                    if worker_cancel_flag.load(Ordering::SeqCst) {
+                        let _ = tx.send(UiStreamEvent::Cancelled);
+                        return Ok(());
+                    }
                     match event {
                         Ok(LlmStreamEvent::Content(text)) => {
                             let _ = tx.send(UiStreamEvent::Content(text));
@@ -316,6 +354,13 @@ impl TuiApp {
                     keep_rx = false;
                     break;
                 }
+                Ok(UiStreamEvent::Cancelled) => {
+                    self.chat
+                        .add_message(chat::ChatMessage::system("Request interrupted."));
+                    self.finish_stream(true);
+                    keep_rx = false;
+                    break;
+                }
                 Ok(UiStreamEvent::Error(error)) => {
                     self.chat.add_message(chat::ChatMessage::assistant(format!(
                         "⚠ LLM error: {}",
@@ -340,6 +385,7 @@ impl TuiApp {
 
     fn finish_stream(&mut self, had_error: bool) {
         self.llm_in_flight = false;
+        self.cancel_flag = None;
         self.chat.stop_loading();
         self.chat.pending_count = self.pending_prompts.len();
         if let Some(agent) = self.agent_statuses.iter_mut().find(|a| a.0 == "Supervisor") {
@@ -367,6 +413,147 @@ impl TuiApp {
             messages.push(Message::user(user_text));
         }
         messages
+    }
+
+    fn cancel_active_stream(&mut self) {
+        if let Some(flag) = &self.cancel_flag {
+            flag.store(true, Ordering::SeqCst);
+        }
+        self.stream_rx = None;
+        self.pending_prompts.clear();
+        self.finish_stream(true);
+        self.chat
+            .add_message(chat::ChatMessage::system("Request interrupted."));
+        if let Some(agent) = self.agent_statuses.iter_mut().find(|a| a.0 == "Supervisor") {
+            agent.1 = "Idle (Cancelled)".to_string();
+        }
+    }
+
+    fn handle_slash_command(&mut self, input: &str) {
+        let trimmed = input.trim();
+        let mut parts = trimmed.split_whitespace();
+        let command = parts.next().unwrap_or("");
+        match command {
+            "/undo" => {
+                self.pending_prompts.pop_back();
+                self.chat.pending_count = self.pending_prompts.len();
+                if self.chat.undo_last_turn() {
+                    self.chat
+                        .add_message(chat::ChatMessage::system("Undid the last turn."));
+                } else {
+                    self.chat
+                        .add_message(chat::ChatMessage::system("Nothing to undo."));
+                }
+            }
+            "/compact" => {
+                if self.chat.compact_messages(20, 8_000) {
+                    self.chat
+                        .add_message(chat::ChatMessage::system("Conversation compacted."));
+                } else {
+                    self.chat.add_message(chat::ChatMessage::system(
+                        "Conversation is already compact enough.",
+                    ));
+                }
+                self.save_current_session();
+            }
+            "/resume" => {
+                let requested = parts.next();
+                match self.resume_session(requested) {
+                    Ok(message) => self.chat.add_message(chat::ChatMessage::system(message)),
+                    Err(error) => self.chat.add_message(chat::ChatMessage::system(format!(
+                        "Resume failed: {}",
+                        error
+                    ))),
+                }
+            }
+            "/help" => {
+                self.chat.add_message(chat::ChatMessage::system(
+                    "Commands: `/resume [id]`, `/undo`, `/compact`, `/help`.",
+                ));
+            }
+            _ => {
+                self.chat.add_message(chat::ChatMessage::system(
+                    "Unknown command. Try `/help`, `/resume`, `/undo`, or `/compact`.",
+                ));
+            }
+        }
+    }
+
+    fn resume_session(&mut self, requested_id: Option<&str>) -> zcode_core::Result<String> {
+        let project_root = self.project_root.clone();
+        let manager = self
+            .session_manager
+            .get_or_insert(SessionManager::new(project_root)?);
+        let session = if let Some(id) = requested_id {
+            manager.load(id)?
+        } else {
+            manager
+                .list()?
+                .into_iter()
+                .next()
+                .ok_or_else(|| ZcodeError::FileNotFound {
+                    path: ".zcode/sessions/*.json".to_string(),
+                })?
+        };
+
+        let id = session.id.clone();
+        let message_count = session.messages.len();
+        self.current_session_id = Some(id.clone());
+        self.chat
+            .replace_messages(chat_messages_from_session(session));
+        Ok(format!(
+            "Resumed session `{}` ({} messages).",
+            id, message_count
+        ))
+    }
+
+    fn save_current_session(&mut self) {
+        let Some(id) = self.current_session_id.clone() else {
+            return;
+        };
+        let project_root = self.project_root.clone();
+        if self.session_manager.is_none() {
+            let Ok(manager) = SessionManager::new(project_root) else {
+                return;
+            };
+            self.session_manager = Some(manager);
+        }
+
+        let Some(manager) = self.session_manager.as_ref() else {
+            return;
+        };
+        let mut session = Session::new(id);
+        for message in &self.chat.messages {
+            session.push(conversation_message_from_chat(message));
+        }
+        let _ = manager.save(&mut session);
+    }
+}
+
+fn chat_messages_from_session(session: Session) -> Vec<chat::ChatMessage> {
+    let mut messages = Vec::new();
+    if let Some(summary) = session.summary {
+        if !summary.trim().is_empty() {
+            messages.push(chat::ChatMessage::system(summary));
+        }
+    }
+    messages.extend(session.messages.into_iter().filter_map(|message| {
+        let content = message.content.unwrap_or_default();
+        match message.role.as_str() {
+            "user" => Some(chat::ChatMessage::user(content)),
+            "assistant" => Some(chat::ChatMessage::assistant(content)),
+            "system" => Some(chat::ChatMessage::system(content)),
+            _ => None,
+        }
+    }));
+    messages
+}
+
+fn conversation_message_from_chat(message: &chat::ChatMessage) -> ConversationMessage {
+    match message.role.as_str() {
+        "user" => ConversationMessage::user(&message.content),
+        "assistant" => ConversationMessage::assistant_text(&message.content),
+        _ => ConversationMessage::system(&message.content),
     }
 }
 
@@ -439,6 +626,24 @@ mod tests {
         let event = Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         app.handle_event(event).unwrap();
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn test_tui_app_escape_interrupts_in_flight_without_quitting() {
+        let mut app = TuiApp::new();
+        app.llm_in_flight = true;
+        app.cancel_flag = Some(Arc::new(AtomicBool::new(false)));
+
+        let event = Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        app.handle_event(event).unwrap();
+
+        assert!(!app.should_quit);
+        assert!(!app.llm_in_flight);
+        assert!(app
+            .chat
+            .messages
+            .iter()
+            .any(|message| message.content.contains("interrupted")));
     }
 
     #[test]
@@ -519,6 +724,8 @@ mod tests {
     #[test]
     fn test_tui_app_handle_event_scroll() {
         let mut app = TuiApp::new();
+        app.chat.rendered_message_lines = 20;
+        app.chat.visible_message_height = 5;
 
         // Scroll down
         let event = Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
@@ -529,6 +736,23 @@ mod tests {
         let event = Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
         app.handle_event(event).unwrap();
         assert_eq!(app.chat.scroll, 0);
+    }
+
+    #[test]
+    fn test_tui_app_mouse_scroll() {
+        let mut app = TuiApp::new();
+        app.chat.rendered_message_lines = 20;
+        app.chat.visible_message_height = 5;
+
+        let event = Event::Mouse(crossterm::event::MouseEvent {
+            kind: crossterm::event::MouseEventKind::ScrollDown,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        app.handle_event(event).unwrap();
+
+        assert_eq!(app.chat.scroll, 3);
     }
 
     // ============================================================
@@ -745,6 +969,65 @@ mod tests {
             .messages
             .iter()
             .any(|m| m.content == "queued prompt"));
+    }
+
+    #[test]
+    fn test_tui_app_slash_undo() {
+        let mut app = TuiApp::new();
+        app.chat.add_message(chat::ChatMessage::user("question"));
+        app.chat.add_message(chat::ChatMessage::assistant("answer"));
+        app.chat.input = "/undo".to_string();
+        app.chat.cursor_pos = app.chat.input.len();
+
+        let event = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_event(event).unwrap();
+
+        assert!(!app
+            .chat
+            .messages
+            .iter()
+            .any(|msg| msg.content == "question"));
+        assert!(app
+            .chat
+            .messages
+            .iter()
+            .any(|msg| msg.content.contains("Undid")));
+    }
+
+    #[test]
+    fn test_tui_app_slash_compact() {
+        let mut app = TuiApp::new();
+        for index in 0..24 {
+            app.chat
+                .add_message(chat::ChatMessage::user(format!("message {}", index)));
+        }
+        app.chat.input = "/compact".to_string();
+        app.chat.cursor_pos = app.chat.input.len();
+
+        let event = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_event(event).unwrap();
+
+        assert!(app.chat.messages[0]
+            .content
+            .contains("Compacted conversation summary"));
+    }
+
+    #[test]
+    fn test_tui_app_slash_resume_missing_session_reports_error() {
+        let mut app = TuiApp::new();
+        app.project_root =
+            std::env::temp_dir().join(format!("zcode-ui-missing-session-{}", std::process::id()));
+        app.chat.input = "/resume missing".to_string();
+        app.chat.cursor_pos = app.chat.input.len();
+
+        let event = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_event(event).unwrap();
+
+        assert!(app
+            .chat
+            .messages
+            .iter()
+            .any(|msg| msg.content.contains("Resume failed")));
     }
 
     // ============================================================

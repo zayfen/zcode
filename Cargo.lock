@@ -2566,8 +2566,10 @@ dependencies = [
  "ratatui",
  "serde_json",
  "textwrap",
+ "unicode-width 0.2.2",
  "zcode_core",
  "zcode_llm_provider",
+ "zcode_session",
 ]
 
 [[package]]

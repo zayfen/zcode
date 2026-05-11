@@ -4,9 +4,10 @@
 
 use crate::args::{Args, Command, DocsAction, TaskAction};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 use tracing::info;
-use zcode_capabilities::{McpClient, SkillsLoader, ToolRegistry};
+use zcode_capabilities::{register_workspace_tools, McpClient, SkillsLoader, ToolRegistry};
 use zcode_core::{LlmConfig, ProjectConfig, Result, Settings, ZcodeError};
 #[cfg(test)]
 use zcode_llm_provider::MockLlmProvider;
@@ -15,13 +16,13 @@ use zcode_llm_provider::RigProvider;
 use zcode_llm_provider::{LlmProvider, Message};
 use zcode_orchestration::{
     build_reviewer_pipeline, build_task_pipeline_with_limit, AgentLoop, ConversationMessage,
-    DefaultState, LlmResponse as AgentLlmResponse, LoopConfig, TaskResult,
+    DefaultState, GraphEvent, LlmResponse as AgentLlmResponse, LoopConfig, TaskResult,
 };
 use zcode_requirements::docs::parser::parse_all_tasks;
 use zcode_requirements::{
     generate_docs_scaffold, DocsValidator, TaskRecord, TaskStatus, TaskStore,
 };
-use zcode_ui::{init_terminal, restore_terminal, TuiApp};
+use zcode_ui::{init_terminal, restore_terminal, TaskExecutor, TaskUiEvent, TuiApp};
 
 /// Execute a CLI command
 pub async fn execute_command(command: &Command, args: &Args) -> Result<()> {
@@ -125,6 +126,7 @@ fn project_config_for(cwd: &Path) -> ProjectConfig {
 
 fn build_tool_registry(cwd: &Path, settings: &Settings, args: &Args) -> Result<Arc<ToolRegistry>> {
     let mut registry = ToolRegistry::new();
+    register_workspace_tools(&mut registry, cwd)?;
 
     let project_config = project_config_for(cwd);
 
@@ -713,7 +715,7 @@ async fn execute_run(
     let fast_llm_config = fast_llm_config(&llm_config);
     let fast_provider = make_llm_provider(&fast_llm_config);
 
-    // ── Capability registry (MCP-only) ────────────────────────────────
+    // ── Capability registry (workspace tools + MCP) ───────────────────
     let registry = build_tool_registry(&cwd, &settings, args)?;
 
     let skills_prompt = SkillsLoader::build_system_prompt("", &skills);
@@ -962,10 +964,11 @@ async fn execute_chat(args: &Args) -> Result<()> {
         info!("MCP servers: {:?}", args.mcp);
     }
 
-    // Build LLM provider from settings
+    // Build LLM providers from settings
     let llm_config = llm_config_from_settings(&settings);
-
     let provider = make_llm_provider(&llm_config);
+    let fast_llm_config = fast_llm_config(&llm_config);
+    let fast_provider = make_llm_provider(&fast_llm_config);
 
     // Initialize terminal
     let mut terminal = init_terminal()?;
@@ -983,17 +986,30 @@ async fn execute_chat(args: &Args) -> Result<()> {
 
     // Read Skills active
     let skills = SkillsLoader::load(&cwd, &settings.skill_dirs);
-    let active_skills: Vec<String> = skills.into_iter().map(|s| s.name).collect();
+    let active_skills: Vec<String> = skills.iter().map(|s| s.name.clone()).collect();
+    let skills_prompt = SkillsLoader::build_system_prompt("", &skills);
 
-    // Create TUI application with real LLM provider
-    let mut app = TuiApp::with_provider(provider);
+    let registry = build_tool_registry(&cwd, &settings, args)?;
+    let executor = build_tui_task_executor(
+        cwd,
+        provider,
+        fast_provider,
+        registry,
+        llm_config.model.clone(),
+        fast_llm_config.model.clone(),
+        skills_prompt,
+        50,
+    );
+
+    // Create TUI application with the real orchestrator graph executor.
+    let mut app = TuiApp::with_task_executor(executor);
     app.active_mcps = active_mcps;
     app.active_skills = active_skills;
 
     app.chat
         .add_message(zcode_ui::tui::chat::ChatMessage::system(format!(
-            "Model: {} | Press Esc or Ctrl+C to quit",
-            llm_config.model
+            "Model: {} | Fast: {} | Press Esc or Ctrl+C to quit",
+            llm_config.model, fast_llm_config.model
         )));
 
     // Run the event loop
@@ -1003,6 +1019,196 @@ async fn execute_chat(args: &Args) -> Result<()> {
     restore_terminal(&mut terminal)?;
 
     result
+}
+
+fn build_tui_task_executor(
+    cwd: std::path::PathBuf,
+    provider: Arc<dyn LlmProvider>,
+    fast_provider: Arc<dyn LlmProvider>,
+    registry: Arc<ToolRegistry>,
+    model: String,
+    fast_model: String,
+    skills_prompt: String,
+    max_iterations: usize,
+) -> TaskExecutor {
+    Arc::new(
+        move |task: String, cancel: Arc<AtomicBool>, tx: mpsc::Sender<TaskUiEvent>| {
+            let cwd = cwd.clone();
+            let provider = Arc::clone(&provider);
+            let fast_provider = Arc::clone(&fast_provider);
+            let registry = Arc::clone(&registry);
+            let model = model.clone();
+            let fast_model = fast_model.clone();
+            let skills_prompt = skills_prompt.clone();
+
+            let runtime = match tokio::runtime::Runtime::new() {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    let _ = tx.send(TaskUiEvent::Error(format!(
+                        "Failed to create task runtime: {}",
+                        error
+                    )));
+                    return;
+                }
+            };
+
+            runtime.block_on(async move {
+                run_tui_task(
+                    task,
+                    cwd,
+                    provider,
+                    fast_provider,
+                    registry,
+                    model,
+                    fast_model,
+                    skills_prompt,
+                    max_iterations,
+                    cancel,
+                    tx,
+                )
+                .await;
+            });
+        },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_tui_task(
+    task: String,
+    cwd: std::path::PathBuf,
+    provider: Arc<dyn LlmProvider>,
+    fast_provider: Arc<dyn LlmProvider>,
+    registry: Arc<ToolRegistry>,
+    model: String,
+    fast_model: String,
+    skills_prompt: String,
+    max_iterations: usize,
+    cancel: Arc<AtomicBool>,
+    tx: mpsc::Sender<TaskUiEvent>,
+) {
+    if cancel.load(Ordering::SeqCst) {
+        let _ = tx.send(TaskUiEvent::Cancelled);
+        return;
+    }
+
+    let store = match TaskStore::new(&cwd) {
+        Ok(store) => store,
+        Err(error) => {
+            let _ = tx.send(TaskUiEvent::Error(error.to_string()));
+            return;
+        }
+    };
+    let mut task_record = store.create(task.clone());
+    let _ = store.save(&mut task_record);
+    let _ = tx.send(TaskUiEvent::Thinking(format!(
+        "Task `{}` saved to .zcode/tasks/{}.json\n",
+        task, task_record.id
+    )));
+
+    let graph = match build_task_pipeline_with_limit(
+        provider,
+        fast_provider,
+        Arc::clone(&registry),
+        model,
+        fast_model,
+        skills_prompt,
+        max_iterations,
+    )
+    .compile()
+    {
+        Ok(graph) => graph,
+        Err(error) => {
+            let _ = tx.send(TaskUiEvent::Error(error.to_string()));
+            return;
+        }
+    };
+
+    let graph_result = graph
+        .execute_with_events_and_cancel(&mut task_record.state, |event| {
+            send_graph_event(&tx, event);
+            cancel.load(Ordering::SeqCst)
+        })
+        .await;
+
+    if cancel.load(Ordering::SeqCst) {
+        task_record.status = TaskStatus::Interrupted;
+        task_record.error = Some("Interrupted by user".to_string());
+        let _ = store.save(&mut task_record);
+        let _ = tx.send(TaskUiEvent::Cancelled);
+        return;
+    }
+
+    match graph_result {
+        Ok(graph_out) => {
+            let review_passed = task_record
+                .state
+                .metadata
+                .get("review_passed")
+                .or_else(|| task_record.state.metadata.get("test_passed"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+
+            let answer = task_record
+                .state
+                .messages
+                .last()
+                .and_then(|m| m.content.clone())
+                .unwrap_or_else(|| "No output generated".to_string());
+
+            if review_passed {
+                task_record.status = TaskStatus::Completed;
+                task_record.state.result =
+                    Some(TaskResult::success(task_record.id.clone(), answer.clone()));
+            } else {
+                task_record.status = TaskStatus::Failed;
+                task_record.error = Some("Review/tests failed after max retries".to_string());
+                task_record.state.result = Some(TaskResult::failure(
+                    task_record.id.clone(),
+                    "Review/tests failed after max retries",
+                ));
+            }
+            let _ = store.save(&mut task_record);
+
+            let status = if review_passed { "completed" } else { "failed" };
+            let final_answer = format!(
+                "{}\n\nTask `{}` {} after {} graph iteration(s).",
+                answer, task_record.id, status, graph_out.total_iterations
+            );
+            let _ = tx.send(TaskUiEvent::Done(final_answer));
+        }
+        Err(error) => {
+            task_record.status = TaskStatus::Failed;
+            task_record.error = Some(error.to_string());
+            let _ = store.save(&mut task_record);
+            let _ = tx.send(TaskUiEvent::Error(error.to_string()));
+        }
+    }
+}
+
+fn send_graph_event(tx: &mpsc::Sender<TaskUiEvent>, event: GraphEvent) {
+    match event {
+        GraphEvent::NodeStart { node, iteration } => {
+            let _ = tx.send(TaskUiEvent::AgentStart(node.clone()));
+            let _ = tx.send(TaskUiEvent::Thinking(format!(
+                "{} started (iteration {})\n",
+                node, iteration
+            )));
+        }
+        GraphEvent::NodeComplete { node, .. } => {
+            let _ = tx.send(TaskUiEvent::AgentComplete(node.clone()));
+            let _ = tx.send(TaskUiEvent::Thinking(format!("{} completed\n", node)));
+        }
+        GraphEvent::EdgeTraversed { from, to } => {
+            let target = to.unwrap_or_else(|| "END".to_string());
+            let _ = tx.send(TaskUiEvent::Thinking(format!("{} -> {}\n", from, target)));
+        }
+        GraphEvent::End { reason, output } => {
+            let _ = tx.send(TaskUiEvent::Thinking(format!(
+                "graph ended: {} ({} iteration(s))\n",
+                reason, output.total_iterations
+            )));
+        }
+    }
 }
 
 /// Show version information

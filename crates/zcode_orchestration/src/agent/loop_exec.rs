@@ -128,7 +128,11 @@ impl AgentLoop {
                     });
                 }
 
-                LlmResponse::ToolCalls(calls_json) => {
+                LlmResponse::ToolCalls {
+                    calls: calls_json,
+                    content,
+                    reasoning_content,
+                } => {
                     // Parse tool call requests (OpenAI-compatible format)
                     let requests: Vec<ToolCallRequest> = calls_json
                         .iter()
@@ -142,7 +146,11 @@ impl AgentLoop {
                     }
 
                     // Record assistant tool call message
-                    history.push(ConversationMessage::assistant_tool_calls(calls_json.clone()));
+                    history.push(ConversationMessage::assistant_tool_calls_with_reasoning(
+                        calls_json.clone(),
+                        content,
+                        reasoning_content,
+                    ));
 
                     // Execute all tool calls
                     let responses = execute_tool_calls(&self.registry, &requests);
@@ -192,7 +200,11 @@ pub enum LlmResponse {
     /// A plain text answer
     Text(String),
     /// One or more tool calls to execute
-    ToolCalls(Vec<Value>),
+    ToolCalls {
+        calls: Vec<Value>,
+        content: Option<String>,
+        reasoning_content: Option<String>,
+    },
 }
 
 impl LlmResponse {
@@ -211,7 +223,19 @@ impl LlmResponse {
         if let Some(tool_calls) = message.get("tool_calls") {
             if let Some(arr) = tool_calls.as_array() {
                 if !arr.is_empty() {
-                    return Ok(LlmResponse::ToolCalls(arr.clone()));
+                    let content = message
+                        .get("content")
+                        .and_then(|c| c.as_str())
+                        .map(|s| s.to_string());
+                    let reasoning_content = message
+                        .get("reasoning_content")
+                        .and_then(|c| c.as_str())
+                        .map(|s| s.to_string());
+                    return Ok(LlmResponse::ToolCalls {
+                        calls: arr.clone(),
+                        content,
+                        reasoning_content,
+                    });
                 }
             }
         }
@@ -330,7 +354,51 @@ mod tests {
         });
         let resp = LlmResponse::from_openai_response(&body).unwrap();
         match resp {
-            LlmResponse::ToolCalls(calls) => assert_eq!(calls.len(), 1),
+            LlmResponse::ToolCalls {
+                calls,
+                content,
+                reasoning_content,
+            } => {
+                assert_eq!(calls.len(), 1);
+                assert!(content.is_none());
+                assert!(reasoning_content.is_none());
+            }
+            _ => panic!("Expected ToolCalls"),
+        }
+    }
+
+    #[test]
+    fn test_llm_response_preserves_reasoning_content_for_tool_calls() {
+        let body = json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "reasoning_content": "Need to inspect files first.",
+                    "tool_calls": [{
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {
+                            "name": "glob",
+                            "arguments": "{\"pattern\":\"src/**/*.rs\"}"
+                        }
+                    }]
+                }
+            }]
+        });
+        let resp = LlmResponse::from_openai_response(&body).unwrap();
+        match resp {
+            LlmResponse::ToolCalls {
+                calls,
+                reasoning_content,
+                ..
+            } => {
+                assert_eq!(calls.len(), 1);
+                assert_eq!(
+                    reasoning_content,
+                    Some("Need to inspect files first.".to_string())
+                );
+            }
             _ => panic!("Expected ToolCalls"),
         }
     }
@@ -379,14 +447,18 @@ mod tests {
                 let n = call_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
                 async move {
                     if n == 1 {
-                        Ok(LlmResponse::ToolCalls(vec![json!({
-                            "id": "call-1",
-                            "type": "function",
-                            "function": {
-                                "name": "add",
-                                "arguments": "{\"a\":3,\"b\":4}"
-                            }
-                        })]))
+                        Ok(LlmResponse::ToolCalls {
+                            calls: vec![json!({
+                                "id": "call-1",
+                                "type": "function",
+                                "function": {
+                                    "name": "add",
+                                    "arguments": "{\"a\":3,\"b\":4}"
+                                }
+                            })],
+                            content: None,
+                            reasoning_content: None,
+                        })
                     } else {
                         Ok(LlmResponse::Text("3 + 4 = 7".to_string()))
                     }
@@ -414,11 +486,15 @@ mod tests {
             &[],
             &[],
             |_: Vec<serde_json::Value>, _: Vec<serde_json::Value>| async {
-                Ok(LlmResponse::ToolCalls(vec![json!({
-                    "id": "call-x",
-                    "type": "function",
-                    "function": { "name": "nonexistent", "arguments": "{}" }
-                })]))
+                Ok(LlmResponse::ToolCalls {
+                    calls: vec![json!({
+                        "id": "call-x",
+                        "type": "function",
+                        "function": { "name": "nonexistent", "arguments": "{}" }
+                    })],
+                    content: None,
+                    reasoning_content: None,
+                })
             },
         ).await.unwrap();
 

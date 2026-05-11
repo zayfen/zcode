@@ -190,6 +190,10 @@ impl RigProvider {
                         if !m.content.is_empty() {
                             msg["content"] = serde_json::Value::String(m.content.clone());
                         }
+                        if let Some(reasoning_content) = &m.reasoning_content {
+                            msg["reasoning_content"] =
+                                serde_json::Value::String(reasoning_content.clone());
+                        }
                         msg
                     } else {
                         serde_json::json!({

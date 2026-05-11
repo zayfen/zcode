@@ -41,6 +41,7 @@ pub struct Message {
     pub tool_calls: Option<Vec<serde_json::Value>>,
     pub tool_call_id: Option<String>,
     pub tool_name: Option<String>,
+    pub reasoning_content: Option<String>,
 }
 
 impl Message {
@@ -51,6 +52,7 @@ impl Message {
             tool_calls: None,
             tool_call_id: None,
             tool_name: None,
+            reasoning_content: None,
         }
     }
 
@@ -61,6 +63,7 @@ impl Message {
             tool_calls: None,
             tool_call_id: None,
             tool_name: None,
+            reasoning_content: None,
         }
     }
 
@@ -71,6 +74,7 @@ impl Message {
             tool_calls: None,
             tool_call_id: None,
             tool_name: None,
+            reasoning_content: None,
         }
     }
 
@@ -84,6 +88,22 @@ impl Message {
             tool_calls: Some(tool_calls),
             tool_call_id: None,
             tool_name: None,
+            reasoning_content: None,
+        }
+    }
+
+    pub fn assistant_with_tool_calls_and_reasoning(
+        content: impl Into<String>,
+        tool_calls: Vec<serde_json::Value>,
+        reasoning_content: Option<String>,
+    ) -> Self {
+        Self {
+            role: MessageRole::Assistant,
+            content: content.into(),
+            tool_calls: Some(tool_calls),
+            tool_call_id: None,
+            tool_name: None,
+            reasoning_content,
         }
     }
 
@@ -98,6 +118,7 @@ impl Message {
             tool_calls: None,
             tool_call_id: Some(tool_call_id.into()),
             tool_name: Some(tool_name.into()),
+            reasoning_content: None,
         }
     }
 }
@@ -117,4 +138,3 @@ pub struct UsageStats {
     pub input_tokens: u32,
     pub output_tokens: u32,
 }
-

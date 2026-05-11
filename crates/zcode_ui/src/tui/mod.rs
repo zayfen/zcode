@@ -13,8 +13,6 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use futures::executor::block_on;
-use futures::StreamExt;
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::collections::VecDeque;
 use std::io::{self, Stdout};
@@ -24,7 +22,6 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Arc;
 use zcode_core::agent::ConversationMessage;
 use zcode_core::ZcodeError;
-use zcode_llm_provider::{LlmProvider, LlmStreamEvent, Message, MessageRole};
 use zcode_session::{Session, SessionManager};
 
 /// Type alias for the terminal backend
@@ -32,6 +29,27 @@ pub type TuiBackend = CrosstermBackend<Stdout>;
 
 /// Type alias for the terminal
 pub type TuiTerminal = Terminal<TuiBackend>;
+
+/// Event emitted by an agentic task executor for the TUI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskUiEvent {
+    /// A named agent started work.
+    AgentStart(String),
+    /// A named agent finished work.
+    AgentComplete(String),
+    /// Progress/thinking text to show in the collapsible thinking stream.
+    Thinking(String),
+    /// Final assistant-visible response.
+    Done(String),
+    /// Task was interrupted.
+    Cancelled,
+    /// Task failed.
+    Error(String),
+}
+
+/// Executes a user prompt as an agentic coding task.
+pub type TaskExecutor =
+    Arc<dyn Fn(String, Arc<AtomicBool>, mpsc::Sender<TaskUiEvent>) + Send + Sync>;
 
 /// Initialize the terminal for TUI mode
 pub fn init_terminal() -> zcode_core::Result<TuiTerminal> {
@@ -87,8 +105,8 @@ pub struct TuiApp {
     pub should_quit: bool,
     /// Chat interface
     pub chat: ChatInterface,
-    /// LLM provider (None in test/no-api mode)
-    provider: Option<Arc<dyn LlmProvider>>,
+    /// Agentic task executor (None in test/no-api mode)
+    task_executor: Option<TaskExecutor>,
     /// System prompt
     pub system_prompt: String,
     /// Current agents statuses [(Name, Status)]
@@ -101,9 +119,9 @@ pub struct TuiApp {
     pending_prompts: VecDeque<String>,
     /// Whether a streaming LLM response is in flight.
     llm_in_flight: bool,
-    /// Stream event receiver from the worker thread.
-    stream_rx: Option<Receiver<UiStreamEvent>>,
-    /// Cancellation flag for the active stream worker.
+    /// Task event receiver from the worker thread.
+    task_rx: Option<Receiver<TaskUiEvent>>,
+    /// Cancellation flag for the active task worker.
     cancel_flag: Option<Arc<AtomicBool>>,
     /// Optional session manager for slash commands.
     session_manager: Option<SessionManager>,
@@ -113,21 +131,13 @@ pub struct TuiApp {
     current_session_id: Option<String>,
 }
 
-enum UiStreamEvent {
-    Content(String),
-    Thinking(String),
-    Done,
-    Cancelled,
-    Error(String),
-}
-
 impl TuiApp {
     /// Create a new TUI application without an LLM provider
     pub fn new() -> Self {
         Self {
             should_quit: false,
             chat: ChatInterface::new(),
-            provider: None,
+            task_executor: None,
             system_prompt: "You are zcode, a helpful AI coding agent. \
                 Use your knowledge to assist with code, architecture, and development tasks."
                 .to_string(),
@@ -142,7 +152,7 @@ impl TuiApp {
             active_mcps: Vec::new(),
             pending_prompts: VecDeque::new(),
             llm_in_flight: false,
-            stream_rx: None,
+            task_rx: None,
             cancel_flag: None,
             session_manager: None,
             project_root: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
@@ -150,14 +160,40 @@ impl TuiApp {
         }
     }
 
-    /// Create a TUI application with a real LLM provider
-    pub fn with_provider(provider: Arc<dyn LlmProvider>) -> Self {
+    /// Create a TUI application with an agentic task executor.
+    pub fn with_task_executor(task_executor: TaskExecutor) -> Self {
         let mut app = Self::new();
-        app.provider = Some(provider);
+        app.task_executor = Some(task_executor);
         app.chat.add_message(chat::ChatMessage::system(
-            "zcode agent ready. Connected to LLM provider.",
+            "zcode agent ready. Connected to orchestrator graph.",
         ));
         app
+    }
+
+    /// Compatibility constructor used by tests and callers that want a simple
+    /// text-only executor.
+    pub fn with_provider(provider: Arc<dyn zcode_llm_provider::LlmProvider>) -> Self {
+        let executor: TaskExecutor = Arc::new(move |prompt, cancel, tx| {
+            if cancel.load(Ordering::SeqCst) {
+                let _ = tx.send(TaskUiEvent::Cancelled);
+                return;
+            }
+            let _ = tx.send(TaskUiEvent::AgentStart("orchestrator".to_string()));
+            let messages = vec![
+                zcode_llm_provider::Message::system("You are zcode, a helpful AI coding agent."),
+                zcode_llm_provider::Message::user(prompt),
+            ];
+            match provider.chat(&messages, &[]) {
+                Ok(response) => {
+                    let _ = tx.send(TaskUiEvent::AgentComplete("orchestrator".to_string()));
+                    let _ = tx.send(TaskUiEvent::Done(response.content));
+                }
+                Err(error) => {
+                    let _ = tx.send(TaskUiEvent::Error(error.to_string()));
+                }
+            }
+        });
+        Self::with_task_executor(executor)
     }
 
     /// Handle a terminal event
@@ -200,7 +236,7 @@ impl TuiApp {
                     if let Some(user_text) = self.chat.take_current_input() {
                         if user_text.trim_start().starts_with('/') {
                             self.handle_slash_command(&user_text);
-                        } else if self.provider.is_some() {
+                        } else if self.task_executor.is_some() {
                             self.pending_prompts.push_back(user_text);
                             self.chat.pending_count = self.pending_prompts.len();
                             self.start_next_prompt_if_idle();
@@ -250,7 +286,7 @@ impl TuiApp {
     /// Run the main event loop.
     pub fn run(&mut self, terminal: &mut TuiTerminal) -> zcode_core::Result<()> {
         while !self.should_quit {
-            self.drain_stream_events();
+            self.drain_task_events();
             self.start_next_prompt_if_idle();
             self.chat.tick_loading();
 
@@ -284,7 +320,7 @@ impl TuiApp {
             self.chat.pending_count = 0;
             return;
         };
-        let Some(provider) = self.provider.as_ref().cloned() else {
+        let Some(task_executor) = self.task_executor.as_ref().cloned() else {
             return;
         };
 
@@ -297,73 +333,56 @@ impl TuiApp {
         }
         self.llm_in_flight = true;
 
-        let messages = self.build_messages_for_prompt(&user_text);
         let (tx, rx) = mpsc::channel();
         let cancel_flag = Arc::new(AtomicBool::new(false));
         let worker_cancel_flag = Arc::clone(&cancel_flag);
         self.cancel_flag = Some(cancel_flag);
-        self.stream_rx = Some(rx);
+        self.task_rx = Some(rx);
 
         std::thread::spawn(move || {
-            let result = (|| {
-                let mut stream = provider.stream_chat(&messages, &[])?;
-                while let Some(event) = block_on(stream.next()) {
-                    if worker_cancel_flag.load(Ordering::SeqCst) {
-                        let _ = tx.send(UiStreamEvent::Cancelled);
-                        return Ok(());
-                    }
-                    match event {
-                        Ok(LlmStreamEvent::Content(text)) => {
-                            let _ = tx.send(UiStreamEvent::Content(text));
-                        }
-                        Ok(LlmStreamEvent::Thinking(text)) => {
-                            let _ = tx.send(UiStreamEvent::Thinking(text));
-                        }
-                        Err(e) => return Err(e),
-                    }
-                }
-                Ok(())
-            })();
-
-            match result {
-                Ok(()) => {
-                    let _ = tx.send(UiStreamEvent::Done);
-                }
-                Err(e) => {
-                    let _ = tx.send(UiStreamEvent::Error(e.to_string()));
-                }
+            task_executor(user_text, Arc::clone(&worker_cancel_flag), tx.clone());
+            if worker_cancel_flag.load(Ordering::SeqCst) {
+                let _ = tx.send(TaskUiEvent::Cancelled);
             }
         });
     }
 
-    fn drain_stream_events(&mut self) {
-        let Some(rx) = self.stream_rx.take() else {
+    fn drain_task_events(&mut self) {
+        let Some(rx) = self.task_rx.take() else {
             return;
         };
         let mut keep_rx = true;
         loop {
             match rx.try_recv() {
-                Ok(UiStreamEvent::Content(text)) => {
-                    self.chat.append_assistant_delta(&text);
+                Ok(TaskUiEvent::AgentStart(agent)) => {
+                    self.set_agent_status(&agent, "Working...");
+                    self.chat.append_thinking(&format!("{} started\n", agent));
                 }
-                Ok(UiStreamEvent::Thinking(text)) => {
+                Ok(TaskUiEvent::AgentComplete(agent)) => {
+                    self.set_agent_status(&agent, "Done");
+                    self.chat.append_thinking(&format!("{} completed\n", agent));
+                }
+                Ok(TaskUiEvent::Thinking(text)) => {
                     self.chat.append_thinking(&text);
                 }
-                Ok(UiStreamEvent::Done) => {
+                Ok(TaskUiEvent::Done(text)) => {
+                    if !text.trim().is_empty() {
+                        self.chat.append_assistant_delta(&text);
+                    }
                     self.finish_stream(false);
                     keep_rx = false;
                     break;
                 }
-                Ok(UiStreamEvent::Cancelled) => {
+                Ok(TaskUiEvent::Cancelled) => {
                     self.chat
                         .add_message(chat::ChatMessage::system("Request interrupted."));
                     self.finish_stream(true);
                     keep_rx = false;
                     break;
                 }
-                Ok(UiStreamEvent::Error(error)) => {
+                Ok(TaskUiEvent::Error(error)) => {
                     self.chat.add_message(chat::ChatMessage::assistant(format!(
-                        "⚠ LLM error: {}",
+                        "⚠ Task error: {}",
                         error
                     )));
                     self.finish_stream(true);
@@ -379,7 +398,7 @@ impl TuiApp {
             }
         }
         if keep_rx {
-            self.stream_rx = Some(rx);
+            self.task_rx = Some(rx);
         }
     }
 
@@ -397,29 +416,22 @@ impl TuiApp {
         }
     }
 
-    fn build_messages_for_prompt(&self, user_text: &str) -> Vec<Message> {
-        let mut messages = vec![Message::system(&self.system_prompt)];
-        for msg in &self.chat.messages {
-            if msg.role == "system" {
-                continue;
-            }
-            if msg.role == "user" {
-                messages.push(Message::user(&msg.content));
-            } else if msg.role == "assistant" && !msg.content.is_empty() {
-                messages.push(Message::assistant(&msg.content));
-            }
+    fn set_agent_status(&mut self, agent: &str, status: &str) {
+        let display_name = display_agent_name(agent);
+        if let Some(existing) = self
+            .agent_statuses
+            .iter_mut()
+            .find(|(name, _)| name.eq_ignore_ascii_case(&display_name))
+        {
+            existing.1 = status.to_string();
         }
-        if messages.last().map(|m| &m.role) != Some(&MessageRole::User) {
-            messages.push(Message::user(user_text));
-        }
-        messages
     }
 
     fn cancel_active_stream(&mut self) {
         if let Some(flag) = &self.cancel_flag {
             flag.store(true, Ordering::SeqCst);
         }
-        self.stream_rx = None;
+        self.task_rx = None;
         self.pending_prompts.clear();
         self.finish_stream(true);
         self.chat
@@ -530,6 +542,23 @@ impl TuiApp {
     }
 }
 
+fn display_agent_name(agent: &str) -> String {
+    match agent {
+        "orchestrator" => "Supervisor".to_string(),
+        "planner" => "Planner".to_string(),
+        "coder" => "Coder".to_string(),
+        "reviewer" => "Reviewer".to_string(),
+        "self_learning" => "Self Learning".to_string(),
+        other => {
+            let mut chars = other.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => other.to_string(),
+            }
+        }
+    }
+}
+
 fn chat_messages_from_session(session: Session) -> Vec<chat::ChatMessage> {
     let mut messages = Vec::new();
     if let Some(summary) = session.summary {
@@ -567,7 +596,7 @@ impl Default for TuiApp {
 mod tests {
     use super::*;
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-    use zcode_llm_provider::LlmResponse;
+    use zcode_llm_provider::{LlmProvider, LlmResponse, Message};
 
     // ============================================================
     // TuiApp creation tests

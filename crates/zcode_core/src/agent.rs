@@ -202,6 +202,8 @@ pub struct ConversationMessage {
     pub tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
 }
 
 impl ConversationMessage {
@@ -212,6 +214,7 @@ impl ConversationMessage {
             tool_calls: None,
             tool_call_id: None,
             name: None,
+            reasoning_content: None,
         }
     }
 
@@ -222,6 +225,7 @@ impl ConversationMessage {
             tool_calls: None,
             tool_call_id: None,
             name: None,
+            reasoning_content: None,
         }
     }
 
@@ -232,6 +236,7 @@ impl ConversationMessage {
             tool_calls: None,
             tool_call_id: None,
             name: None,
+            reasoning_content: None,
         }
     }
 
@@ -242,6 +247,22 @@ impl ConversationMessage {
             tool_calls: Some(tool_calls),
             tool_call_id: None,
             name: None,
+            reasoning_content: None,
+        }
+    }
+
+    pub fn assistant_tool_calls_with_reasoning(
+        tool_calls: Vec<serde_json::Value>,
+        content: Option<String>,
+        reasoning_content: Option<String>,
+    ) -> Self {
+        Self {
+            role: "assistant".into(),
+            content,
+            tool_calls: Some(tool_calls),
+            tool_call_id: None,
+            name: None,
+            reasoning_content,
         }
     }
 
@@ -256,6 +277,7 @@ impl ConversationMessage {
             tool_calls: None,
             tool_call_id: Some(tool_call_id.into()),
             name: Some(name.into()),
+            reasoning_content: None,
         }
     }
 }

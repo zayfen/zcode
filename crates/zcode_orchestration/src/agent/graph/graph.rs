@@ -25,8 +25,8 @@ use std::fmt;
 use crate::agent::graph::edge::Edge;
 use crate::agent::graph::node::GraphNode;
 use crate::agent::graph::state::{DefaultState, GraphState};
+use tracing::{debug, error, info, warn};
 use zcode_core::{Result, ZcodeError};
-use tracing::{info, warn, error, debug};
 
 // ─── EndReason ────────────────────────────────────────────────────────────────
 
@@ -85,11 +85,17 @@ pub enum GraphEvent {
     /// A node started executing
     NodeStart { node: String, iteration: usize },
     /// A node finished executing
-    NodeComplete { node: String, output_summary: String },
+    NodeComplete {
+        node: String,
+        output_summary: String,
+    },
     /// An edge was traversed
     EdgeTraversed { from: String, to: Option<String> },
     /// Graph execution ended
-    End { reason: EndReason, output: GraphOutput },
+    End {
+        reason: EndReason,
+        output: GraphOutput,
+    },
 }
 
 impl fmt::Display for GraphEvent {
@@ -207,7 +213,10 @@ impl StateGraph {
         dot.push_str("    rankdir=LR;\n");
 
         // Entry node
-        dot.push_str(&format!("    {} [shape=box, style=filled, fillcolor=lightblue];\n", self.entry));
+        dot.push_str(&format!(
+            "    {} [shape=box, style=filled, fillcolor=lightblue];\n",
+            self.entry
+        ));
 
         // All nodes
         for name in self.nodes.keys() {
@@ -266,6 +275,23 @@ impl CompiledGraph {
     where
         F: FnMut(GraphEvent),
     {
+        self.execute_with_events_and_cancel(state, |event| {
+            on_event(event);
+            false
+        })
+        .await
+    }
+
+    /// Execute the graph, calling `on_event` for each event and stopping before
+    /// the next node when the callback returns `true`.
+    pub async fn execute_with_events_and_cancel<F>(
+        &self,
+        state: &mut DefaultState,
+        mut on_event: F,
+    ) -> Result<GraphOutput>
+    where
+        F: FnMut(GraphEvent) -> bool,
+    {
         let mut output = GraphOutput::new();
         let mut current = self.entry.clone();
         info!(graph_id = %self.graph_id, entry = %current, max_iter = self.max_iterations, "Graph execution starting");
@@ -275,7 +301,7 @@ impl CompiledGraph {
             if output.total_iterations >= self.max_iterations {
                 warn!(graph_id = %self.graph_id, iterations = output.total_iterations, "Graph hit max iterations safety limit");
                 output.end_reason = EndReason::MaxIterations;
-                on_event(GraphEvent::End {
+                let _ = on_event(GraphEvent::End {
                     reason: output.end_reason.clone(),
                     output: output.clone(),
                 });
@@ -288,10 +314,17 @@ impl CompiledGraph {
             })?;
 
             info!(graph_id = %self.graph_id, node = %current, iteration = output.total_iterations, "Executing node");
-            on_event(GraphEvent::NodeStart {
+            if on_event(GraphEvent::NodeStart {
                 node: current.clone(),
                 iteration: output.total_iterations,
-            });
+            }) {
+                output.end_reason = EndReason::ExplicitEnd;
+                let _ = on_event(GraphEvent::End {
+                    reason: output.end_reason.clone(),
+                    output: output.clone(),
+                });
+                return Ok(output);
+            }
 
             let result = node.execute(state).await;
             match result {
@@ -304,15 +337,22 @@ impl CompiledGraph {
                     output.total_iterations += 1;
                     info!(graph_id = %self.graph_id, node = %current, "Node completed (iteration {})", output.total_iterations);
 
-                    on_event(GraphEvent::NodeComplete {
+                    if on_event(GraphEvent::NodeComplete {
                         node: current.clone(),
                         output_summary: summary,
-                    });
+                    }) {
+                        output.end_reason = EndReason::ExplicitEnd;
+                        let _ = on_event(GraphEvent::End {
+                            reason: output.end_reason.clone(),
+                            output: output.clone(),
+                        });
+                        return Ok(output);
+                    }
                 }
                 Err(e) => {
                     error!(graph_id = %self.graph_id, node = %current, error = %e, "Node failed");
                     output.end_reason = EndReason::Error(e.to_string());
-                    on_event(GraphEvent::End {
+                    let _ = on_event(GraphEvent::End {
                         reason: output.end_reason.clone(),
                         output: output.clone(),
                     });
@@ -325,14 +365,21 @@ impl CompiledGraph {
             match next {
                 Some(target) => {
                     info!(graph_id = %self.graph_id, from = %current, to = %target, "Edge traversed");
-                    on_event(GraphEvent::EdgeTraversed {
+                    if on_event(GraphEvent::EdgeTraversed {
                         from: current.clone(),
                         to: Some(target.clone()),
-                    });
+                    }) {
+                        output.end_reason = EndReason::ExplicitEnd;
+                        let _ = on_event(GraphEvent::End {
+                            reason: output.end_reason.clone(),
+                            output: output.clone(),
+                        });
+                        return Ok(output);
+                    }
                     current = target;
                 }
                 None => {
-                    on_event(GraphEvent::EdgeTraversed {
+                    let _ = on_event(GraphEvent::EdgeTraversed {
                         from: current.clone(),
                         to: None,
                     });
@@ -342,13 +389,13 @@ impl CompiledGraph {
                         EndReason::NaturalEnd
                     };
                     info!(
-                        graph_id = %self.graph_id, 
+                        graph_id = %self.graph_id,
                         reason = %output.end_reason,
                         total_iterations = output.total_iterations,
                         nodes = ?output.nodes_executed,
                         "Graph execution finished"
                     );
-                    on_event(GraphEvent::End {
+                    let _ = on_event(GraphEvent::End {
                         reason: output.end_reason.clone(),
                         output: output.clone(),
                     });
@@ -389,15 +436,9 @@ impl CompiledGraph {
                 Edge::Conditional { from, branches, .. } => {
                     for branch in branches {
                         if branch == "__end__" {
-                            dot.push_str(&format!(
-                                "    {} -> __end__ [style=dashed];\n",
-                                from
-                            ));
+                            dot.push_str(&format!("    {} -> __end__ [style=dashed];\n", from));
                         } else {
-                            dot.push_str(&format!(
-                                "    {} -> {} [style=dashed];\n",
-                                from, branch
-                            ));
+                            dot.push_str(&format!("    {} -> {} [style=dashed];\n", from, branch));
                         }
                     }
                 }
@@ -444,9 +485,7 @@ mod tests {
 
     fn ok_node(name: &str, output: NodeOutput) -> FnNode {
         let output = std::sync::Arc::new(std::sync::Mutex::new(output));
-        FnNode::new(name, move |_s| {
-            Ok(output.lock().unwrap().clone())
-        })
+        FnNode::new(name, move |_s| Ok(output.lock().unwrap().clone()))
     }
 
     fn state_changer_node(name: &str, new_state: AgentState) -> FnNode {
@@ -590,13 +629,15 @@ mod tests {
     async fn test_state_flows_between_nodes() {
         let mut g = StateGraph::new("set");
         g.add_node(FnNode::new("set", |s| {
-            s.metadata
-                .insert("value".into(), serde_json::json!(42));
+            s.metadata.insert("value".into(), serde_json::json!(42));
             Ok(NodeOutput::None)
         }));
         g.add_node(FnNode::new("check", |s| {
             let v = s.metadata.get("value").cloned();
-            Ok(NodeOutput::Custom("received".into(), v.unwrap_or(serde_json::Value::Null)))
+            Ok(NodeOutput::Custom(
+                "received".into(),
+                v.unwrap_or(serde_json::Value::Null),
+            ))
         }));
         g.add_edge("set", "check");
         let cg = g.compile().unwrap();
@@ -604,16 +645,19 @@ mod tests {
         let mut state = DefaultState::default();
         cg.execute(&mut state).await.unwrap();
         assert_eq!(state.metadata.get("value").unwrap(), &serde_json::json!(42));
-        assert_eq!(state.metadata.get("received").unwrap(), &serde_json::json!(42));
+        assert_eq!(
+            state.metadata.get("received").unwrap(),
+            &serde_json::json!(42)
+        );
     }
 
     #[tokio::test]
     async fn test_messages_accumulate() {
         let mut g = StateGraph::new("a");
         g.add_node(FnNode::new("a", |_s| {
-            Ok(NodeOutput::Messages(vec![
-                ConversationMessage::user("hello"),
-            ]))
+            Ok(NodeOutput::Messages(vec![ConversationMessage::user(
+                "hello",
+            )]))
         }));
         g.add_node(FnNode::new("b", |_s| {
             Ok(NodeOutput::Messages(vec![
@@ -676,11 +720,7 @@ mod tests {
         g.add_node(ok_node("a", NodeOutput::None));
         g.add_node(ok_node("b", NodeOutput::None));
         g.add_edge("a", "b");
-        g.add_conditional_edge(
-            "b",
-            |_| None,
-            vec!["__end__"],
-        );
+        g.add_conditional_edge("b", |_| None, vec!["__end__"]);
         let dot = g.to_dot();
         assert!(dot.contains("digraph"));
         assert!(dot.contains("a -> b"));
@@ -693,7 +733,9 @@ mod tests {
     async fn test_task_result_output() {
         let mut g = StateGraph::new("worker");
         g.add_node(FnNode::new("worker", |_s| {
-            Ok(NodeOutput::TaskResult(TaskResult::success("t1", "all done")))
+            Ok(NodeOutput::TaskResult(TaskResult::success(
+                "t1", "all done",
+            )))
         }));
         let cg = g.compile().unwrap();
 

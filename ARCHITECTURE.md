@@ -2,6 +2,94 @@
 
 `zcode` is a layered Rust workspace for an AI coding agent CLI. The root package keeps the CLI shell and compatibility exports; core behavior lives in focused crates.
 
+## Architecture Diagrams
+
+### Workspace Layering
+
+```mermaid
+flowchart TD
+    cli["Root CLI Shell<br/>src/main.rs + src/cli"]
+
+    ui["zcode_ui<br/>CLI/TUI screen rendering<br/>conversation, agents, skills, MCP status"]
+    req["zcode_requirements<br/>docs/ structure, specs, tests, task store<br/>standardized LLM prompt input"]
+    orch["zcode_orchestration<br/>core agent graph workflow<br/>orchestrator, planner, ReAct coder, reviewer, self-learning"]
+    llm["zcode_llm_provider<br/>OpenAI-compatible chat completions<br/>ZCODE_BASE_URL / API_KEY / MODEL / FAST_MODEL"]
+    cap["zcode_capabilities<br/>skills, MCP, tool schemas, shared prompt context"]
+    session["zcode_session<br/>session messages, history load/delete, compression"]
+    core["zcode_core<br/>shared DTOs, config, errors, LLM message types"]
+
+    cli --> ui
+    cli --> req
+    cli --> orch
+
+    ui --> session
+    ui --> core
+    req --> session
+    req --> core
+    orch --> llm
+    orch --> cap
+    orch --> session
+    orch --> core
+    llm --> cap
+    llm --> session
+    llm --> core
+    cap --> core
+    session --> core
+```
+
+### Agent Workflow
+
+```mermaid
+flowchart LR
+    user["User / CLI Command"] --> root["Orchestrator Agent<br/>root coordinator"]
+
+    root --> planner["Planner Agent<br/>research requirements + generate plan"]
+    planner --> root
+
+    root --> coder["Coder Agent<br/>ReAct: reason -> tool call -> observe -> repeat"]
+    coder --> root
+
+    root --> reviewer["Reviewer Agent<br/>review + red/green test gate"]
+    reviewer -- "PASS" --> root
+    reviewer -- "FAIL with findings" --> root
+    root -- "retry until limit" --> coder
+
+    root --> learning["Self-Learning Agent<br/>error summary + correction notes"]
+    learning --> root
+
+    root --> done["Task / Session Result"]
+```
+
+Sub agents are coordinated by the root orchestrator. Planner, coder, reviewer, and self-learning agents do not talk directly to each other in the conceptual workflow; the orchestration graph carries state and routing decisions.
+
+### LLM Tool Loop
+
+```mermaid
+sequenceDiagram
+    participant Agent as AgentLoop
+    participant Provider as zcode_llm_provider
+    participant API as OpenAI-Compatible API
+    participant Cap as zcode_capabilities
+    participant MCP as MCP Servers
+    participant Sess as zcode_session
+
+    Agent->>Provider: messages + OpenAI tool schemas
+    Provider->>API: POST /v1/chat/completions
+    API-->>Provider: text or tool_calls
+    Provider-->>Agent: normalized LlmResponse
+
+    alt tool_calls
+        Agent->>Cap: execute tool calls
+        Cap->>MCP: tools/call
+        MCP-->>Cap: tool result
+        Cap-->>Agent: observation
+        Agent->>Sess: append assistant/tool messages
+        Agent->>Provider: continue with observations
+    else final text
+        Agent->>Sess: persist final assistant message
+    end
+```
+
 ## Workspace Layers
 
 ```text
@@ -52,7 +140,8 @@ crates/zcode_core
 2. zcode_requirements validates or generates docs/ as needed.
 3. zcode_capabilities loads skills and connects configured MCP servers.
 4. zcode_orchestration builds an agent graph:
-   planner -> coder(ReAct) -> reviewer/test gate -> self-learning
+   orchestrator -> planner -> coder(ReAct) -> reviewer/test gate;
+   failures loop reviewer -> orchestrator -> coder until retry limits.
 5. zcode_llm_provider sends OpenAI-compatible chat completion requests.
 6. Tool calls are returned in OpenAI function-call format.
 7. AgentLoop executes tool calls through ToolRegistry and appends tool

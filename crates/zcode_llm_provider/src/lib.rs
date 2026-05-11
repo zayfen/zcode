@@ -3,6 +3,8 @@
 pub mod provider;
 pub mod streaming;
 
-pub use provider::{LlmProvider, MockLlmProvider, RigProvider};
+pub use provider::{
+    ChatStreamingResponse, LlmProvider, LlmStreamEvent, MockLlmProvider, RigProvider,
+};
 pub use streaming::{StreamHandler, StreamingResponse};
 pub use zcode_core::llm::{LlmConfig, LlmResponse, Message, MessageRole, UsageStats};

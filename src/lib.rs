@@ -6,18 +6,9 @@
 //! `zcode_llm_provider`, `zcode_capabilities`, `zcode_session`, and
 //! `zcode_core`.
 
-pub mod cli;
-pub mod ast;
-pub mod memory;
-pub mod script;
-pub mod git;
-pub mod lsp;
-pub mod workspace;
-
 pub use zcode_capabilities as capabilities;
 pub mod tools {
     pub use zcode_capabilities::*;
-    pub mod ast_tools {}
 }
 pub use zcode_capabilities::{register_default_tools, Tool, ToolRegistry, ToolResult};
 pub use zcode_capabilities::{McpClient, McpServerConfig, McpTool, McpToolAdapter, McpTransport};
@@ -64,7 +55,9 @@ pub mod docs {
     }
 }
 pub use zcode_requirements::task_store;
-pub use zcode_requirements::{generate_docs_scaffold, DocsValidator, TaskRecord, TaskStatus, TaskStore};
+pub use zcode_requirements::{
+    generate_docs_scaffold, DocsValidator, TaskRecord, TaskStatus, TaskStore,
+};
 pub use zcode_session as session;
 pub use zcode_session::{Snapshot, SnapshotManager};
 pub mod tui {
@@ -74,13 +67,6 @@ pub mod tui {
     }
 }
 pub use zcode_ui::{ChatInterface, TuiApp};
-
-pub use ast::{LanguageProvider, LanguageRegistry, GrammarRegistry};
-pub use memory::{WorkingMemory, ProjectMemory, SemanticIndex, ContextAssembler, TokenBudget};
-pub use script::{ScriptManager, ScriptContext, HookRegistry, HookType, default_script_manager};
-pub use git::{GitDiff, DiffContext};
-pub use workspace::{Workspace, WorkspaceContext, WorkspaceInfo};
-
 
 #[cfg(test)]
 mod tests {

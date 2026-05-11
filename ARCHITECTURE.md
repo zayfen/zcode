@@ -1,6 +1,6 @@
 # zcode Architecture
 
-`zcode` is a layered Rust workspace for an AI coding agent CLI. The root package keeps the CLI shell and compatibility exports; core behavior lives in focused crates.
+`zcode` is a layered Rust workspace for an AI coding agent CLI. The root package keeps the binary/export shell; CLI behavior and core behavior live in focused crates.
 
 ## Architecture Diagrams
 
@@ -8,7 +8,8 @@
 
 ```mermaid
 flowchart TD
-    cli["Root CLI Shell<br/>src/main.rs + src/cli"]
+    bin["Root Binary Shell<br/>src/main.rs"]
+    cli["zcode_cli<br/>clap args + command dispatch"]
 
     ui["zcode_ui<br/>CLI/TUI screen rendering<br/>conversation, agents, skills, MCP status"]
     req["zcode_requirements<br/>docs/ structure, specs, tests, task store<br/>standardized LLM prompt input"]
@@ -18,6 +19,7 @@ flowchart TD
     session["zcode_session<br/>session messages, history load/delete, compression"]
     core["zcode_core<br/>shared DTOs, config, errors, LLM message types"]
 
+    bin --> cli
     cli --> ui
     cli --> req
     cli --> orch
@@ -93,7 +95,14 @@ sequenceDiagram
 ## Workspace Layers
 
 ```text
-src/main.rs + src/cli
+src/main.rs
+  Minimal binary shell: parse args, initialize tracing, call zcode_cli.
+        |
+        v
+crates/zcode_cli
+  Owns clap argument definitions and command dispatch. It wires user
+  commands into requirements, capabilities, orchestration, LLM provider,
+  and UI layers.
         |
         v
 crates/zcode_ui
@@ -136,7 +145,7 @@ crates/zcode_core
 ## Runtime Flow
 
 ```text
-1. CLI parses a command in src/cli.
+1. The root binary parses a command through zcode_cli.
 2. zcode_requirements validates or generates docs/ as needed.
 3. zcode_capabilities loads skills and connects configured MCP servers.
 4. zcode_orchestration builds an agent graph:
@@ -197,17 +206,15 @@ All LLM requests use an OpenAI-compatible chat completions endpoint.
 
 The compression path is intentionally LLM-free so it can run reliably without network access; callers can replace or augment the summary with an LLM summary later.
 
-## Compatibility Modules
-
-Some older modules remain under `src/`:
+## Root Shell
 
 | Module | Current Role |
 |--------|--------------|
-| `src/cli` | Binary command parsing and orchestration wiring |
-| `src/workspace` | Compatibility facade for config, snapshots, and context helpers |
-| `src/ast`, `src/git`, `src/lsp`, `src/memory`, `src/script` | Retained subsystems used by tests or compatibility exports |
+| `src/main.rs` | CLI process entry point |
+| `src/lib.rs` | Public re-export shell over the `zcode_*` workspace crates |
+| `crates/zcode_cli` | CLI argument parsing and command dispatch |
 
-New core behavior should go into the owning `crates/zcode_*` layer rather than recreating removed old modules.
+The old `src/cli`, `src/ast`, `src/git`, `src/lsp`, `src/memory`, `src/script`, and `src/workspace` compatibility modules were removed. New behavior should go into the owning `crates/zcode_*` layer rather than recreating old root-package modules.
 
 ## Dependency Direction
 

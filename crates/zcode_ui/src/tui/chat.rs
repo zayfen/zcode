@@ -6,7 +6,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, BorderType, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Paragraph, Wrap},
     Frame,
 };
 
@@ -56,6 +56,18 @@ pub struct ChatInterface {
     pub messages: Vec<ChatMessage>,
     /// Scroll position
     pub scroll: u16,
+    /// Whether full model thinking should be shown.
+    pub show_full_thinking: bool,
+    /// Latest collapsed thinking text.
+    pub latest_thinking: String,
+    /// Full thinking transcript for the current response.
+    pub thinking_log: Vec<String>,
+    /// Whether an LLM response is currently in flight.
+    pub loading: bool,
+    /// Loading animation frame.
+    pub loading_frame: usize,
+    /// Number of queued prompts waiting to be sent.
+    pub pending_count: usize,
 }
 
 impl ChatInterface {
@@ -66,6 +78,12 @@ impl ChatInterface {
             cursor_pos: 0,
             messages: Vec::new(),
             scroll: 0,
+            show_full_thinking: false,
+            latest_thinking: String::new(),
+            thinking_log: Vec::new(),
+            loading: false,
+            loading_frame: 0,
+            pending_count: 0,
         }
     }
 
@@ -142,21 +160,29 @@ impl ChatInterface {
     pub fn cursor_row_col(&self) -> (u16, u16) {
         let before = &self.input[..self.cursor_pos];
         let row = before.chars().filter(|&c| c == '\n').count() as u16;
-        let col = before.split('\n').last().map(|s| s.chars().count()).unwrap_or(0) as u16;
+        let col = before
+            .split('\n')
+            .last()
+            .map(|s| s.chars().count())
+            .unwrap_or(0) as u16;
         (row, col)
     }
 
-    /// Send the current input as a message. Returns the user's message if non-empty.
-    /// The caller is responsible for generating and adding the assistant response.
-    pub fn send_current_input(&mut self) -> Option<String> {
+    /// Take and clear the current input. Returns the user's message if non-empty.
+    pub fn take_current_input(&mut self) -> Option<String> {
         if self.input.is_empty() {
             return None;
         }
         let text = self.input.clone();
-        let message = ChatMessage::user(text.clone());
-        self.messages.push(message);
         self.input.clear();
         self.cursor_pos = 0;
+        Some(text)
+    }
+
+    /// Send the current input as a user message. Returns the sent message if non-empty.
+    pub fn send_current_input(&mut self) -> Option<String> {
+        let text = self.take_current_input()?;
+        self.messages.push(ChatMessage::user(text.clone()));
         Some(text)
     }
 
@@ -165,8 +191,74 @@ impl ChatInterface {
         self.messages.push(message);
     }
 
+    /// Start the loading/thinking UI for a new assistant response.
+    pub fn start_loading(&mut self) {
+        self.loading = true;
+        self.loading_frame = 0;
+        self.latest_thinking.clear();
+        self.thinking_log.clear();
+    }
+
+    /// Stop the loading animation.
+    pub fn stop_loading(&mut self) {
+        self.loading = false;
+        self.latest_thinking.clear();
+    }
+
+    /// Advance the loading animation frame.
+    pub fn tick_loading(&mut self) {
+        if self.loading {
+            self.loading_frame = self.loading_frame.wrapping_add(1);
+        }
+    }
+
+    /// Toggle full thinking transcript display.
+    pub fn toggle_thinking(&mut self) {
+        self.show_full_thinking = !self.show_full_thinking;
+    }
+
+    /// Append thinking text from the stream.
+    pub fn append_thinking(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        self.latest_thinking.push_str(text);
+        if self.latest_thinking.chars().count() > 240 {
+            self.latest_thinking = self
+                .latest_thinking
+                .chars()
+                .rev()
+                .take(240)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+        }
+        self.thinking_log.push(text.to_string());
+    }
+
+    /// Append assistant stream content, creating an assistant message if needed.
+    pub fn append_assistant_delta(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if let Some(last) = self.messages.last_mut() {
+            if last.role == "assistant" {
+                last.content.push_str(text);
+                return;
+            }
+        }
+        self.messages.push(ChatMessage::assistant(text.to_string()));
+    }
+
     /// Render the chat interface and position the cursor in the input area
-    pub fn render(&self, frame: &mut Frame, agent_statuses: &[(String, String)], active_skills: &[String], active_mcps: &[String]) {
+    pub fn render(
+        &self,
+        frame: &mut Frame,
+        agent_statuses: &[(String, String)],
+        active_skills: &[String],
+        active_mcps: &[String],
+    ) {
         let area = frame.size();
 
         // Dynamic input height: 2 border + lines (capped at 8)
@@ -206,18 +298,32 @@ impl ChatInterface {
 
         // Render Bottom Hotkeys Status Bar
         let status_text = Line::from(vec![
-            Span::styled(" zcode ", Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                " zcode ",
+                Style::default()
+                    .bg(Color::Blue)
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" | "),
             Span::styled("Enter:", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(" Send | "),
-            Span::styled("Alt+Enter / Ctrl+J:", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "Alt+Enter / Ctrl+J:",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
             Span::raw(" Newline | "),
             Span::styled("↑/↓:", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(" Scroll | "),
+            Span::styled("Ctrl+O:", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(" Thinking | "),
             Span::styled("Esc:", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(" Quit"),
         ]);
-        frame.render_widget(Paragraph::new(status_text).style(Style::default().fg(Color::DarkGray)), root_chunks[2]);
+        frame.render_widget(
+            Paragraph::new(status_text).style(Style::default().fg(Color::DarkGray)),
+            root_chunks[2],
+        );
 
         // Position the cursor inside the input box
         let (cur_row, cur_col) = self.cursor_row_col();
@@ -230,13 +336,22 @@ impl ChatInterface {
     }
 
     /// Render the context sidebar
-    fn render_sidebar<'a>(&self, agent_statuses: &'a [(String, String)], active_skills: &'a [String], active_mcps: &'a [String]) -> Paragraph<'a> {
+    fn render_sidebar<'a>(
+        &self,
+        agent_statuses: &'a [(String, String)],
+        active_skills: &'a [String],
+        active_mcps: &'a [String],
+    ) -> Paragraph<'a> {
         let mut lines = Vec::new();
 
         // 1. Agent Statuses
-        lines.push(Line::from(vec![
-            Span::styled("🤖 AI Agents ", Style::default().add_modifier(Modifier::BOLD).fg(Color::White).bg(Color::Rgb(60,60,60))),
-        ]));
+        lines.push(Line::from(vec![Span::styled(
+            "🤖 AI Agents ",
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .fg(Color::White)
+                .bg(Color::Rgb(60, 60, 60)),
+        )]));
         for (name, status) in agent_statuses {
             let status_color = match status.as_str() {
                 "Idle" => Color::DarkGray,
@@ -253,11 +368,18 @@ impl ChatInterface {
         lines.push(Line::from(""));
 
         // 2. Active MCPs
-        lines.push(Line::from(vec![
-            Span::styled(format!(" 🔌 MCP Servers ({}) ", active_mcps.len()), Style::default().add_modifier(Modifier::BOLD).fg(Color::White).bg(Color::Rgb(60,60,60))),
-        ]));
+        lines.push(Line::from(vec![Span::styled(
+            format!(" 🔌 MCP Servers ({}) ", active_mcps.len()),
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .fg(Color::White)
+                .bg(Color::Rgb(60, 60, 60)),
+        )]));
         if active_mcps.is_empty() {
-            lines.push(Line::from(Span::styled("   No MCPs enabled", Style::default().fg(Color::DarkGray))));
+            lines.push(Line::from(Span::styled(
+                "   No MCPs enabled",
+                Style::default().fg(Color::DarkGray),
+            )));
         } else {
             for mcp in active_mcps {
                 lines.push(Line::from(vec![
@@ -269,11 +391,18 @@ impl ChatInterface {
         lines.push(Line::from(""));
 
         // 3. Active Skills
-        lines.push(Line::from(vec![
-            Span::styled(format!(" 📚 Active Skills ({}) ", active_skills.len()), Style::default().add_modifier(Modifier::BOLD).fg(Color::White).bg(Color::Rgb(60,60,60))),
-        ]));
+        lines.push(Line::from(vec![Span::styled(
+            format!(" 📚 Active Skills ({}) ", active_skills.len()),
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .fg(Color::White)
+                .bg(Color::Rgb(60, 60, 60)),
+        )]));
         if active_skills.is_empty() {
-            lines.push(Line::from(Span::styled("   No Skills attached", Style::default().fg(Color::DarkGray))));
+            lines.push(Line::from(Span::styled(
+                "   No Skills attached",
+                Style::default().fg(Color::DarkGray),
+            )));
         } else {
             for skill in active_skills {
                 lines.push(Line::from(vec![
@@ -288,7 +417,7 @@ impl ChatInterface {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(Color::DarkGray))
+                    .border_style(Style::default().fg(Color::DarkGray)),
             )
             .wrap(Wrap { trim: false })
     }
@@ -301,7 +430,7 @@ impl ChatInterface {
             let (style, prefix) = match message.role.as_str() {
                 "user" => (Style::default().fg(Color::Cyan), "👤 You     "),
                 "assistant" => (Style::default().fg(Color::Magenta), "🤖 zcode   "),
-                "system" => (Style::default().fg(Color::DarkGray),   "⚙ System  "),
+                "system" => (Style::default().fg(Color::DarkGray), "⚙ System  "),
                 _ => (Style::default(), ""),
             };
 
@@ -325,20 +454,95 @@ impl ChatInterface {
             lines.push(Line::from(""));
         }
 
+        if self.loading
+            || !self.latest_thinking.is_empty()
+            || (self.show_full_thinking && !self.thinking_log.is_empty())
+        {
+            lines.extend(self.render_thinking_lines(area.width));
+        }
+
         if lines.is_empty() {
             let welcome = vec![
-                Line::from(Span::styled("╭────────────────────────╮", Style::default().fg(Color::DarkGray))),
-                Line::from(Span::styled("│ Welcome to zcode agent │", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
-                Line::from(Span::styled("╰────────────────────────╯", Style::default().fg(Color::DarkGray))),
+                Line::from(Span::styled(
+                    "╭────────────────────────╮",
+                    Style::default().fg(Color::DarkGray),
+                )),
+                Line::from(Span::styled(
+                    "│ Welcome to zcode agent │",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )),
+                Line::from(Span::styled(
+                    "╰────────────────────────╯",
+                    Style::default().fg(Color::DarkGray),
+                )),
                 Line::from(""),
-                Line::from(Span::styled("Start typing a task to interact.", Style::default().fg(Color::DarkGray))),
+                Line::from(Span::styled(
+                    "Start typing a task to interact.",
+                    Style::default().fg(Color::DarkGray),
+                )),
             ];
             lines.extend(welcome);
         }
 
         // We use Block::default() implicitly with NO borders, achieving the edge-to-edge look!
-        Paragraph::new(Text::from(lines))
-            .scroll((self.scroll, 0))
+        Paragraph::new(Text::from(lines)).scroll((self.scroll, 0))
+    }
+
+    fn render_thinking_lines(&self, area_width: u16) -> Vec<Line<'_>> {
+        let mut lines = Vec::new();
+        let spinner = ["|", "/", "-", "\\"][self.loading_frame % 4];
+        let label = if self.loading {
+            format!("{} thinking ", spinner)
+        } else {
+            "  thinking log ".to_string()
+        };
+        let queue = if self.pending_count > 0 {
+            format!("  queued: {}", self.pending_count)
+        } else {
+            String::new()
+        };
+        let latest = if self.latest_thinking.is_empty() {
+            if self.loading {
+                "waiting for model...".to_string()
+            } else {
+                "complete".to_string()
+            }
+        } else {
+            self.latest_thinking
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let content_width = area_width.saturating_sub(18).max(10) as usize;
+        let collapsed = textwrap::wrap(&latest, content_width)
+            .first()
+            .map(|line| line.to_string())
+            .unwrap_or(latest);
+
+        lines.push(Line::from(vec![
+            Span::styled(
+                label,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(collapsed, Style::default().fg(Color::DarkGray)),
+            Span::styled(queue, Style::default().fg(Color::DarkGray)),
+        ]));
+
+        if self.show_full_thinking && !self.thinking_log.is_empty() {
+            let full = self.thinking_log.join("");
+            for line in textwrap::wrap(&full, area_width.saturating_sub(4).max(10) as usize) {
+                lines.push(Line::from(vec![
+                    Span::raw("  "),
+                    Span::styled(line.to_string(), Style::default().fg(Color::DarkGray)),
+                ]));
+            }
+        }
+        lines.push(Line::from(""));
+        lines
     }
 
     /// Render the input area
@@ -361,7 +565,11 @@ impl ChatInterface {
             Block::default()
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded) // Claude Code aesthetics
-                .border_style(Style::default().fg(if self.input.is_empty() { Color::DarkGray } else { Color::Cyan }))
+                .border_style(Style::default().fg(if self.input.is_empty() {
+                    Color::DarkGray
+                } else {
+                    Color::Cyan
+                })),
         )
     }
 }
@@ -571,6 +779,18 @@ mod tests {
     }
 
     #[test]
+    fn test_chat_interface_take_current_input_does_not_add_message() {
+        let mut chat = ChatInterface::new();
+        chat.input = "Queued".to_string();
+
+        let returned = chat.take_current_input();
+
+        assert_eq!(returned, Some("Queued".to_string()));
+        assert!(chat.input.is_empty());
+        assert!(chat.messages.is_empty());
+    }
+
+    #[test]
     fn test_chat_interface_send_adds_assistant_response() {
         // Verify that send_current_input returns the user's message and the
         // caller (TuiApp.call_llm) is responsible for adding the assistant reply.
@@ -653,6 +873,28 @@ mod tests {
         assert_eq!(chat.messages[2].content, "Third");
     }
 
+    #[test]
+    fn test_chat_interface_append_assistant_delta_merges_last_assistant() {
+        let mut chat = ChatInterface::new();
+
+        chat.append_assistant_delta("hel");
+        chat.append_assistant_delta("lo");
+
+        assert_eq!(chat.messages.len(), 1);
+        assert_eq!(chat.messages[0].role, "assistant");
+        assert_eq!(chat.messages[0].content, "hello");
+    }
+
+    #[test]
+    fn test_chat_interface_append_thinking_keeps_recent_collapsed_text() {
+        let mut chat = ChatInterface::new();
+
+        chat.append_thinking(&"x".repeat(300));
+
+        assert_eq!(chat.thinking_log.len(), 1);
+        assert!(chat.latest_thinking.chars().count() <= 240);
+    }
+
     // ============================================================
     // ChatInterface scroll tests
     // ============================================================
@@ -685,7 +927,7 @@ mod tests {
         chat.scroll = 5;
         chat.scroll_up();
         assert_eq!(chat.scroll, 2);
-        
+
         // Ensure it doesn't underflow
         chat.scroll_up();
         assert_eq!(chat.scroll, 0);

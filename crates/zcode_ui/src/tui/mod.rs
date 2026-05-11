@@ -6,19 +6,20 @@ pub mod chat;
 
 pub use chat::ChatInterface;
 
-use zcode_core::ZcodeError;
-use zcode_llm_provider::{LlmProvider, Message, MessageRole};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{
-    backend::CrosstermBackend,
-    Terminal,
-};
+use futures::executor::block_on;
+use futures::StreamExt;
+use ratatui::{backend::CrosstermBackend, Terminal};
+use std::collections::VecDeque;
 use std::io::{self, Stdout};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Arc;
+use zcode_core::ZcodeError;
+use zcode_llm_provider::{LlmProvider, LlmStreamEvent, Message, MessageRole};
 
 /// Type alias for the terminal backend
 pub type TuiBackend = CrosstermBackend<Stdout>;
@@ -28,11 +29,13 @@ pub type TuiTerminal = Terminal<TuiBackend>;
 
 /// Initialize the terminal for TUI mode
 pub fn init_terminal() -> zcode_core::Result<TuiTerminal> {
-    enable_raw_mode().map_err(|e| ZcodeError::InternalError(format!("Failed to enable raw mode: {}", e)))?;
+    enable_raw_mode()
+        .map_err(|e| ZcodeError::InternalError(format!("Failed to enable raw mode: {}", e)))?;
 
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)
-        .map_err(|e| ZcodeError::InternalError(format!("Failed to enter alternate screen: {}", e)))?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture).map_err(|e| {
+        ZcodeError::InternalError(format!("Failed to enter alternate screen: {}", e))
+    })?;
 
     // Try to enable keyboard enhancement protocol (kitty protocol).
     // This lets terminals like iTerm2/Ghostty send Shift+Enter as a distinct event.
@@ -88,10 +91,19 @@ pub struct TuiApp {
     pub active_skills: Vec<String>,
     /// Loaded MCP server names
     pub active_mcps: Vec<String>,
-    /// Set when Enter is pressed to trigger a deferred LLM call
-    llm_pending: bool,
-    /// Text from the pending Enter press
-    pending_text: Option<String>,
+    /// Prompts queued while an LLM response is in flight.
+    pending_prompts: VecDeque<String>,
+    /// Whether a streaming LLM response is in flight.
+    llm_in_flight: bool,
+    /// Stream event receiver from the worker thread.
+    stream_rx: Option<Receiver<UiStreamEvent>>,
+}
+
+enum UiStreamEvent {
+    Content(String),
+    Thinking(String),
+    Done,
+    Error(String),
 }
 
 impl TuiApp {
@@ -113,8 +125,9 @@ impl TuiApp {
             ],
             active_skills: Vec::new(),
             active_mcps: Vec::new(),
-            llm_pending: false,
-            pending_text: None,
+            pending_prompts: VecDeque::new(),
+            llm_in_flight: false,
+            stream_rx: None,
         }
     }
 
@@ -123,7 +136,7 @@ impl TuiApp {
         let mut app = Self::new();
         app.provider = Some(provider);
         app.chat.add_message(chat::ChatMessage::system(
-            "zcode agent ready. Connected to LLM provider."
+            "zcode agent ready. Connected to LLM provider.",
         ));
         app
     }
@@ -152,20 +165,25 @@ impl TuiApp {
                 (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
                     self.chat.input_newline();
                 }
+                (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
+                    self.chat.toggle_thinking();
+                }
                 // Ctrl+Enter is sometimes sent as Ctrl+M
                 (KeyModifiers::CONTROL, KeyCode::Enter) => {
                     self.chat.input_newline();
                 }
                 // Plain Enter: send message
                 (KeyModifiers::NONE, KeyCode::Enter) => {
-                    if let Some(user_text) = self.chat.send_current_input() {
+                    if let Some(user_text) = self.chat.take_current_input() {
                         if self.provider.is_some() {
-                            self.llm_pending = true;
-                            self.pending_text = Some(user_text);
+                            self.pending_prompts.push_back(user_text);
+                            self.chat.pending_count = self.pending_prompts.len();
+                            self.start_next_prompt_if_idle();
                         } else {
+                            self.chat.add_message(chat::ChatMessage::user(user_text));
                             self.chat.add_message(chat::ChatMessage::assistant(
                                 "⚠ No LLM provider configured. \
-                                Set ZCODE_API_KEY environment variable and restart."
+                                Set ZCODE_API_KEY environment variable and restart.",
                             ));
                         }
                     }
@@ -199,13 +217,21 @@ impl TuiApp {
     }
 
     /// Run the main event loop.
-    ///
-    /// LLM calls are deferred to the end of each iteration so the "Thinking..."
-    /// status renders before the blocking provider.chat() call.
     pub fn run(&mut self, terminal: &mut TuiTerminal) -> zcode_core::Result<()> {
         while !self.should_quit {
+            self.drain_stream_events();
+            self.start_next_prompt_if_idle();
+            self.chat.tick_loading();
+
             terminal
-                .draw(|f| self.chat.render(f, &self.agent_statuses, &self.active_skills, &self.active_mcps))
+                .draw(|f| {
+                    self.chat.render(
+                        f,
+                        &self.agent_statuses,
+                        &self.active_skills,
+                        &self.active_mcps,
+                    )
+                })
                 .map_err(|e| ZcodeError::InternalError(format!("Failed to draw: {}", e)))?;
 
             if event::poll(std::time::Duration::from_millis(100))
@@ -215,59 +241,132 @@ impl TuiApp {
                     .map_err(|e| ZcodeError::InternalError(format!("Read error: {}", e)))?;
                 self.handle_event(event)?;
             }
+        }
+        Ok(())
+    }
 
-            // Deferred LLM call — draw first so "Thinking..." is visible
-            if self.llm_pending {
-                self.llm_pending = false;
-                let user_text = self.pending_text.take().unwrap_or_default();
+    fn start_next_prompt_if_idle(&mut self) {
+        if self.llm_in_flight {
+            return;
+        }
+        let Some(user_text) = self.pending_prompts.pop_front() else {
+            self.chat.pending_count = 0;
+            return;
+        };
+        let Some(provider) = self.provider.as_ref().cloned() else {
+            return;
+        };
 
-                let provider = self.provider.as_ref().expect("provider checked before setting llm_pending");
+        self.chat
+            .add_message(chat::ChatMessage::user(user_text.clone()));
+        self.chat.pending_count = self.pending_prompts.len();
+        self.chat.start_loading();
+        if let Some(agent) = self.agent_statuses.iter_mut().find(|a| a.0 == "Supervisor") {
+            agent.1 = "Thinking...".to_string();
+        }
+        self.llm_in_flight = true;
 
-                // Update Supervisor status to Thinking
-                if let Some(agent) = self.agent_statuses.iter_mut().find(|a| a.0 == "Supervisor") {
-                    agent.1 = "Thinking...".to_string();
-                }
+        let messages = self.build_messages_for_prompt(&user_text);
+        let (tx, rx) = mpsc::channel();
+        self.stream_rx = Some(rx);
 
-                // Draw "Thinking..." before blocking LLM call
-                terminal
-                    .draw(|f| self.chat.render(f, &self.agent_statuses, &self.active_skills, &self.active_mcps))
-                    .map_err(|e| ZcodeError::InternalError(format!("Failed to draw: {}", e)))?;
-
-                // Build conversation history
-                let mut messages: Vec<Message> = vec![
-                    Message::system(&self.system_prompt),
-                ];
-                for msg in &self.chat.messages {
-                    if msg.role == "system" { continue; }
-                    if msg.role == "user" {
-                        messages.push(Message::user(&msg.content));
-                    } else if msg.role == "assistant" {
-                        messages.push(Message::assistant(&msg.content));
-                    }
-                }
-                if messages.last().map(|m| &m.role) != Some(&MessageRole::User) {
-                    messages.push(Message::user(&user_text));
-                }
-
-                match provider.chat(&messages, &[]) {
-                    Ok(response) => {
-                        self.chat.add_message(chat::ChatMessage::assistant(response.content));
-                        if let Some(agent) = self.agent_statuses.iter_mut().find(|a| a.0 == "Supervisor") {
-                            agent.1 = "Idle".to_string();
+        std::thread::spawn(move || {
+            let result = (|| {
+                let mut stream = provider.stream_chat(&messages, &[])?;
+                while let Some(event) = block_on(stream.next()) {
+                    match event {
+                        Ok(LlmStreamEvent::Content(text)) => {
+                            let _ = tx.send(UiStreamEvent::Content(text));
                         }
-                    }
-                    Err(e) => {
-                        self.chat.add_message(chat::ChatMessage::assistant(
-                            format!("⚠ LLM error: {}", e)
-                        ));
-                        if let Some(agent) = self.agent_statuses.iter_mut().find(|a| a.0 == "Supervisor") {
-                            agent.1 = "Idle (Error)".to_string();
+                        Ok(LlmStreamEvent::Thinking(text)) => {
+                            let _ = tx.send(UiStreamEvent::Thinking(text));
                         }
+                        Err(e) => return Err(e),
                     }
+                }
+                Ok(())
+            })();
+
+            match result {
+                Ok(()) => {
+                    let _ = tx.send(UiStreamEvent::Done);
+                }
+                Err(e) => {
+                    let _ = tx.send(UiStreamEvent::Error(e.to_string()));
+                }
+            }
+        });
+    }
+
+    fn drain_stream_events(&mut self) {
+        let Some(rx) = self.stream_rx.take() else {
+            return;
+        };
+        let mut keep_rx = true;
+        loop {
+            match rx.try_recv() {
+                Ok(UiStreamEvent::Content(text)) => {
+                    self.chat.append_assistant_delta(&text);
+                }
+                Ok(UiStreamEvent::Thinking(text)) => {
+                    self.chat.append_thinking(&text);
+                }
+                Ok(UiStreamEvent::Done) => {
+                    self.finish_stream(false);
+                    keep_rx = false;
+                    break;
+                }
+                Ok(UiStreamEvent::Error(error)) => {
+                    self.chat.add_message(chat::ChatMessage::assistant(format!(
+                        "⚠ LLM error: {}",
+                        error
+                    )));
+                    self.finish_stream(true);
+                    keep_rx = false;
+                    break;
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    self.finish_stream(true);
+                    keep_rx = false;
+                    break;
                 }
             }
         }
-        Ok(())
+        if keep_rx {
+            self.stream_rx = Some(rx);
+        }
+    }
+
+    fn finish_stream(&mut self, had_error: bool) {
+        self.llm_in_flight = false;
+        self.chat.stop_loading();
+        self.chat.pending_count = self.pending_prompts.len();
+        if let Some(agent) = self.agent_statuses.iter_mut().find(|a| a.0 == "Supervisor") {
+            agent.1 = if had_error {
+                "Idle (Error)".to_string()
+            } else {
+                "Idle".to_string()
+            };
+        }
+    }
+
+    fn build_messages_for_prompt(&self, user_text: &str) -> Vec<Message> {
+        let mut messages = vec![Message::system(&self.system_prompt)];
+        for msg in &self.chat.messages {
+            if msg.role == "system" {
+                continue;
+            }
+            if msg.role == "user" {
+                messages.push(Message::user(&msg.content));
+            } else if msg.role == "assistant" && !msg.content.is_empty() {
+                messages.push(Message::assistant(&msg.content));
+            }
+        }
+        if messages.last().map(|m| &m.role) != Some(&MessageRole::User) {
+            messages.push(Message::user(user_text));
+        }
+        messages
     }
 }
 
@@ -280,8 +379,8 @@ impl Default for TuiApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zcode_llm_provider::LlmResponse;
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use zcode_llm_provider::LlmResponse;
 
     // ============================================================
     // TuiApp creation tests
@@ -420,12 +519,12 @@ mod tests {
     #[test]
     fn test_tui_app_handle_event_scroll() {
         let mut app = TuiApp::new();
-        
+
         // Scroll down
         let event = Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
         app.handle_event(event).unwrap();
         assert_eq!(app.chat.scroll, 3);
-        
+
         // Scroll up
         let event = Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
         app.handle_event(event).unwrap();
@@ -518,8 +617,10 @@ mod tests {
         let event = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         app.handle_event(event).unwrap();
 
-        // Should have user message and assistant response
+        // Without a provider, the user message is preserved and a warning is shown.
         assert_eq!(app.chat.messages.len(), 2);
+        assert_eq!(app.chat.messages[0].role, "user");
+        assert_eq!(app.chat.messages[1].role, "assistant");
     }
 
     // ============================================================
@@ -577,7 +678,11 @@ mod tests {
             Ok("mock response".to_string())
         }
 
-        fn chat(&self, _messages: &[Message], _tools: &[serde_json::Value]) -> std::result::Result<LlmResponse, ZcodeError> {
+        fn chat(
+            &self,
+            _messages: &[Message],
+            _tools: &[serde_json::Value],
+        ) -> std::result::Result<LlmResponse, ZcodeError> {
             if self.should_fail {
                 Err(ZcodeError::InternalError("mock failure".to_string()))
             } else {
@@ -590,8 +695,22 @@ mod tests {
             }
         }
 
-        fn stream_complete(&self, _prompt: &str) -> std::result::Result<zcode_llm_provider::provider::StreamingResponse, ZcodeError> {
+        fn stream_complete(
+            &self,
+            _prompt: &str,
+        ) -> std::result::Result<zcode_llm_provider::provider::StreamingResponse, ZcodeError>
+        {
             unimplemented!()
+        }
+
+        fn stream_chat(
+            &self,
+            _messages: &[Message],
+            _tools: &[serde_json::Value],
+        ) -> std::result::Result<zcode_llm_provider::ChatStreamingResponse, ZcodeError> {
+            Ok(Box::pin(futures::stream::iter(vec![Ok(
+                zcode_llm_provider::LlmStreamEvent::Content("mock response".to_string()),
+            )])))
         }
     }
 
@@ -605,6 +724,27 @@ mod tests {
         let app = TuiApp::with_provider(provider);
         assert!(!app.should_quit);
         assert!(app.chat.messages.iter().any(|m| m.role == "system"));
+    }
+
+    #[test]
+    fn test_tui_app_enter_queues_prompt_while_in_flight() {
+        let provider = Arc::new(MockProvider { should_fail: false });
+        let mut app = TuiApp::with_provider(provider);
+        app.llm_in_flight = true;
+        app.chat.input = "queued prompt".to_string();
+        app.chat.cursor_pos = app.chat.input.len();
+
+        let event = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_event(event).unwrap();
+
+        assert_eq!(app.pending_prompts.len(), 1);
+        assert_eq!(app.chat.pending_count, 1);
+        assert!(app.chat.input.is_empty());
+        assert!(!app
+            .chat
+            .messages
+            .iter()
+            .any(|m| m.content == "queued prompt"));
     }
 
     // ============================================================

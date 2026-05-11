@@ -134,7 +134,7 @@ cargo check --workspace
 cargo test --workspace --lib
 cargo test --test cli_test
 cargo test --test registry_test
-cargo test --test workspace_integration
+cargo test --test reviewer_integration
 ```
 
-Some retained compatibility integration tests cover scripting, grammar loading, reviewer heuristics, and workspace snapshots.
+Integration tests cover CLI parsing, capability registry behavior, and reviewer heuristics.

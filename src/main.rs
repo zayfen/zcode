@@ -4,8 +4,8 @@
 
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
-use zcode::cli::args::Args;
-use zcode::cli::commands::{execute_command, execute_default};
+use zcode_cli::args::Args;
+use zcode_cli::commands::{execute_command, execute_default};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

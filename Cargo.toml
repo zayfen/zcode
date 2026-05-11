@@ -16,6 +16,7 @@ members = [
     "crates/zcode_orchestration",
     "crates/zcode_llm_provider",
     "crates/zcode_capabilities",
+    "crates/zcode_cli",
     "crates/zcode_session",
 ]
 resolver = "2"
@@ -27,26 +28,17 @@ zcode_requirements = { path = "crates/zcode_requirements" }
 zcode_orchestration = { path = "crates/zcode_orchestration" }
 zcode_llm_provider = { path = "crates/zcode_llm_provider" }
 zcode_capabilities = { path = "crates/zcode_capabilities" }
+zcode_cli = { path = "crates/zcode_cli" }
 zcode_session = { path = "crates/zcode_session" }
 
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }
-tokio-stream = "0.1"
-futures = "0.3"
 
 # Serialization
-serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-
-# Schema generation
-schemars = "0.8"
-
-# Date/time
-chrono = "0.4"
 
 # Error handling
 anyhow = "1.0"
-thiserror = "1.0"
 
 # Logging and tracing
 tracing = "0.1"
@@ -55,58 +47,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # CLI
 clap = { version = "=4.4.6", features = ["derive", "env"] }
 
-# Configuration
-directories = "5.0"
-config = "0.14"
-toml = "0.8"
-
-# File system
-walkdir = "2.4"
-glob = "0.3"
-regex = "1.10"
-
-# LLM integration
-rig-core = "0.33"
-
-# Code intelligence
-tree-sitter = "0.24"
-similar = { version = "2.4", features = ["text"] }
-libloading = "0.8"
-
-# Agent & LLM integration
-reqwest = { version = "0.12", features = ["json", "stream", "blocking"] }
-async-trait = "0.1"
-uuid = { version = "=1.6.1", features = ["v4"] }
-
-# Memory system
-rusqlite = { version = "0.32", features = ["bundled"] }
-
-# Scripting engines
-mlua = { version = "0.10", features = ["lua54", "vendored"] }
-pyo3 = { version = "0.22", features = ["auto-initialize"] }
-rquickjs = { version = "0.7", features = ["full"] }
-
-# LSP
-lsp-types = "0.97"
-
-# TUI
-ratatui = "0.27"
-crossterm = "0.27"
-textwrap = "0.16"
-tree-sitter-rust = "0.21"
-tree-sitter-javascript = "0.25.0"
-tree-sitter-typescript = "0.23.2"
-tree-sitter-python = "0.25.0"
-tree-sitter-go = "0.25.0"
-tree-sitter-c = "0.24.1"
-tree-sitter-cpp = "0.23.4"
-# ignore = "0.4.22"  # Temporarily disabled due to edition2024 issue
-
-[dev-dependencies]
-# Testing
-tokio-test = "0.4"
-tempfile = "3.9"
-
 [lib]
 name = "zcode"
 path = "src/lib.rs"
@@ -114,4 +54,3 @@ path = "src/lib.rs"
 [[bin]]
 name = "zcode"
 path = "src/main.rs"
-

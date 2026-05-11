@@ -9,9 +9,9 @@ A modular AI coding agent CLI tool built in Rust. Zcode is now a Cargo workspace
 | File | Description |
 |------|-------------|
 | `Cargo.toml` | Root package plus workspace member declarations |
-| `src/lib.rs` | Compatibility/export shell over the layered crates |
-| `src/main.rs` | CLI entry point: clap arg parsing, tracing init, command dispatch |
-| `src/cli/commands.rs` | CLI command handlers and workspace wiring |
+| `src/lib.rs` | Export shell over the layered crates |
+| `src/main.rs` | Binary entry point: tracing init and dispatch into `zcode_cli` |
+| `crates/zcode_cli/src/commands.rs` | CLI command handlers and workspace wiring |
 | `crates/zcode_core/src/error.rs` | Unified `ZcodeError` enum covering shared failure modes |
 | `ARCHITECTURE.md` | Detailed architecture doc with data flow |
 | `README.md` | User-facing project overview |
@@ -21,6 +21,7 @@ A modular AI coding agent CLI tool built in Rust. Zcode is now a Cargo workspace
 | Crate | Purpose |
 |-------|---------|
 | `crates/zcode_ui` | CLI screen/TUI rendering for current session conversation plus agent, skills, and MCP status |
+| `crates/zcode_cli` | Clap argument parsing and command dispatch for the binary |
 | `crates/zcode_requirements` | Requirement docs scaffold, validation, parsing, and task store; standardizes LLM prompt inputs |
 | `crates/zcode_orchestration` | Agent graph workflows. Root orchestration coordinates planner, ReAct coder, reviewer, and self-learning behavior |
 | `crates/zcode_llm_provider` | OpenAI-compatible chat completions provider using `ZCODE_BASE_URL`, `ZCODE_API_KEY`, `ZCODE_MODEL`, and `ZCODE_FAST_MODEL` |
@@ -31,7 +32,7 @@ A modular AI coding agent CLI tool built in Rust. Zcode is now a Cargo workspace
 ## Other Directories
 | Directory | Purpose |
 |-----------|---------|
-| `src/` | Application shell plus retained compatibility modules such as CLI, AST, git, LSP, memory, script, workspace |
+| `src/` | Root binary/library shell: `main.rs` plus workspace-crate re-exports |
 | `tests/` | Integration tests |
 | `docs/` | Design docs, PRDs, specs, plans |
 | `templates/` | Document templates for PRD, spec, tasks, etc. |
@@ -45,7 +46,7 @@ A modular AI coding agent CLI tool built in Rust. Zcode is now a Cargo workspace
 - Test: `cargo test --workspace`
 - Run: `cargo run -- <args>`
 - This is a Cargo workspace; add new layer code to the crate that owns that responsibility.
-- Keep `src/lib.rs` as a compatibility/export shell; do not rebuild old `src/agent`, `src/llm`, `src/tools`, `src/tui`, `src/docs`, or `src/session` modules.
+- Keep `src/lib.rs` as an export shell; do not rebuild old root modules such as `src/agent`, `src/llm`, `src/tools`, `src/tui`, `src/docs`, `src/session`, `src/ast`, `src/git`, `src/lsp`, `src/memory`, `src/script`, or `src/workspace`.
 
 ### Testing Requirements
 - Run `cargo test --workspace` before committing broad changes when feasible.
@@ -68,9 +69,6 @@ A modular AI coding agent CLI tool built in Rust. Zcode is now a Cargo workspace
 - **serde / serde_json** — serialization
 - **reqwest** — HTTP client for OpenAI-compatible LLM APIs
 - **ratatui + crossterm** — TUI framework
-- **tree-sitter** — code parsing and AST queries
 - **rusqlite** — SQLite for session snapshots
-- **mlua / pyo3 / rquickjs** — retained scripting engines
-- **lsp-types** — LSP protocol types
 
 <!-- MANUAL: Custom project notes can be added below -->

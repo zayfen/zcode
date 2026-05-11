@@ -2,8 +2,21 @@
 //!
 //! This module provides the LLM provider trait and implementations using the rig-core library.
 
-use zcode_core::{Result, ZcodeError};
 use zcode_core::llm::{LlmConfig, LlmResponse, Message, MessageRole, UsageStats};
+use zcode_core::{Result, ZcodeError};
+
+/// Stream event emitted by chat-completion providers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LlmStreamEvent {
+    /// Visible assistant response text.
+    Content(String),
+    /// Hidden/collapsible model thinking or reasoning text.
+    Thinking(String),
+}
+
+/// Streaming chat response type.
+pub type ChatStreamingResponse =
+    std::pin::Pin<Box<dyn futures::Stream<Item = Result<LlmStreamEvent>> + Send>>;
 
 /// Trait for LLM providers
 pub trait LlmProvider: Send + Sync {
@@ -15,6 +28,18 @@ pub trait LlmProvider: Send + Sync {
 
     /// Stream a completion (returns a stream of text chunks)
     fn stream_complete(&self, prompt: &str) -> Result<StreamingResponse>;
+
+    /// Stream a chat completion as structured UI events.
+    fn stream_chat(
+        &self,
+        messages: &[Message],
+        tools: &[serde_json::Value],
+    ) -> Result<ChatStreamingResponse> {
+        let response = self.chat(messages, tools)?;
+        Ok(Box::pin(futures::stream::iter(vec![Ok(
+            LlmStreamEvent::Content(response.content),
+        )])))
+    }
 }
 
 /// Streaming response type
@@ -103,6 +128,15 @@ impl LlmProvider for RigProvider {
         let chunks = vec![Ok(response)];
         Ok(Box::pin(futures::stream::iter(chunks)))
     }
+
+    fn stream_chat(
+        &self,
+        messages: &[Message],
+        tools: &[serde_json::Value],
+    ) -> Result<ChatStreamingResponse> {
+        let api_key = self.get_api_key()?;
+        self.stream_chat_openai_compatible(messages, &api_key, tools)
+    }
 }
 
 impl RigProvider {
@@ -175,13 +209,11 @@ impl RigProvider {
             .collect()
     }
 
-    /// OpenAI-compatible Chat Completions API call.
-    fn chat_openai_compatible(
+    fn build_chat_body(
         &self,
         messages: &[Message],
-        api_key: &str,
         tools: &[serde_json::Value],
-    ) -> Result<LlmResponse> {
+    ) -> serde_json::Value {
         // Build properly formatted messages (handles tool_calls + tool results)
         let openai_messages = Self::build_openai_messages(messages);
 
@@ -220,6 +252,17 @@ impl RigProvider {
             body["tools"] = serde_json::Value::Array(openai_tools);
         }
 
+        body
+    }
+
+    /// OpenAI-compatible Chat Completions API call.
+    fn chat_openai_compatible(
+        &self,
+        messages: &[Message],
+        api_key: &str,
+        tools: &[serde_json::Value],
+    ) -> Result<LlmResponse> {
+        let body = self.build_chat_body(messages, tools);
         let api_key = api_key.to_string();
         let model = self.config.model.clone();
         let endpoint = Self::chat_endpoint();
@@ -228,7 +271,9 @@ impl RigProvider {
             let client = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(120))
                 .build()
-                .map_err(|e| ZcodeError::LlmApiError(format!("Failed to build HTTP client: {}", e)))?;
+                .map_err(|e| {
+                    ZcodeError::LlmApiError(format!("Failed to build HTTP client: {}", e))
+                })?;
             let resp = client
                 .post(&endpoint)
                 .header("Authorization", format!("Bearer {}", api_key))
@@ -288,9 +333,105 @@ impl RigProvider {
         Ok(LlmResponse {
             content,
             model,
-            usage: Some(UsageStats { input_tokens, output_tokens }),
+            usage: Some(UsageStats {
+                input_tokens,
+                output_tokens,
+            }),
             raw_response: response_body,
         })
+    }
+
+    fn stream_chat_openai_compatible(
+        &self,
+        messages: &[Message],
+        api_key: &str,
+        tools: &[serde_json::Value],
+    ) -> Result<ChatStreamingResponse> {
+        let mut body = self.build_chat_body(messages, tools);
+        body["stream"] = serde_json::Value::Bool(true);
+
+        let api_key = api_key.to_string();
+        let endpoint = Self::chat_endpoint();
+
+        let (tx, rx) = futures::channel::mpsc::unbounded::<Result<LlmStreamEvent>>();
+
+        std::thread::spawn(move || {
+            let tx_error = tx.clone();
+            let result = tokio::runtime::Runtime::new()
+                .map_err(|e| {
+                    ZcodeError::LlmApiError(format!("Failed to create stream runtime: {}", e))
+                })
+                .and_then(|runtime| {
+                    runtime.block_on(async move {
+                        use futures::StreamExt;
+
+                        let client = reqwest::Client::builder()
+                            .timeout(std::time::Duration::from_secs(120))
+                            .build()
+                            .map_err(|e| {
+                                ZcodeError::LlmApiError(format!(
+                                    "Failed to build HTTP client: {}",
+                                    e
+                                ))
+                            })?;
+                        let resp = client
+                            .post(&endpoint)
+                            .header("Authorization", format!("Bearer {}", api_key))
+                            .header("Content-Type", "application/json")
+                            .json(&body)
+                            .send()
+                            .await
+                            .map_err(|e| {
+                                ZcodeError::LlmApiError(format!(
+                                    "OpenAI-compatible streaming request failed: {}",
+                                    e
+                                ))
+                            })?;
+
+                        let status = resp.status();
+                        if !status.is_success() {
+                            let error_body = resp.text().await.unwrap_or_default();
+                            return Err(ZcodeError::LlmApiError(format!(
+                                "OpenAI-compatible streaming API error ({}): {}",
+                                status, error_body
+                            )));
+                        }
+
+                        let mut parser = OpenAiStreamParser::default();
+                        let mut bytes_stream = resp.bytes_stream();
+                        while let Some(chunk) = bytes_stream.next().await {
+                            let chunk = chunk.map_err(|e| {
+                                ZcodeError::LlmResponseError(format!(
+                                    "Failed to read OpenAI-compatible streaming response: {}",
+                                    e
+                                ))
+                            })?;
+                            for event in parser.push_bytes(&chunk) {
+                                if tx.unbounded_send(event).is_err() {
+                                    return Ok(());
+                                }
+                            }
+                            if parser.is_done() {
+                                return Ok(());
+                            }
+                        }
+
+                        for event in parser.finish() {
+                            if tx.unbounded_send(event).is_err() {
+                                return Ok(());
+                            }
+                        }
+
+                        Ok(())
+                    })
+                });
+
+            if let Err(e) = result {
+                let _ = tx_error.unbounded_send(Err(e));
+            }
+        });
+
+        Ok(Box::pin(rx))
     }
 }
 
@@ -322,6 +463,157 @@ fn parse_openai_content(body: &serde_json::Value) -> Result<ProviderResponse> {
         .unwrap_or("")
         .to_string();
     Ok(ProviderResponse::Text(content))
+}
+
+#[derive(Debug, Default)]
+struct OpenAiStreamParser {
+    buffer: Vec<u8>,
+    done: bool,
+}
+
+impl OpenAiStreamParser {
+    #[cfg(test)]
+    fn push_chunk(&mut self, chunk: &str) -> Vec<Result<LlmStreamEvent>> {
+        self.push_bytes(chunk.as_bytes())
+    }
+
+    fn push_bytes(&mut self, chunk: &[u8]) -> Vec<Result<LlmStreamEvent>> {
+        if self.done {
+            return Vec::new();
+        }
+
+        self.buffer.extend_from_slice(chunk);
+        let mut events = Vec::new();
+
+        while let Some(newline_pos) = self.buffer.iter().position(|byte| *byte == b'\n') {
+            let raw_line: Vec<u8> = self.buffer.drain(..=newline_pos).collect();
+            let line = trim_line_ending(&raw_line);
+            match std::str::from_utf8(line) {
+                Ok(line) => events.extend(self.parse_line(line)),
+                Err(e) => events.push(Err(ZcodeError::LlmResponseError(format!(
+                    "Failed to decode streaming chunk: {}",
+                    e
+                )))),
+            }
+            if self.done {
+                self.buffer.clear();
+                break;
+            }
+        }
+
+        events
+    }
+
+    fn finish(&mut self) -> Vec<Result<LlmStreamEvent>> {
+        if self.done || self.buffer.iter().all(u8::is_ascii_whitespace) {
+            self.buffer.clear();
+            return Vec::new();
+        }
+
+        let raw_line = std::mem::take(&mut self.buffer);
+        let line = trim_line_ending(&raw_line);
+        match std::str::from_utf8(line) {
+            Ok(line) => self.parse_line(line),
+            Err(e) => vec![Err(ZcodeError::LlmResponseError(format!(
+                "Failed to decode streaming chunk: {}",
+                e
+            )))],
+        }
+    }
+
+    fn is_done(&self) -> bool {
+        self.done
+    }
+
+    fn parse_line(&mut self, raw_line: &str) -> Vec<Result<LlmStreamEvent>> {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with(':') {
+            return Vec::new();
+        }
+
+        let Some(data) = line.strip_prefix("data:").map(str::trim) else {
+            return Vec::new();
+        };
+        if data == "[DONE]" {
+            self.done = true;
+            return Vec::new();
+        }
+
+        let parsed: serde_json::Value = match serde_json::from_str(data) {
+            Ok(value) => value,
+            Err(e) => {
+                return vec![Err(ZcodeError::LlmResponseError(format!(
+                    "Failed to parse streaming chunk: {}",
+                    e
+                )))];
+            }
+        };
+
+        stream_events_from_payload(&parsed)
+    }
+}
+
+fn trim_line_ending(line: &[u8]) -> &[u8] {
+    line.strip_suffix(b"\r\n")
+        .or_else(|| line.strip_suffix(b"\n"))
+        .or_else(|| line.strip_suffix(b"\r"))
+        .unwrap_or(line)
+}
+
+#[cfg(test)]
+fn parse_openai_stream_events(text: &str) -> Vec<Result<LlmStreamEvent>> {
+    let mut parser = OpenAiStreamParser::default();
+    let mut events = parser.push_chunk(text);
+    events.extend(parser.finish());
+    events
+}
+
+fn stream_events_from_payload(parsed: &serde_json::Value) -> Vec<Result<LlmStreamEvent>> {
+    let Some(delta) = parsed
+        .get("choices")
+        .and_then(|choices| choices.get(0))
+        .and_then(|choice| choice.get("delta"))
+    else {
+        return Vec::new();
+    };
+
+    let mut events = Vec::new();
+    if let Some(thinking) = stream_delta_thinking(delta) {
+        if !thinking.is_empty() {
+            events.push(Ok(LlmStreamEvent::Thinking(thinking)));
+        }
+    }
+    if let Some(content) = delta.get("content").and_then(|v| v.as_str()) {
+        if !content.is_empty() {
+            events.push(Ok(LlmStreamEvent::Content(content.to_string())));
+        }
+    }
+    events
+}
+
+fn stream_delta_thinking(delta: &serde_json::Value) -> Option<String> {
+    const KEYS: &[&str] = &[
+        "reasoning_content",
+        "reasoning",
+        "thinking",
+        "thought",
+        "thoughts",
+    ];
+
+    for key in KEYS {
+        if let Some(text) = delta.get(*key).and_then(|v| v.as_str()) {
+            return Some(text.to_string());
+        }
+        if let Some(text) = delta
+            .get(*key)
+            .and_then(|v| v.get("content"))
+            .and_then(|v| v.as_str())
+        {
+            return Some(text.to_string());
+        }
+    }
+
+    None
 }
 
 /// Mock LLM provider for testing
@@ -362,13 +654,24 @@ impl LlmProvider for MockLlmProvider {
         let chunks = vec![Ok(response)];
         Ok(Box::pin(futures::stream::iter(chunks)))
     }
+
+    fn stream_chat(
+        &self,
+        _messages: &[Message],
+        _tools: &[serde_json::Value],
+    ) -> Result<ChatStreamingResponse> {
+        let response = self.response.clone();
+        Ok(Box::pin(futures::stream::iter(vec![Ok(
+            LlmStreamEvent::Content(response),
+        )])))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zcode_core::llm::{LlmConfig, Message};
     use std::sync::{Mutex, OnceLock};
+    use zcode_core::llm::{LlmConfig, Message};
 
     fn with_zcode_api_key_removed<T>(f: impl FnOnce() -> T) -> T {
         static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -461,7 +764,10 @@ mod tests {
         let result = RigProvider::build_openai_messages(&messages);
         let assistant_msg = &result[1];
         // OpenAI allows missing content field when empty, or it can be empty string
-        assert!(assistant_msg.get("content").map(|c| c.as_str().unwrap_or("") == "").unwrap_or(true));
+        assert!(assistant_msg
+            .get("content")
+            .map(|c| c.as_str().unwrap_or("") == "")
+            .unwrap_or(true));
         let tool_calls = assistant_msg["tool_calls"].as_array().unwrap();
         assert_eq!(tool_calls.len(), 1);
     }
@@ -500,10 +806,7 @@ mod tests {
 
     #[test]
     fn test_build_openai_messages_assistant_no_tool_calls() {
-        let messages = vec![
-            Message::user("Hello"),
-            Message::assistant("World"),
-        ];
+        let messages = vec![Message::user("Hello"), Message::assistant("World")];
         let result = RigProvider::build_openai_messages(&messages);
         assert_eq!(result.len(), 2);
         assert!(result[1].get("tool_calls").is_none());
@@ -529,7 +832,8 @@ mod tests {
         assert_eq!(tc["id"], "tu_789");
         assert_eq!(tc["type"], "function");
         assert_eq!(tc["function"]["name"], "calculator");
-        let args: serde_json::Value = serde_json::from_str(tc["function"]["arguments"].as_str().unwrap()).unwrap();
+        let args: serde_json::Value =
+            serde_json::from_str(tc["function"]["arguments"].as_str().unwrap()).unwrap();
         assert_eq!(args["expr"], "2+2");
     }
 
@@ -640,6 +944,58 @@ mod tests {
         assert_eq!(chunks[0].as_ref().unwrap(), "Stream response");
     }
 
+    #[test]
+    fn test_parse_openai_stream_events_content_and_thinking() {
+        let sse = concat!(
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"plan\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = parse_openai_stream_events(sse);
+        assert_eq!(events.len(), 2);
+        assert_eq!(
+            events[0].as_ref().unwrap(),
+            &LlmStreamEvent::Thinking("plan".to_string())
+        );
+        assert_eq!(
+            events[1].as_ref().unwrap(),
+            &LlmStreamEvent::Content("hello".to_string())
+        );
+    }
+
+    #[test]
+    fn test_openai_stream_parser_buffers_partial_chunks() {
+        let mut parser = OpenAiStreamParser::default();
+        let first = parser.push_chunk("data: {\"choices\":[{\"delta\":{\"content\":\"hel");
+        assert!(first.is_empty());
+
+        let second = parser.push_chunk("lo\"}}]}\n\ndata: [DONE]\n\n");
+        assert_eq!(second.len(), 1);
+        assert_eq!(
+            second[0].as_ref().unwrap(),
+            &LlmStreamEvent::Content("hello".to_string())
+        );
+        assert!(parser.is_done());
+    }
+
+    #[test]
+    fn test_openai_stream_parser_preserves_split_utf8() {
+        let mut parser = OpenAiStreamParser::default();
+        let payload = "data: {\"choices\":[{\"delta\":{\"content\":\"你好\"}}]}\n\n";
+        let split_at = payload.find('好').unwrap() + 1;
+
+        let first = parser.push_bytes(&payload.as_bytes()[..split_at]);
+        assert!(first.is_empty());
+
+        let second = parser.push_bytes(&payload.as_bytes()[split_at..]);
+        assert_eq!(second.len(), 1);
+        assert_eq!(
+            second[0].as_ref().unwrap(),
+            &LlmStreamEvent::Content("你好".to_string())
+        );
+    }
+
     // ============================================================
     // RigProvider tests
     // ============================================================
@@ -682,10 +1038,7 @@ mod tests {
             "https://example.com/v1/chat/completions"
         );
 
-        std::env::set_var(
-            "ZCODE_BASE_URL",
-            "https://example.com/v1/chat/completions",
-        );
+        std::env::set_var("ZCODE_BASE_URL", "https://example.com/v1/chat/completions");
         assert_eq!(
             RigProvider::chat_endpoint(),
             "https://example.com/v1/chat/completions"
@@ -869,7 +1222,9 @@ mod tests {
         // Real HTTP with invalid key returns an API error (not MissingApiKey)
         assert!(result.is_err());
         match result.unwrap_err() {
-            ZcodeError::MissingApiKey(_) => panic!("Should not be MissingApiKey — key was provided"),
+            ZcodeError::MissingApiKey(_) => {
+                panic!("Should not be MissingApiKey — key was provided")
+            }
             _ => {} // Any LLM API error is expected
         }
     }
@@ -916,10 +1271,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_streaming_response_type() {
-        let chunks = vec![
-            Ok("Hello ".to_string()),
-            Ok("world!".to_string()),
-        ];
+        let chunks = vec![Ok("Hello ".to_string()), Ok("world!".to_string())];
         let stream: StreamingResponse = Box::pin(futures::stream::iter(chunks));
 
         use futures::StreamExt;

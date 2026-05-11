@@ -4,7 +4,7 @@
 # tui
 
 ## Purpose
-Terminal user interface built with ratatui + crossterm. Provides a chat interface for interactive conversation with the LLM agent, including multi-line input (Shift+Enter, Alt+Enter, Ctrl+J), cursor movement, and message history display.
+Terminal user interface built with ratatui + crossterm. Provides a chat interface for interactive conversation with the LLM agent, including multi-line input (Shift+Enter, Alt+Enter, Ctrl+J), cursor movement, message history display, streaming responses, loading/thinking state, and pending prompt queueing.
 
 ## Key Files
 | File | Description |
@@ -16,8 +16,8 @@ Terminal user interface built with ratatui + crossterm. Provides a chat interfac
 
 ### Working In This Directory
 - Terminal lifecycle: `init_terminal()` → `TuiApp::run()` → `restore_terminal()`
-- Event handling: Ctrl+C/Esc to quit, Enter to send, Shift/Alt/Ctrl+Enter for newline, characters for typing
-- LLM calls are synchronous (blocking) — the UI shows "Thinking..." while waiting
+- Event handling: Ctrl+C/Esc to quit, Enter to queue/send, Ctrl+O toggles full thinking, Shift/Alt/Ctrl+Enter for newline, characters for typing
+- LLM calls stream through a worker thread; the UI keeps rendering loading animation, collapsed thinking text, assistant deltas, and queued prompt count
 - Supports kitty keyboard enhancement protocol for better key disambiguation
 
 ### Testing Requirements
@@ -30,6 +30,6 @@ Terminal user interface built with ratatui + crossterm. Provides a chat interfac
 - `zcode_core` — wraps crossterm/ratatui errors
 
 ### External
-- `ratatui`, `crossterm`, `textwrap`
+- `ratatui`, `crossterm`, `futures`, `textwrap`
 
 <!-- MANUAL: -->

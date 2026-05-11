@@ -3,7 +3,7 @@
 //! Tests for argument parsing and command dispatch.
 
 use clap::Parser;
-use zcode::cli::args::{Args, Command};
+use zcode_cli::args::{Args, Command};
 
 /// Test that default mode (no subcommand) starts interactive chat
 #[test]

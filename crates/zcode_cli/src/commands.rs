@@ -605,9 +605,14 @@ async fn feed_call_llm(
                                 .and_then(|c| c.as_str())
                                 .unwrap_or("")
                                 .to_string();
-                            Some(Message::assistant_with_tool_calls(
+                            let reasoning_content = v
+                                .get("reasoning_content")
+                                .and_then(|c| c.as_str())
+                                .map(|s| s.to_string());
+                            Some(Message::assistant_with_tool_calls_and_reasoning(
                                 content,
                                 tool_calls.clone(),
+                                reasoning_content,
                             ))
                         } else {
                             let content = v

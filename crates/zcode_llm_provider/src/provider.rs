@@ -777,6 +777,29 @@ mod tests {
     }
 
     #[test]
+    fn test_build_openai_messages_preserves_reasoning_content_for_tool_calls() {
+        let tool_call = serde_json::json!({
+            "id": "call_456",
+            "type": "function",
+            "function": {
+                "name": "search",
+                "arguments": "{\"q\":\"rust\"}"
+            }
+        });
+        let messages = vec![Message::assistant_with_tool_calls_and_reasoning(
+            "",
+            vec![tool_call],
+            Some("Need to search the workspace first.".to_string()),
+        )];
+
+        let result = RigProvider::build_openai_messages(&messages);
+        assert_eq!(
+            result[0]["reasoning_content"],
+            "Need to search the workspace first."
+        );
+    }
+
+    #[test]
     fn test_build_openai_messages_tool_results() {
         let messages = vec![
             Message::assistant("Check this"),

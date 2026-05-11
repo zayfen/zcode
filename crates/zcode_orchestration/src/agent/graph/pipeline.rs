@@ -393,7 +393,8 @@ async fn call_llm(p: Arc<dyn LlmProvider>, msgs: Vec<serde_json::Value>, tools: 
                     if let Some(tool_calls) = v.get("tool_calls").and_then(|tc| tc.as_array()) {
                         if !tool_calls.is_empty() {
                             let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
-                            Some(Message::assistant_with_tool_calls(content, tool_calls.clone()))
+                            let reasoning_content = v.get("reasoning_content").and_then(|c| c.as_str()).map(|s| s.to_string());
+                            Some(Message::assistant_with_tool_calls_and_reasoning(content, tool_calls.clone(), reasoning_content))
                         } else {
                             let content = v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string();
                             Some(Message::assistant(content))

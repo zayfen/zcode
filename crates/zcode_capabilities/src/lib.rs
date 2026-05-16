@@ -16,7 +16,7 @@ pub use mcp::{
 };
 pub use skills::{Skill, SkillPriority, SkillsLoader};
 pub use tool::{
-    execute_tool_call, execute_tool_calls, generate_tool_schemas, register_default_tools, Tool,
-    ToolCallRequest, ToolCallResponse, ToolRegistry, ToolResult, ToolSchema,
+    execute_tool_call, execute_tool_calls, generate_tool_schemas, register_default_tools,
+    AskUserTool, Tool, ToolCallRequest, ToolCallResponse, ToolRegistry, ToolResult, ToolSchema,
 };
 pub use workspace::register_workspace_tools;

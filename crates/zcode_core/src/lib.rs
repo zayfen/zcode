@@ -7,7 +7,10 @@ pub mod config;
 pub mod error;
 
 pub mod agent;
+pub mod ask;
 pub mod llm;
+
+pub use ask::{AskRequest, AskUserSender};
 
 pub use config::{
     GrammarConfig, HookConfig, LlmConfigOverride, LspServerConfig, McpServerConfig,

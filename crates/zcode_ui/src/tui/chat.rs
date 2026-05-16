@@ -49,6 +49,24 @@ impl ChatMessage {
     }
 }
 
+/// An active ask-user request awaiting user selection.
+pub struct PendingAsk {
+    pub question: String,
+    pub options: Vec<String>,
+    pub selected: usize,
+    pub response_tx: std::sync::mpsc::Sender<String>,
+}
+
+impl std::fmt::Debug for PendingAsk {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PendingAsk")
+            .field("question", &self.question)
+            .field("options", &self.options)
+            .field("selected", &self.selected)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Chat interface state
 #[derive(Debug, Default)]
 pub struct ChatInterface {
@@ -80,6 +98,8 @@ pub struct ChatInterface {
     pub loading_frame: usize,
     /// Number of queued prompts waiting to be sent.
     pub pending_count: usize,
+    /// Active ask-user request waiting for selection.
+    pub pending_ask: Option<PendingAsk>,
 }
 
 impl ChatInterface {
@@ -100,6 +120,7 @@ impl ChatInterface {
             loading: false,
             loading_frame: 0,
             pending_count: 0,
+            pending_ask: None,
         }
     }
 
@@ -385,7 +406,11 @@ impl ChatInterface {
         let area = frame.size();
 
         // Dynamic input height: 2 border + lines (capped at 8)
-        let input_lines = self.input_line_count().min(8);
+        let input_lines = if let Some(ask) = &self.pending_ask {
+            ask.options.len().min(8) as u16
+        } else {
+            self.input_line_count().min(8)
+        };
         let input_height = input_lines + 2; // +2 for borders
 
         // Create layout: Main Content, Input, Status Bar
@@ -452,14 +477,19 @@ impl ChatInterface {
             root_chunks[2],
         );
 
-        // Position the cursor inside the input box
-        let (cur_row, cur_col) = self.cursor_row_col();
-        let visible_row = cur_row.saturating_sub(self.input_scroll);
-        let visible_col = cur_col.saturating_sub(self.input_col_scroll);
-        frame.set_cursor(
-            root_chunks[1].x + 1 + visible_col,
-            root_chunks[1].y + 1 + visible_row,
-        );
+        // Position the cursor: highlight selected option in ask mode, or text cursor
+        if let Some(ask) = &self.pending_ask {
+            let row = ask.selected.min(u16::MAX as usize) as u16;
+            frame.set_cursor(root_chunks[1].x + 1, root_chunks[1].y + 1 + row);
+        } else {
+            let (cur_row, cur_col) = self.cursor_row_col();
+            let visible_row = cur_row.saturating_sub(self.input_scroll);
+            let visible_col = cur_col.saturating_sub(self.input_col_scroll);
+            frame.set_cursor(
+                root_chunks[1].x + 1 + visible_col,
+                root_chunks[1].y + 1 + visible_row,
+            );
+        }
     }
 
     fn update_message_scroll_metrics(&mut self, area: Rect) {
@@ -692,8 +722,64 @@ impl ChatInterface {
     }
 
     /// Render the input area
+    /// Select the next option down (wraps).
+    pub fn ask_select_down(&mut self) {
+        if let Some(ask) = &mut self.pending_ask {
+            if ask.options.is_empty() {
+                return;
+            }
+            ask.selected = (ask.selected + 1) % ask.options.len();
+        }
+    }
+
+    /// Select the next option up (wraps).
+    pub fn ask_select_up(&mut self) {
+        if let Some(ask) = &mut self.pending_ask {
+            if ask.options.is_empty() {
+                return;
+            }
+            ask.selected = if ask.selected == 0 {
+                ask.options.len() - 1
+            } else {
+                ask.selected - 1
+            };
+        }
+    }
+
+    /// Confirm the current selection and return the response channel + answer.
+    pub fn ask_confirm(&mut self) -> Option<(std::sync::mpsc::Sender<String>, String)> {
+        self.pending_ask.take().map(|ask| {
+            let answer = ask.options.get(ask.selected).cloned().unwrap_or_default();
+            (ask.response_tx, answer)
+        })
+    }
+
+    /// Cancel the pending ask.
+    pub fn ask_cancel(&mut self) -> Option<std::sync::mpsc::Sender<String>> {
+        self.pending_ask.take().map(|ask| ask.response_tx)
+    }
+
+    /// Render the input area.
     fn render_input(&self, area: Rect) -> Paragraph<'_> {
-        let input_text = if self.input.is_empty() {
+        let input_text = if let Some(ask) = &self.pending_ask {
+            let lines: Vec<Line<'_>> = ask
+                .options
+                .iter()
+                .enumerate()
+                .map(|(i, opt)| {
+                    let marker = if i == ask.selected { " > " } else { "   " };
+                    let style = if i == ask.selected {
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::Gray)
+                    };
+                    Line::from(Span::styled(format!("{}{}", marker, opt), style))
+                })
+                .collect();
+            Text::from(lines)
+        } else if self.input.is_empty() {
             Text::from(Span::styled(
                 "Type a message...",
                 Style::default().fg(Color::DarkGray),
@@ -719,8 +805,18 @@ impl ChatInterface {
         Paragraph::new(input_text).block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_type(BorderType::Rounded) // Claude Code aesthetics
-                .border_style(Style::default().fg(if self.input.is_empty() {
+                .border_type(BorderType::Rounded)
+                .title(if self.pending_ask.is_some() {
+                    Line::from(Span::styled(
+                        " ↑/↓ Select · Enter Confirm · Esc Cancel ",
+                        Style::default().fg(Color::Yellow),
+                    ))
+                } else {
+                    Line::from("")
+                })
+                .border_style(Style::default().fg(if self.pending_ask.is_some() {
+                    Color::Yellow
+                } else if self.input.is_empty() {
                     Color::DarkGray
                 } else {
                     Color::Cyan
@@ -767,6 +863,7 @@ fn markdown_to_lines(content: &str, width: usize) -> Vec<Line<'static>> {
         let wrapped = textwrap::wrap(text, wrap_width);
         if wrapped.is_empty() {
             out.push(Line::from(Span::styled(marker.to_string(), style)));
+            index += 1;
             continue;
         }
 
@@ -908,7 +1005,11 @@ fn table_to_lines(table: &[Vec<String>], width: usize) -> Vec<Line<'static>> {
     ));
     lines.push(table_separator_line(&widths));
     for row in table.iter().skip(1) {
-        lines.push(table_row_line(row, &widths, Style::default().fg(Color::White)));
+        lines.push(table_row_line(
+            row,
+            &widths,
+            Style::default().fg(Color::White),
+        ));
     }
     lines
 }
@@ -1134,6 +1235,18 @@ fn summarize_chat_messages(messages: &[ChatMessage], max_chars: usize) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn lines_to_plain_text(lines: &[Line<'static>]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .collect()
+    }
 
     // ============================================================
     // ChatMessage creation tests

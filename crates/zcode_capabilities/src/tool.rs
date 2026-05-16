@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
-use zcode_core::{Result, ZcodeError};
+use zcode_core::{AskRequest, AskUserSender, Result, ZcodeError};
 
 pub type ToolResult<T> = Result<T>;
 
@@ -221,4 +221,96 @@ pub fn execute_tool_calls(
         .iter()
         .map(|request| execute_tool_call(registry, request))
         .collect()
+}
+
+// ─── AskUserTool ─────────────────────────────────────────────────────────────
+
+/// Tool that lets the agent ask the user a clarification question with options.
+///
+/// Sends an `AskRequest` through a shared channel and blocks until the TUI
+/// receives the user's selection.
+pub struct AskUserTool {
+    ask_tx: AskUserSender,
+}
+
+impl AskUserTool {
+    pub fn new(ask_tx: AskUserSender) -> Self {
+        Self { ask_tx }
+    }
+}
+
+impl Tool for AskUserTool {
+    fn name(&self) -> &str {
+        "ask_user"
+    }
+
+    fn description(&self) -> &str {
+        "Ask the user a clarification question with multiple-choice options. \
+         Use this when the task is ambiguous or you need the user to choose \
+         between different approaches."
+    }
+
+    fn input_schema(&self) -> Value {
+        json!({
+            "name": self.name(),
+            "description": self.description(),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "The question to ask the user"
+                    },
+                    "options": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "List of options for the user to choose from"
+                    }
+                },
+                "required": ["question", "options"]
+            }
+        })
+    }
+
+    fn execute(&self, input: Value) -> ToolResult<Value> {
+        let question = input
+            .get("question")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let options: Vec<String> = input
+            .get("options")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if options.is_empty() {
+            return Err(ZcodeError::InvalidToolInput(
+                "ask_user requires at least one option".into(),
+            ));
+        }
+
+        let (response_tx, response_rx) = std::sync::mpsc::channel();
+        let request = AskRequest {
+            question,
+            options,
+            response_tx,
+        };
+
+        self.ask_tx
+            .lock()
+            .map_err(|e| ZcodeError::InternalError(format!("ask channel lock: {}", e)))?
+            .send(request)
+            .map_err(|e| ZcodeError::InternalError(format!("ask channel send: {}", e)))?;
+
+        let response = response_rx
+            .recv()
+            .map_err(|_| ZcodeError::Cancelled)?;
+
+        Ok(json!({ "answer": response }))
+    }
 }

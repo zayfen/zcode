@@ -4,7 +4,7 @@
 
 pub mod chat;
 
-pub use chat::ChatInterface;
+pub use chat::{ChatInterface, PendingAsk};
 
 use crossterm::{
     event::{
@@ -174,6 +174,8 @@ pub struct TuiApp {
     project_root: PathBuf,
     /// Current session id, if the visible chat came from a saved session.
     current_session_id: Option<String>,
+    /// Receiver for ask-user requests from the agent worker thread.
+    ask_rx: Option<std::sync::mpsc::Receiver<zcode_core::AskRequest>>,
 }
 
 impl TuiApp {
@@ -203,6 +205,7 @@ impl TuiApp {
             session_manager: None,
             project_root: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             current_session_id: None,
+            ask_rx: None,
         }
     }
 
@@ -214,6 +217,11 @@ impl TuiApp {
             "zcode agent ready. Connected to orchestrator graph.",
         ));
         app
+    }
+
+    /// Set the ask-user channel receiver for agent clarification requests.
+    pub fn set_ask_receiver(&mut self, rx: std::sync::mpsc::Receiver<zcode_core::AskRequest>) {
+        self.ask_rx = Some(rx);
     }
 
     /// Compatibility constructor used by tests and callers that want a simple
@@ -251,7 +259,13 @@ impl TuiApp {
     /// Handle a terminal event
     pub fn handle_event(&mut self, event: Event) -> zcode_core::Result<()> {
         match event {
-            Event::Key(key) => match (key.modifiers, key.code) {
+            Event::Key(key) => {
+                // Ask-mode key handling takes priority when a question is pending
+                if self.chat.pending_ask.is_some() {
+                    self.handle_ask_key(key.modifiers, key.code);
+                    return Ok(());
+                }
+                match (key.modifiers, key.code) {
                 // Quit
                 (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                     self.should_quit = true;
@@ -324,7 +338,8 @@ impl TuiApp {
                     self.chat.scroll_down();
                 }
                 _ => {}
-            },
+                }
+            }
             Event::Mouse(mouse) => match mouse.kind {
                 MouseEventKind::ScrollUp => self.chat.scroll_up(),
                 MouseEventKind::ScrollDown => self.chat.scroll_down(),
@@ -339,6 +354,7 @@ impl TuiApp {
     pub fn run(&mut self, terminal: &mut TuiTerminal) -> zcode_core::Result<()> {
         while !self.should_quit {
             self.drain_task_events();
+            self.drain_ask_requests();
             self.start_next_prompt_if_idle();
             self.chat.tick_loading();
 
@@ -572,6 +588,60 @@ impl TuiApp {
         if let Some(agent) = self.agent_statuses.iter_mut().find(|a| a.0 == "Supervisor") {
             agent.1 = "Idle (Cancelled)".to_string();
         }
+    }
+
+    fn handle_ask_key(&mut self, modifiers: KeyModifiers, code: KeyCode) {
+        match (modifiers, code) {
+            (KeyModifiers::NONE, KeyCode::Up) => {
+                self.chat.ask_select_up();
+            }
+            (KeyModifiers::NONE, KeyCode::Down) => {
+                self.chat.ask_select_down();
+            }
+            (KeyModifiers::NONE, KeyCode::Enter) => {
+                if let Some((tx, answer)) = self.chat.ask_confirm() {
+                    self.chat
+                        .add_message(chat::ChatMessage::system(format!(
+                            "You chose: {}",
+                            answer
+                        )));
+                    let _ = tx.send(answer);
+                }
+            }
+            (KeyModifiers::NONE, KeyCode::Esc) => {
+                if let Some(tx) = self.chat.ask_cancel() {
+                    self.chat
+                        .add_message(chat::ChatMessage::system("Ask cancelled."));
+                    let _ = tx.send("(cancelled)".to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn drain_ask_requests(&mut self) {
+        let Some(rx) = self.ask_rx.take() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(request) => {
+                let question = request.question.clone();
+                self.chat
+                    .add_message(chat::ChatMessage::system(format!(
+                        "Agent asks: {}",
+                        question
+                    )));
+                self.chat.pending_ask = Some(chat::PendingAsk {
+                    question: request.question,
+                    options: request.options,
+                    selected: 0,
+                    response_tx: request.response_tx,
+                });
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {}
+        }
+        self.ask_rx = Some(rx);
     }
 
     fn handle_slash_command(&mut self, input: &str) {

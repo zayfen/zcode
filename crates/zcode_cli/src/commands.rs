@@ -7,8 +7,8 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use tracing::info;
-use zcode_capabilities::{register_workspace_tools, McpClient, SkillsLoader, ToolRegistry};
-use zcode_core::{LlmConfig, ProjectConfig, Result, Settings, ZcodeError};
+use zcode_capabilities::{register_workspace_tools, AskUserTool, McpClient, SkillsLoader, ToolRegistry};
+use zcode_core::{AskUserSender, LlmConfig, ProjectConfig, Result, Settings, ZcodeError};
 #[cfg(test)]
 use zcode_llm_provider::MockLlmProvider;
 #[cfg(not(test))]
@@ -1296,7 +1296,23 @@ async fn execute_chat(args: &Args) -> Result<()> {
     let active_skills: Vec<String> = skills.iter().map(|s| s.name.clone()).collect();
     let skills_prompt = SkillsLoader::build_system_prompt("", &skills);
 
-    let registry = build_tool_registry(&cwd, &settings, args)?;
+    let registry_arc = build_tool_registry(&cwd, &settings, args)?;
+
+    // Set up ask-user channel for agent clarification
+    let (ask_tx, ask_rx) = std::sync::mpsc::channel();
+    let ask_sender: AskUserSender = Arc::new(std::sync::Mutex::new(ask_tx));
+    let registry = match Arc::try_unwrap(registry_arc) {
+        Ok(mut reg) => {
+            reg.register(AskUserTool::new(ask_sender));
+            Arc::new(reg)
+        }
+        Err(arc) => {
+            // Arc is shared — register through a new registry that wraps the existing one
+            // (this path shouldn't happen in practice)
+            arc
+        }
+    };
+
     let executor = build_tui_task_executor(
         cwd,
         agent_providers.task_runtimes(None),
@@ -1309,6 +1325,7 @@ async fn execute_chat(args: &Args) -> Result<()> {
     let mut app = TuiApp::with_task_executor(executor);
     app.active_mcps = active_mcps;
     app.active_skills = active_skills;
+    app.set_ask_receiver(ask_rx);
 
     app.chat
         .add_message(zcode_ui::tui::chat::ChatMessage::system(format!(

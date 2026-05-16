@@ -14,7 +14,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::{self, Stdout};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -39,6 +39,31 @@ pub enum TaskUiEvent {
     AgentComplete(String),
     /// Progress/thinking text to show in the collapsible thinking stream.
     Thinking(String),
+    /// A supervisor task step started.
+    StepStart {
+        id: String,
+        title: String,
+        agent: String,
+    },
+    /// A supervisor task step completed.
+    StepComplete {
+        id: String,
+        title: String,
+        agent: String,
+        success: bool,
+    },
+    /// A tool started inside a named agent.
+    ToolStart {
+        agent: String,
+        tool_name: String,
+        command: String,
+    },
+    /// A tool completed inside a named agent.
+    ToolComplete {
+        agent: String,
+        tool_name: String,
+        success: bool,
+    },
     /// Final assistant-visible response.
     Done(String),
     /// Task was interrupted.
@@ -48,8 +73,26 @@ pub enum TaskUiEvent {
 }
 
 /// Executes a user prompt as an agentic coding task.
+#[derive(Debug, Clone)]
+pub struct TaskRequest {
+    /// Current user prompt to execute.
+    pub prompt: String,
+    /// User-visible conversation context from previous turns.
+    pub history: Vec<ConversationMessage>,
+}
+
+impl TaskRequest {
+    pub fn new(prompt: impl Into<String>, history: Vec<ConversationMessage>) -> Self {
+        Self {
+            prompt: prompt.into(),
+            history,
+        }
+    }
+}
+
+/// Executes a user prompt as an agentic coding task.
 pub type TaskExecutor =
-    Arc<dyn Fn(String, Arc<AtomicBool>, mpsc::Sender<TaskUiEvent>) + Send + Sync>;
+    Arc<dyn Fn(TaskRequest, Arc<AtomicBool>, mpsc::Sender<TaskUiEvent>) + Send + Sync>;
 
 /// Initialize the terminal for TUI mode
 pub fn init_terminal() -> zcode_core::Result<TuiTerminal> {
@@ -111,6 +154,8 @@ pub struct TuiApp {
     pub system_prompt: String,
     /// Current agents statuses [(Name, Status)]
     pub agent_statuses: Vec<(String, String)>,
+    /// Currently running supervisor step title by display agent name.
+    active_steps: HashMap<String, String>,
     /// Loaded skill names
     pub active_skills: Vec<String>,
     /// Loaded MCP server names
@@ -148,6 +193,7 @@ impl TuiApp {
                 ("Reviewer".to_string(), "Idle".to_string()),
                 ("Investigator".to_string(), "Idle".to_string()),
             ],
+            active_steps: HashMap::new(),
             active_skills: Vec::new(),
             active_mcps: Vec::new(),
             pending_prompts: VecDeque::new(),
@@ -173,16 +219,22 @@ impl TuiApp {
     /// Compatibility constructor used by tests and callers that want a simple
     /// text-only executor.
     pub fn with_provider(provider: Arc<dyn zcode_llm_provider::LlmProvider>) -> Self {
-        let executor: TaskExecutor = Arc::new(move |prompt, cancel, tx| {
+        let executor: TaskExecutor = Arc::new(move |request, cancel, tx| {
             if cancel.load(Ordering::SeqCst) {
                 let _ = tx.send(TaskUiEvent::Cancelled);
                 return;
             }
             let _ = tx.send(TaskUiEvent::AgentStart("orchestrator".to_string()));
-            let messages = vec![
-                zcode_llm_provider::Message::system("You are zcode, a helpful AI coding agent."),
-                zcode_llm_provider::Message::user(prompt),
-            ];
+            let mut messages = vec![zcode_llm_provider::Message::system(
+                "You are zcode, a helpful AI coding agent. Use prior conversation only as context. Answer the current user task directly, and do not repeat unrelated previous results.",
+            )];
+            messages.extend(
+                request
+                    .history
+                    .iter()
+                    .filter_map(provider_message_from_history),
+            );
+            messages.push(zcode_llm_provider::Message::user(request.prompt));
             match provider.chat(&messages, &[]) {
                 Ok(response) => {
                     let _ = tx.send(TaskUiEvent::AgentComplete("orchestrator".to_string()));
@@ -324,6 +376,7 @@ impl TuiApp {
             return;
         };
 
+        let history = self.visible_conversation_history();
         self.chat
             .add_message(chat::ChatMessage::user(user_text.clone()));
         self.chat.pending_count = self.pending_prompts.len();
@@ -340,7 +393,11 @@ impl TuiApp {
         self.task_rx = Some(rx);
 
         std::thread::spawn(move || {
-            task_executor(user_text, Arc::clone(&worker_cancel_flag), tx.clone());
+            task_executor(
+                TaskRequest::new(user_text, history),
+                Arc::clone(&worker_cancel_flag),
+                tx.clone(),
+            );
             if worker_cancel_flag.load(Ordering::SeqCst) {
                 let _ = tx.send(TaskUiEvent::Cancelled);
             }
@@ -355,19 +412,73 @@ impl TuiApp {
         loop {
             match rx.try_recv() {
                 Ok(TaskUiEvent::AgentStart(agent)) => {
-                    self.set_agent_status(&agent, "Working...");
+                    if !is_internal_graph_node(&agent) {
+                        self.set_agent_status(&agent, "Working...");
+                    }
                     self.chat.append_thinking(&format!("{} started\n", agent));
                 }
                 Ok(TaskUiEvent::AgentComplete(agent)) => {
-                    self.set_agent_status(&agent, "Done");
+                    if !is_internal_graph_node(&agent) {
+                        self.set_agent_status(&agent, "Done");
+                    }
                     self.chat.append_thinking(&format!("{} completed\n", agent));
                 }
                 Ok(TaskUiEvent::Thinking(text)) => {
                     self.chat.append_thinking(&text);
                 }
+                Ok(TaskUiEvent::StepStart { title, agent, .. }) => {
+                    self.set_active_step(&agent, &title);
+                    self.set_agent_status("supervisor", &title);
+                    self.set_agent_status(&agent, &title);
+                    self.chat
+                        .append_thinking(&format!("{} step started: {}\n", agent, title));
+                }
+                Ok(TaskUiEvent::StepComplete {
+                    title,
+                    agent,
+                    success,
+                    ..
+                }) => {
+                    self.clear_active_step(&agent);
+                    self.set_agent_status(&agent, if success { "Done" } else { "Step failed" });
+                    self.chat.append_thinking(&format!(
+                        "{} step {}: {}\n",
+                        agent,
+                        if success { "completed" } else { "failed" },
+                        title
+                    ));
+                }
+                Ok(TaskUiEvent::ToolStart {
+                    agent,
+                    tool_name,
+                    command,
+                }) => {
+                    self.set_agent_status(&agent, &format!("{}: {}", tool_name, command));
+                    self.chat
+                        .append_thinking(&format!("{} {}: {}\n", agent, tool_name, command));
+                }
+                Ok(TaskUiEvent::ToolComplete {
+                    agent,
+                    tool_name,
+                    success,
+                }) => {
+                    let status = if success {
+                        self.active_step_status(&agent)
+                            .unwrap_or_else(|| "Working...".to_string())
+                    } else {
+                        "Tool failed".to_string()
+                    };
+                    self.set_agent_status(&agent, &status);
+                    self.chat.append_thinking(&format!(
+                        "{} {} {}\n",
+                        agent,
+                        tool_name,
+                        if success { "succeeded" } else { "failed" }
+                    ));
+                }
                 Ok(TaskUiEvent::Done(text)) => {
                     if !text.trim().is_empty() {
-                        self.chat.append_assistant_delta(&text);
+                        self.chat.add_message(chat::ChatMessage::assistant(text));
                     }
                     self.finish_stream(false);
                     keep_rx = false;
@@ -425,6 +536,28 @@ impl TuiApp {
         {
             existing.1 = status.to_string();
         }
+    }
+
+    fn set_active_step(&mut self, agent: &str, title: &str) {
+        self.active_steps
+            .insert(display_agent_name(agent), title.to_string());
+    }
+
+    fn clear_active_step(&mut self, agent: &str) {
+        self.active_steps.remove(&display_agent_name(agent));
+    }
+
+    fn active_step_status(&self, agent: &str) -> Option<String> {
+        self.active_steps.get(&display_agent_name(agent)).cloned()
+    }
+
+    fn visible_conversation_history(&self) -> Vec<ConversationMessage> {
+        self.chat
+            .messages
+            .iter()
+            .filter(|message| matches!(message.role.as_str(), "user" | "assistant"))
+            .map(conversation_message_from_chat)
+            .collect()
     }
 
     fn cancel_active_stream(&mut self) {
@@ -544,10 +677,12 @@ impl TuiApp {
 
 fn display_agent_name(agent: &str) -> String {
     match agent {
+        "supervisor" => "Supervisor".to_string(),
         "orchestrator" => "Supervisor".to_string(),
         "planner" => "Planner".to_string(),
         "coder" => "Coder".to_string(),
         "reviewer" => "Reviewer".to_string(),
+        "investigator" => "Investigator".to_string(),
         "self_learning" => "Self Learning".to_string(),
         other => {
             let mut chars = other.chars();
@@ -557,6 +692,10 @@ fn display_agent_name(agent: &str) -> String {
             }
         }
     }
+}
+
+fn is_internal_graph_node(agent: &str) -> bool {
+    matches!(agent, "supervisor" | "execute_step")
 }
 
 fn chat_messages_from_session(session: Session) -> Vec<chat::ChatMessage> {
@@ -583,6 +722,17 @@ fn conversation_message_from_chat(message: &chat::ChatMessage) -> ConversationMe
         "user" => ConversationMessage::user(&message.content),
         "assistant" => ConversationMessage::assistant_text(&message.content),
         _ => ConversationMessage::system(&message.content),
+    }
+}
+
+fn provider_message_from_history(
+    message: &ConversationMessage,
+) -> Option<zcode_llm_provider::Message> {
+    let content = message.content.as_deref().unwrap_or_default();
+    match message.role.as_str() {
+        "user" => Some(zcode_llm_provider::Message::user(content)),
+        "assistant" => Some(zcode_llm_provider::Message::assistant(content)),
+        _ => None,
     }
 }
 
@@ -998,6 +1148,143 @@ mod tests {
             .messages
             .iter()
             .any(|m| m.content == "queued prompt"));
+    }
+
+    #[test]
+    fn test_tui_app_done_starts_new_assistant_turn() {
+        let mut app = TuiApp::new();
+        app.llm_in_flight = true;
+        app.task_rx = None;
+        app.chat.add_message(chat::ChatMessage::user("list files"));
+        app.chat
+            .add_message(chat::ChatMessage::assistant("file list"));
+
+        let (tx, rx) = mpsc::channel();
+        tx.send(TaskUiEvent::Done("weather report".to_string()))
+            .unwrap();
+        app.task_rx = Some(rx);
+
+        app.drain_task_events();
+
+        assert_eq!(app.chat.messages.len(), 3);
+        assert_eq!(app.chat.messages[1].content, "file list");
+        assert_eq!(app.chat.messages[2].role, "assistant");
+        assert_eq!(app.chat.messages[2].content, "weather report");
+    }
+
+    #[test]
+    fn test_tui_app_step_events_update_agent_status() {
+        let mut app = TuiApp::new();
+        let (tx, rx) = mpsc::channel();
+        tx.send(TaskUiEvent::StepStart {
+            id: "step-2".to_string(),
+            title: "Apply the changes".to_string(),
+            agent: "coder".to_string(),
+        })
+        .unwrap();
+        tx.send(TaskUiEvent::StepComplete {
+            id: "step-2".to_string(),
+            title: "Apply the changes".to_string(),
+            agent: "coder".to_string(),
+            success: true,
+        })
+        .unwrap();
+        app.task_rx = Some(rx);
+
+        app.drain_task_events();
+
+        let coder = app
+            .agent_statuses
+            .iter()
+            .find(|(name, _)| name == "Coder")
+            .unwrap();
+        assert_eq!(coder.1, "Done");
+        assert!(app
+            .chat
+            .thinking_log
+            .iter()
+            .any(|line| line.contains("Apply the changes")));
+    }
+
+    #[test]
+    fn test_tui_app_internal_graph_nodes_do_not_override_step_status() {
+        let mut app = TuiApp::new();
+        let (tx, rx) = mpsc::channel();
+        tx.send(TaskUiEvent::StepStart {
+            id: "step-2".to_string(),
+            title: "Apply the changes".to_string(),
+            agent: "coder".to_string(),
+        })
+        .unwrap();
+        tx.send(TaskUiEvent::AgentStart("execute_step".to_string()))
+            .unwrap();
+        tx.send(TaskUiEvent::AgentComplete("execute_step".to_string()))
+            .unwrap();
+        tx.send(TaskUiEvent::ToolStart {
+            agent: "coder".to_string(),
+            tool_name: "shell".to_string(),
+            command: "cargo test".to_string(),
+        })
+        .unwrap();
+        tx.send(TaskUiEvent::ToolComplete {
+            agent: "coder".to_string(),
+            tool_name: "shell".to_string(),
+            success: true,
+        })
+        .unwrap();
+        app.task_rx = Some(rx);
+
+        app.drain_task_events();
+
+        let coder = app
+            .agent_statuses
+            .iter()
+            .find(|(name, _)| name == "Coder")
+            .unwrap();
+        assert_eq!(coder.1, "Apply the changes");
+        let supervisor = app
+            .agent_statuses
+            .iter()
+            .find(|(name, _)| name == "Supervisor")
+            .unwrap();
+        assert_eq!(supervisor.1, "Apply the changes");
+        assert!(app
+            .agent_statuses
+            .iter()
+            .all(|(name, _)| name != "Execute_step"));
+    }
+
+    #[test]
+    fn test_tui_app_task_request_includes_previous_visible_history() {
+        let (captured_tx, captured_rx) = mpsc::channel();
+        let executor: TaskExecutor = Arc::new(move |request, _cancel, tx| {
+            captured_tx.send(request).unwrap();
+            let _ = tx.send(TaskUiEvent::Done("ok".to_string()));
+        });
+        let mut app = TuiApp::with_task_executor(executor);
+        app.chat.add_message(chat::ChatMessage::system("status"));
+        app.chat.add_message(chat::ChatMessage::user("list files"));
+        app.chat
+            .add_message(chat::ChatMessage::assistant("file list"));
+        app.chat.input = "today weather".to_string();
+        app.chat.cursor_pos = app.chat.input.len();
+
+        let event = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_event(event).unwrap();
+
+        let request = captured_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+        assert_eq!(request.prompt, "today weather");
+        assert_eq!(request.history.len(), 2);
+        assert_eq!(request.history[0].role, "user");
+        assert_eq!(request.history[0].content.as_deref(), Some("list files"));
+        assert_eq!(request.history[1].role, "assistant");
+        assert_eq!(request.history[1].content.as_deref(), Some("file list"));
+        assert!(!request
+            .history
+            .iter()
+            .any(|message| message.content.as_deref() == Some("today weather")));
     }
 
     #[test]

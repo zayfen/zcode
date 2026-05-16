@@ -6,10 +6,11 @@ mod settings;
 
 pub use settings::Settings;
 
-use serde::{Deserialize, Serialize};
-use schemars::JsonSchema;
-use std::path::Path;
 use crate::error::{Result, ZcodeError};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::Path;
 
 /// Project-level configuration stored in .zcode/config.toml
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -36,6 +37,10 @@ pub struct ProjectConfig {
     /// LLM provider configuration overrides
     #[serde(default)]
     pub llm: Option<LlmConfigOverride>,
+
+    /// Per-agent model overrides. Values use `{provider}/{model}`.
+    #[serde(default)]
+    pub agent_models: AgentModelConfig,
 
     /// MCP server configurations
     #[serde(default)]
@@ -68,6 +73,37 @@ pub struct ToolConfigs {
     /// Disabled tools
     #[serde(default)]
     pub disabled: Vec<String>,
+}
+
+/// Per-agent model overrides. Each value uses `{provider}/{model}`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct AgentModelConfig {
+    #[serde(default)]
+    pub planner: Option<String>,
+    #[serde(default)]
+    pub coder: Option<String>,
+    #[serde(default)]
+    pub reviewer: Option<String>,
+    #[serde(default)]
+    pub self_learning: Option<String>,
+    #[serde(default)]
+    pub investigator: Option<String>,
+    #[serde(default)]
+    pub docs: Option<String>,
+}
+
+impl AgentModelConfig {
+    pub fn get(&self, agent: &str) -> Option<&str> {
+        match agent {
+            "planner" => self.planner.as_deref(),
+            "coder" => self.coder.as_deref(),
+            "reviewer" => self.reviewer.as_deref(),
+            "self_learning" => self.self_learning.as_deref(),
+            "investigator" => self.investigator.as_deref(),
+            "docs" => self.docs.as_deref(),
+            _ => None,
+        }
+    }
 }
 
 /// MCP server configuration
@@ -160,9 +196,15 @@ pub struct GrammarConfig {
     pub extensions: Vec<String>,
 }
 
-fn bool_true() -> bool { true }
-fn default_snapshot_dir() -> String { ".zcode/snapshots.db".to_string() }
-fn default_max_snapshots() -> usize { 50 }
+fn bool_true() -> bool {
+    true
+}
+fn default_snapshot_dir() -> String {
+    ".zcode/snapshots.db".to_string()
+}
+fn default_max_snapshots() -> usize {
+    50
+}
 
 /// LLM configuration overrides for the project
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
@@ -177,11 +219,51 @@ pub struct LlmConfigOverride {
     #[serde(default)]
     pub fast_model: Option<String>,
 
+    /// OpenAI-compatible API base URL or full chat completions endpoint.
+    #[serde(default)]
+    pub base_url: Option<String>,
+
+    /// API key value for this default provider.
+    #[serde(default)]
+    pub api_key: Option<String>,
+
+    /// Environment variable name used to load the API key for this provider.
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+
     /// Temperature setting (0.0-2.0)
     #[serde(default)]
     pub temperature: Option<f32>,
 
     /// Maximum tokens
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+
+    /// Named OpenAI-compatible provider profiles.
+    #[serde(default)]
+    pub providers: HashMap<String, ProviderConfig>,
+}
+
+/// OpenAI-compatible named provider profile.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
+pub struct ProviderConfig {
+    /// API base URL or full chat completions endpoint.
+    #[serde(default)]
+    pub base_url: Option<String>,
+
+    /// API key value for this provider.
+    #[serde(default)]
+    pub api_key: Option<String>,
+
+    /// Environment variable name used to load the API key for this provider.
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+
+    /// Temperature override.
+    #[serde(default)]
+    pub temperature: Option<f32>,
+
+    /// Max token override.
     #[serde(default)]
     pub max_tokens: Option<u32>,
 }
@@ -196,6 +278,7 @@ impl ProjectConfig {
             frameworks: Vec::new(),
             tools: ToolConfigs::default(),
             llm: None,
+            agent_models: AgentModelConfig::default(),
             mcp_servers: Vec::new(),
             lsp_servers: Vec::new(),
             scripts: ScriptConfig::default(),
@@ -214,11 +297,10 @@ impl ProjectConfig {
             });
         }
 
-        let content = std::fs::read_to_string(&config_path).map_err(|_e| {
-            ZcodeError::ConfigLoadError {
+        let content =
+            std::fs::read_to_string(&config_path).map_err(|_e| ZcodeError::ConfigLoadError {
                 path: config_path.display().to_string(),
-            }
-        })?;
+            })?;
 
         let config: ProjectConfig = toml::from_str(&content)?;
 
@@ -231,8 +313,8 @@ impl ProjectConfig {
         std::fs::create_dir_all(&config_dir)?;
 
         let config_path = config_dir.join("config.toml");
-        let content = toml::to_string_pretty(self)
-            .map_err(|e| ZcodeError::InternalError(e.to_string()))?;
+        let content =
+            toml::to_string_pretty(self).map_err(|e| ZcodeError::InternalError(e.to_string()))?;
 
         std::fs::write(&config_path, content)?;
 
@@ -348,6 +430,7 @@ mod tests {
             fast_model: Some("gpt-4o-mini".to_string()),
             temperature: Some(0.5),
             max_tokens: Some(2048),
+            ..Default::default()
         });
 
         config.save(&project_dir).unwrap();
@@ -467,6 +550,7 @@ mod tests {
             fast_model: Some("gpt-4o-mini".to_string()),
             temperature: Some(0.5),
             max_tokens: Some(2048),
+            ..Default::default()
         };
 
         assert_eq!(llm_override.provider, Some("openai".to_string()));
@@ -484,6 +568,7 @@ mod tests {
             fast_model: None,
             temperature: Some(1.0),
             max_tokens: None,
+            ..Default::default()
         };
 
         assert_eq!(llm_override.provider, Some("openai-compatible".to_string()));
@@ -501,6 +586,7 @@ mod tests {
             fast_model: None,
             temperature: None,
             max_tokens: None,
+            ..Default::default()
         };
 
         assert!(llm_override.provider.is_none());
@@ -519,6 +605,7 @@ mod tests {
             fast_model: None,
             temperature: Some(0.0),
             max_tokens: None,
+            ..Default::default()
         };
         assert_eq!(llm_override.temperature, Some(0.0));
 
@@ -529,6 +616,7 @@ mod tests {
             fast_model: None,
             temperature: Some(2.0),
             max_tokens: None,
+            ..Default::default()
         };
         assert_eq!(llm_override.temperature, Some(2.0));
     }
@@ -563,6 +651,45 @@ mod tests {
     }
 
     #[test]
+    fn test_project_config_deserializes_agent_models_and_providers() {
+        let toml = r#"
+name = "test"
+
+[agent_models]
+planner = "openai/gpt-4o"
+coder = "deepseek/deepseek-coder"
+
+[llm.providers.openai]
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+
+[llm.providers.deepseek]
+base_url = "https://api.deepseek.com/v1"
+api_key_env = "DEEPSEEK_API_KEY"
+"#;
+
+        let config: ProjectConfig = toml::from_str(toml).unwrap();
+
+        assert_eq!(config.agent_models.get("planner"), Some("openai/gpt-4o"));
+        assert_eq!(
+            config.agent_models.get("coder"),
+            Some("deepseek/deepseek-coder")
+        );
+        let openai = config
+            .llm
+            .unwrap()
+            .providers
+            .get("openai")
+            .cloned()
+            .unwrap();
+        assert_eq!(
+            openai.base_url,
+            Some("https://api.openai.com/v1".to_string())
+        );
+        assert_eq!(openai.api_key_env, Some("OPENAI_API_KEY".to_string()));
+    }
+
+    #[test]
     fn test_project_config_deserialization_from_toml() {
         let toml_str = r#"
 name = "my-project"
@@ -592,7 +719,10 @@ max_tokens = 8192
         assert_eq!(config.tools.disabled, vec!["delete"]);
         assert!(config.llm.is_some());
         assert_eq!(
-            config.llm.as_ref().and_then(|llm| llm.fast_model.as_deref()),
+            config
+                .llm
+                .as_ref()
+                .and_then(|llm| llm.fast_model.as_deref()),
             Some("gpt-4o-mini")
         );
     }
@@ -623,6 +753,7 @@ max_tokens = 8192
             fast_model: None,
             temperature: None,
             max_tokens: None,
+            ..Default::default()
         };
         let debug_str = format!("{:?}", llm);
         assert!(debug_str.contains("LlmConfigOverride"));

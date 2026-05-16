@@ -15,14 +15,15 @@ use zcode_llm_provider::MockLlmProvider;
 use zcode_llm_provider::RigProvider;
 use zcode_llm_provider::{LlmProvider, Message};
 use zcode_orchestration::{
-    build_reviewer_pipeline, build_task_pipeline_with_limit, AgentLoop, ConversationMessage,
-    DefaultState, GraphEvent, LlmResponse as AgentLlmResponse, LoopConfig, TaskResult,
+    build_reviewer_pipeline_with_runtime, build_task_pipeline_with_limit, AgentLoop,
+    AgentModelLabels, AgentRuntime, ConversationMessage, DefaultState, GraphEvent,
+    LlmResponse as AgentLlmResponse, LoopConfig, LoopEvent, TaskAgentRuntimes, TaskResult,
 };
 use zcode_requirements::docs::parser::parse_all_tasks;
 use zcode_requirements::{
     generate_docs_scaffold, DocsValidator, TaskRecord, TaskStatus, TaskStore,
 };
-use zcode_ui::{init_terminal, restore_terminal, TaskExecutor, TaskUiEvent, TuiApp};
+use zcode_ui::{init_terminal, restore_terminal, TaskExecutor, TaskRequest, TaskUiEvent, TuiApp};
 
 /// Execute a CLI command
 pub async fn execute_command(command: &Command, args: &Args) -> Result<()> {
@@ -88,7 +89,9 @@ fn llm_config_from_settings(settings: &Settings) -> LlmConfig {
         provider: settings.llm.provider.clone(),
         model: settings.llm.model.clone(),
         fast_model: settings.llm.fast_model.clone(),
+        base_url: settings.llm.base_url.clone(),
         api_key: settings.llm.api_key.clone(),
+        api_key_env: settings.llm.api_key_env.clone(),
         temperature: settings.llm.temperature,
         max_tokens: settings.llm.max_tokens,
     }
@@ -101,6 +104,314 @@ fn fast_llm_config(config: &LlmConfig) -> LlmConfig {
         .clone()
         .unwrap_or_else(|| config.model.clone());
     fast
+}
+
+#[derive(Clone)]
+struct AgentLlm {
+    provider: Arc<dyn LlmProvider>,
+    config: LlmConfig,
+    explicit_model: bool,
+}
+
+#[derive(Clone)]
+struct AgentProviders {
+    fast: AgentLlm,
+    planner: AgentLlm,
+    coder: AgentLlm,
+    reviewer: AgentLlm,
+    investigator: AgentLlm,
+    docs: AgentLlm,
+}
+
+impl AgentProviders {
+    fn task_models(&self) -> AgentModelLabels {
+        AgentModelLabels {
+            investigator: self.investigator.config.model.clone(),
+            planner: self.planner.config.model.clone(),
+            coder: self.coder.config.model.clone(),
+            reviewer: self.reviewer.config.model.clone(),
+            fast: self.fast.config.model.clone(),
+        }
+    }
+
+    fn task_runtimes(
+        &self,
+        event_sink: Option<Arc<dyn Fn(GraphEvent) + Send + Sync>>,
+    ) -> TaskAgentRuntimes {
+        let attach_sink = |runtime: AgentRuntime| {
+            if let Some(event_sink) = &event_sink {
+                runtime.with_event_sink(Arc::clone(event_sink))
+            } else {
+                runtime
+            }
+        };
+
+        TaskAgentRuntimes {
+            investigator: attach_sink(AgentRuntime::new(
+                Arc::clone(&self.investigator.provider),
+                self.investigator.config.model.clone(),
+                self.investigator.explicit_model,
+            )),
+            planner: attach_sink(AgentRuntime::new(
+                Arc::clone(&self.planner.provider),
+                self.planner.config.model.clone(),
+                self.planner.explicit_model,
+            )),
+            coder: attach_sink(AgentRuntime::new(
+                Arc::clone(&self.coder.provider),
+                self.coder.config.model.clone(),
+                self.coder.explicit_model,
+            )),
+            reviewer: attach_sink(AgentRuntime::new(
+                Arc::clone(&self.reviewer.provider),
+                self.reviewer.config.model.clone(),
+                self.reviewer.explicit_model,
+            )),
+            fast: AgentRuntime::new(
+                Arc::clone(&self.fast.provider),
+                self.fast.config.model.clone(),
+                self.fast.explicit_model,
+            ),
+        }
+    }
+
+    fn reviewer_runtime(
+        &self,
+        event_sink: Option<Arc<dyn Fn(GraphEvent) + Send + Sync>>,
+    ) -> AgentRuntime {
+        let runtime = AgentRuntime::new(
+            Arc::clone(&self.reviewer.provider),
+            self.reviewer.config.model.clone(),
+            self.reviewer.explicit_model,
+        );
+        if let Some(event_sink) = event_sink {
+            runtime.with_event_sink(event_sink)
+        } else {
+            runtime
+        }
+    }
+}
+
+fn apply_project_llm_overrides(config: &mut LlmConfig, project_config: &ProjectConfig) {
+    if let Some(llm) = &project_config.llm {
+        if let Some(provider) = &llm.provider {
+            config.provider = provider.clone();
+        }
+        if let Some(model) = &llm.model {
+            config.model = model.clone();
+        }
+        if let Some(fast_model) = &llm.fast_model {
+            config.fast_model = Some(fast_model.clone());
+        }
+        if let Some(base_url) = &llm.base_url {
+            config.base_url = Some(base_url.clone());
+        }
+        if let Some(api_key) = &llm.api_key {
+            config.api_key = Some(api_key.clone());
+        }
+        if let Some(api_key_env) = &llm.api_key_env {
+            config.api_key_env = Some(api_key_env.clone());
+        }
+        if let Some(temperature) = llm.temperature {
+            config.temperature = temperature;
+        }
+        if let Some(max_tokens) = llm.max_tokens {
+            config.max_tokens = max_tokens;
+        }
+    }
+}
+
+fn parse_provider_model(value: &str) -> Result<(&str, &str)> {
+    let (provider, model) = value.split_once('/').ok_or_else(|| {
+        ZcodeError::ConfigError(format!(
+            "agent model `{}` must use `provider/model` format",
+            value
+        ))
+    })?;
+    if provider.trim().is_empty() || model.trim().is_empty() {
+        return Err(ZcodeError::ConfigError(format!(
+            "agent model `{}` must include both provider and model",
+            value
+        )));
+    }
+    Ok((provider.trim(), model.trim()))
+}
+
+fn resolve_agent_config(
+    agent: &str,
+    default_config: &LlmConfig,
+    project_config: &ProjectConfig,
+) -> Result<(LlmConfig, bool)> {
+    let Some(value) = project_config.agent_models.get(agent) else {
+        return Ok((default_config.clone(), false));
+    };
+    let (provider_id, model) = parse_provider_model(value)?;
+    let provider = project_config
+        .llm
+        .as_ref()
+        .and_then(|llm| llm.providers.get(provider_id))
+        .ok_or_else(|| {
+            ZcodeError::ConfigError(format!(
+                "agent model `{}` references unknown provider `{}`",
+                value, provider_id
+            ))
+        })?;
+
+    let mut config = default_config.clone();
+    config.provider = provider_id.to_string();
+    config.model = model.to_string();
+    config.fast_model = None;
+    if let Some(base_url) = &provider.base_url {
+        config.base_url = Some(base_url.clone());
+    }
+    if let Some(api_key) = &provider.api_key {
+        config.api_key = Some(api_key.clone());
+    } else {
+        config.api_key = None;
+    }
+    if let Some(api_key_env) = &provider.api_key_env {
+        config.api_key_env = Some(api_key_env.clone());
+    } else {
+        config.api_key_env = None;
+    }
+    if let Some(temperature) = provider.temperature {
+        config.temperature = temperature;
+    }
+    if let Some(max_tokens) = provider.max_tokens {
+        config.max_tokens = max_tokens;
+    }
+
+    Ok((config, true))
+}
+
+fn build_agent_providers(
+    settings: &Settings,
+    project_config: &ProjectConfig,
+) -> Result<AgentProviders> {
+    let mut default_config = llm_config_from_settings(settings);
+    apply_project_llm_overrides(&mut default_config, project_config);
+    let fast_config = fast_llm_config(&default_config);
+
+    let fast = AgentLlm {
+        provider: make_llm_provider(&fast_config),
+        config: fast_config,
+        explicit_model: false,
+    };
+
+    let make_agent = |agent: &str| -> Result<AgentLlm> {
+        let (config, explicit_model) =
+            resolve_agent_config(agent, &default_config, project_config)?;
+        Ok(AgentLlm {
+            provider: make_llm_provider(&config),
+            config,
+            explicit_model,
+        })
+    };
+
+    Ok(AgentProviders {
+        fast,
+        planner: make_agent("planner")?,
+        coder: make_agent("coder")?,
+        reviewer: make_agent("reviewer")?,
+        investigator: make_agent("investigator")?,
+        docs: make_agent("docs")?,
+    })
+}
+
+fn print_loop_event(agent: &str, event: LoopEvent) {
+    match event {
+        LoopEvent::ToolStart { tool_name, command } => {
+            println!("🔧 {} {}: {}", agent, tool_name, command);
+        }
+        LoopEvent::ToolComplete { tool_name, success } => {
+            println!(
+                "{} {} {}",
+                if success { "✅" } else { "❌" },
+                agent,
+                tool_name
+            );
+        }
+    }
+}
+
+fn print_task_models(models: &AgentModelLabels) {
+    println!("🔎 Investigator model: {}", models.investigator);
+    println!("🧠 Planner model: {}", models.planner);
+    println!("🛠 Coder model: {}", models.coder);
+    println!("🔍 Reviewer model: {}", models.reviewer);
+    println!("⚡ Fast model: {}", models.fast);
+}
+
+fn print_cli_graph_event(prefix: &str, event: GraphEvent) {
+    match event {
+        GraphEvent::ToolStart {
+            agent,
+            tool_name,
+            command,
+        } => {
+            println!("🔧 {} {}: {}", agent, tool_name, command);
+        }
+        GraphEvent::StepStart { id, title, agent } => {
+            println!("▶ {} {}: {}", agent, id, title);
+        }
+        GraphEvent::StepComplete {
+            id,
+            title,
+            agent,
+            success,
+        } => {
+            println!(
+                "{} {} {}: {}",
+                if success { "✅" } else { "❌" },
+                agent,
+                id,
+                title
+            );
+        }
+        GraphEvent::ToolComplete {
+            agent,
+            tool_name,
+            success,
+        } => {
+            println!(
+                "{} {} {}",
+                if success { "✅" } else { "❌" },
+                agent,
+                tool_name
+            );
+        }
+        other => println!("{} {}", prefix, other),
+    }
+}
+
+fn make_tui_tool_event_sink(
+    tx: mpsc::Sender<TaskUiEvent>,
+) -> Arc<dyn Fn(GraphEvent) + Send + Sync> {
+    Arc::new(move |event| match event {
+        GraphEvent::ToolStart {
+            agent,
+            tool_name,
+            command,
+        } => {
+            let _ = tx.send(TaskUiEvent::ToolStart {
+                agent,
+                tool_name,
+                command,
+            });
+        }
+        GraphEvent::ToolComplete {
+            agent,
+            tool_name,
+            success,
+        } => {
+            let _ = tx.send(TaskUiEvent::ToolComplete {
+                agent,
+                tool_name,
+                success,
+            });
+        }
+        _ => {}
+    })
 }
 
 #[cfg(not(test))]
@@ -382,24 +693,19 @@ async fn execute_task(action: &TaskAction, args: &Args) -> Result<()> {
             if let Some(model) = &args.model {
                 settings.llm.model = model.clone();
             }
-            let llm_config = llm_config_from_settings(&settings);
-            let provider = make_llm_provider(&llm_config);
-            let registry = build_tool_registry(
-                &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
-                &settings,
-                args,
-            )?;
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let project_config = project_config_for(&cwd);
+            let agent_providers = build_agent_providers(&settings, &project_config)?;
+            let registry = build_tool_registry(&cwd, &settings, args)?;
 
-            let skills = SkillsLoader::load(
-                &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
-                &settings.skill_dirs,
-            );
+            let skills = SkillsLoader::load(&cwd, &settings.skill_dirs);
             let skills_prompt = SkillsLoader::build_system_prompt("", &skills);
 
-            let reviewer_graph = build_reviewer_pipeline(
-                provider,
+            let reviewer_graph = build_reviewer_pipeline_with_runtime(
+                agent_providers.reviewer_runtime(Some(Arc::new(|event| {
+                    print_cli_graph_event("reviewer", event)
+                }))),
                 registry,
-                llm_config.model.clone(),
                 skills_prompt,
             )
             .compile()?;
@@ -503,12 +809,18 @@ async fn execute_feed(
         settings.llm.model = model.clone();
     }
 
-    let llm_config = llm_config_from_settings(&settings);
-    let provider = make_llm_provider(&llm_config);
+    let project_config = project_config_for(&cwd);
+    let agent_providers = build_agent_providers(&settings, &project_config)?;
 
     let registry = build_tool_registry(&cwd, &settings, args)?;
 
-    println!("🧠 Model: {}", llm_config.model);
+    println!("🧠 Docs model: {}", agent_providers.docs.config.model);
+    if investigate {
+        println!(
+            "🔎 Investigator model: {}",
+            agent_providers.investigator.config.model
+        );
+    }
 
     // ── Step 1 (optional): Investigator Agent ────────────────────────
     let mut investigator_context = String::new();
@@ -522,7 +834,7 @@ async fn execute_feed(
                  Your job is to research requirements and gather context. \
                  You have access to file reading, search, and MCP tools. \
                  Do NOT write code or modify files. Only return your research findings.",
-                llm_config.model
+                agent_providers.investigator.config.model
             ),
         };
         let user_task = format!(
@@ -532,13 +844,19 @@ async fn execute_feed(
              3. Generate a comprehensive Research Report with your findings.",
             path
         );
-        let p = Arc::clone(&provider);
+        let p = Arc::clone(&agent_providers.investigator.provider);
         let agent_loop = AgentLoop::new(config, Arc::clone(&registry));
         let result = agent_loop
-            .run(&user_task, &[], &[], move |msgs, tools| {
-                let p = Arc::clone(&p);
-                async move { feed_call_llm(p, msgs, tools).await }
-            })
+            .run_with_events(
+                &user_task,
+                &[],
+                &[],
+                move |msgs, tools| {
+                    let p = Arc::clone(&p);
+                    async move { feed_call_llm(p, msgs, tools).await }
+                },
+                |event| print_loop_event("investigator", event),
+            )
             .await?;
         println!("✅ Investigator Agent complete.");
         investigator_context = format!("\n💡 [Investigator Agent Report]\n{}\n", result.answer);
@@ -554,7 +872,7 @@ async fn execute_feed(
              You have full access to file reading and writing tools. \
              Comply strictly with the Harness Engineering docs convention. \
              Do NOT write application code — only architect and document the project in `docs/`.",
-            llm_config.model
+            agent_providers.docs.config.model
         ),
     };
     let user_task = format!(
@@ -566,11 +884,18 @@ async fn execute_feed(
         path, investigator_context
     );
     let agent_loop = AgentLoop::new(config, registry);
+    let docs_provider = Arc::clone(&agent_providers.docs.provider);
     let result = agent_loop
-        .run(&user_task, &[], &[], move |msgs, tools| {
-            let p = Arc::clone(&provider);
-            async move { feed_call_llm(p, msgs, tools).await }
-        })
+        .run_with_events(
+            &user_task,
+            &[],
+            &[],
+            move |msgs, tools| {
+                let p = Arc::clone(&docs_provider);
+                async move { feed_call_llm(p, msgs, tools).await }
+            },
+            |event| print_loop_event("docs", event),
+        )
         .await?;
     println!("✅ Docs Generation Agent complete.");
     println!("\n📤 Result:\n{}", result.answer);
@@ -715,10 +1040,9 @@ async fn execute_run(
     }
 
     // ── Model / LLM config ────────────────────────────────────────────
-    let llm_config = llm_config_from_settings(&settings);
-    let provider = make_llm_provider(&llm_config);
-    let fast_llm_config = fast_llm_config(&llm_config);
-    let fast_provider = make_llm_provider(&fast_llm_config);
+    let project_config = project_config_for(&cwd);
+    let agent_providers = build_agent_providers(&settings, &project_config)?;
+    let task_models = agent_providers.task_models();
 
     // ── Capability registry (workspace tools + MCP) ───────────────────
     let registry = build_tool_registry(&cwd, &settings, args)?;
@@ -727,11 +1051,8 @@ async fn execute_run(
 
     // ── Graph Engine (orchestrator → planner → coder(ReAct) → reviewer) ──
     let graph = build_task_pipeline_with_limit(
-        Arc::clone(&provider),
-        Arc::clone(&fast_provider),
+        agent_providers.task_runtimes(Some(Arc::new(|event| print_cli_graph_event("task", event)))),
         Arc::clone(&registry),
-        llm_config.model.clone(),
-        fast_llm_config.model.clone(),
         skills_prompt.clone(),
         max_iterations,
     )
@@ -739,8 +1060,7 @@ async fn execute_run(
 
     println!("🤖 zcode Task Agent starting...");
     println!("📋 Task: {} [id={}]", task, task_record.id);
-    println!("🧠 Model: {}", llm_config.model);
-    println!("⚡ Fast model: {}", fast_llm_config.model);
+    print_task_models(&task_models);
     println!("💾 Progress saved to .zcode/tasks/{}.json", task_record.id);
     println!();
 
@@ -762,12 +1082,7 @@ async fn execute_run(
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
 
-            let answer = task_record
-                .state
-                .messages
-                .last()
-                .and_then(|m| m.content.clone())
-                .unwrap_or_else(|| "No output generated".into());
+            let answer = task_user_answer(&task_record.state.messages);
 
             if test_passed {
                 task_record.status = TaskStatus::Completed;
@@ -804,10 +1119,11 @@ async fn execute_run(
 
     // ── Global Reviewer (runs once after this single task completes) ──────────
     println!("\n🔍 Starting global code review...");
-    let reviewer_graph = build_reviewer_pipeline(
-        Arc::clone(&provider),
+    let reviewer_graph = build_reviewer_pipeline_with_runtime(
+        agent_providers.reviewer_runtime(Some(Arc::new(|event| {
+            print_cli_graph_event("reviewer", event)
+        }))),
         registry,
-        llm_config.model.clone(),
         skills_prompt,
     )
     .compile()?;
@@ -877,20 +1193,15 @@ async fn execute_run_task_only(
     }
 
     let skills = SkillsLoader::load(&cwd, &settings.skill_dirs);
-    let llm_config = llm_config_from_settings(&settings);
-    let provider = make_llm_provider(&llm_config);
-    let fast_llm_config = fast_llm_config(&llm_config);
-    let fast_provider = make_llm_provider(&fast_llm_config);
+    let project_config = project_config_for(&cwd);
+    let agent_providers = build_agent_providers(&settings, &project_config)?;
 
     let registry = build_tool_registry(&cwd, &settings, args)?;
     let skills_prompt = SkillsLoader::build_system_prompt("", &skills);
 
     let graph = build_task_pipeline_with_limit(
-        Arc::clone(&provider),
-        fast_provider,
+        agent_providers.task_runtimes(Some(Arc::new(|event| print_cli_graph_event("task", event)))),
         Arc::clone(&registry),
-        llm_config.model.clone(),
-        fast_llm_config.model.clone(),
         skills_prompt,
         max_iterations,
     )
@@ -912,12 +1223,7 @@ async fn execute_run_task_only(
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
 
-            let answer = task_record
-                .state
-                .messages
-                .last()
-                .and_then(|m| m.content.clone())
-                .unwrap_or_else(|| "No output generated".into());
+            let answer = task_user_answer(&task_record.state.messages);
 
             if test_passed {
                 task_record.status = TaskStatus::Completed;
@@ -969,12 +1275,6 @@ async fn execute_chat(args: &Args) -> Result<()> {
         info!("MCP servers: {:?}", args.mcp);
     }
 
-    // Build LLM providers from settings
-    let llm_config = llm_config_from_settings(&settings);
-    let provider = make_llm_provider(&llm_config);
-    let fast_llm_config = fast_llm_config(&llm_config);
-    let fast_provider = make_llm_provider(&fast_llm_config);
-
     // Initialize terminal
     let mut terminal = init_terminal()?;
 
@@ -985,9 +1285,11 @@ async fn execute_chat(args: &Args) -> Result<()> {
     }
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let project_config = project_config_for(&cwd);
-    for m in project_config.mcp_servers {
-        active_mcps.push(m.name);
+    for m in &project_config.mcp_servers {
+        active_mcps.push(m.name.clone());
     }
+    let agent_providers = build_agent_providers(&settings, &project_config)?;
+    let task_models = agent_providers.task_models();
 
     // Read Skills active
     let skills = SkillsLoader::load(&cwd, &settings.skill_dirs);
@@ -997,11 +1299,8 @@ async fn execute_chat(args: &Args) -> Result<()> {
     let registry = build_tool_registry(&cwd, &settings, args)?;
     let executor = build_tui_task_executor(
         cwd,
-        provider,
-        fast_provider,
+        agent_providers.task_runtimes(None),
         registry,
-        llm_config.model.clone(),
-        fast_llm_config.model.clone(),
         skills_prompt,
         50,
     );
@@ -1013,8 +1312,8 @@ async fn execute_chat(args: &Args) -> Result<()> {
 
     app.chat
         .add_message(zcode_ui::tui::chat::ChatMessage::system(format!(
-            "Model: {} | Fast: {} | Press Esc or Ctrl+C to quit",
-            llm_config.model, fast_llm_config.model
+            "Planner: {} | Coder: {} | Reviewer: {} | Fast: {} | Press Esc or Ctrl+C to quit",
+            task_models.planner, task_models.coder, task_models.reviewer, task_models.fast
         )));
 
     // Run the event loop
@@ -1028,22 +1327,16 @@ async fn execute_chat(args: &Args) -> Result<()> {
 
 fn build_tui_task_executor(
     cwd: std::path::PathBuf,
-    provider: Arc<dyn LlmProvider>,
-    fast_provider: Arc<dyn LlmProvider>,
+    runtimes: TaskAgentRuntimes,
     registry: Arc<ToolRegistry>,
-    model: String,
-    fast_model: String,
     skills_prompt: String,
     max_iterations: usize,
 ) -> TaskExecutor {
     Arc::new(
-        move |task: String, cancel: Arc<AtomicBool>, tx: mpsc::Sender<TaskUiEvent>| {
+        move |request: TaskRequest, cancel: Arc<AtomicBool>, tx: mpsc::Sender<TaskUiEvent>| {
             let cwd = cwd.clone();
-            let provider = Arc::clone(&provider);
-            let fast_provider = Arc::clone(&fast_provider);
+            let runtimes = runtimes.clone();
             let registry = Arc::clone(&registry);
-            let model = model.clone();
-            let fast_model = fast_model.clone();
             let skills_prompt = skills_prompt.clone();
 
             let runtime = match tokio::runtime::Runtime::new() {
@@ -1059,13 +1352,10 @@ fn build_tui_task_executor(
 
             runtime.block_on(async move {
                 run_tui_task(
-                    task,
+                    request,
                     cwd,
-                    provider,
-                    fast_provider,
+                    runtimes,
                     registry,
-                    model,
-                    fast_model,
                     skills_prompt,
                     max_iterations,
                     cancel,
@@ -1077,15 +1367,65 @@ fn build_tui_task_executor(
     )
 }
 
+fn seed_task_history(task_record: &mut TaskRecord, history: Vec<ConversationMessage>) {
+    if history.is_empty() {
+        return;
+    }
+    task_record.state.messages.push(ConversationMessage::system(
+        "Previous conversation is context only. Use it only when it helps answer the current user task. Do not repeat unrelated prior results unless the current user task asks for them.",
+    ));
+    task_record.state.messages.extend(history);
+}
+
+fn task_user_answer(messages: &[ConversationMessage]) -> String {
+    find_report(messages, "CODER_REPORT")
+        .or_else(|| find_report(messages, "INVESTIGATOR_REPORT"))
+        .or_else(|| {
+            messages
+                .iter()
+                .rev()
+                .filter(|message| message.role == "assistant")
+                .filter_map(|message| message.content.as_deref())
+                .find(|content| !is_internal_report(content))
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "No output generated".to_string())
+}
+
+fn find_report(messages: &[ConversationMessage], prefix: &str) -> Option<String> {
+    messages
+        .iter()
+        .rev()
+        .filter(|message| message.role == "assistant")
+        .filter_map(|message| message.content.as_deref())
+        .find_map(|content| strip_report_prefix(content, prefix).map(str::to_string))
+}
+
+fn strip_report_prefix<'a>(content: &'a str, prefix: &str) -> Option<&'a str> {
+    let rest = content.strip_prefix(prefix)?;
+    let rest = rest.strip_prefix(':')?;
+    Some(rest.strip_prefix('\n').unwrap_or(rest).trim())
+}
+
+fn is_internal_report(content: &str) -> bool {
+    [
+        "INVESTIGATOR_REPORT:",
+        "PLANNER_REPORT:",
+        "CODER_REPORT:",
+        "REVIEWER_REPORT:",
+        "REVIEW_FEEDBACK:",
+        "SELF_LEARNING:",
+    ]
+    .iter()
+    .any(|prefix| content.starts_with(prefix))
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_tui_task(
-    task: String,
+    request: TaskRequest,
     cwd: std::path::PathBuf,
-    provider: Arc<dyn LlmProvider>,
-    fast_provider: Arc<dyn LlmProvider>,
+    runtimes: TaskAgentRuntimes,
     registry: Arc<ToolRegistry>,
-    model: String,
-    fast_model: String,
     skills_prompt: String,
     max_iterations: usize,
     cancel: Arc<AtomicBool>,
@@ -1096,6 +1436,8 @@ async fn run_tui_task(
         return;
     }
 
+    let task = request.prompt;
+    let history = request.history;
     let store = match TaskStore::new(&cwd) {
         Ok(store) => store,
         Err(error) => {
@@ -1104,6 +1446,7 @@ async fn run_tui_task(
         }
     };
     let mut task_record = store.create(task.clone());
+    seed_task_history(&mut task_record, history);
     let _ = store.save(&mut task_record);
     let _ = tx.send(TaskUiEvent::Thinking(format!(
         "Task `{}` saved to .zcode/tasks/{}.json\n",
@@ -1111,11 +1454,8 @@ async fn run_tui_task(
     )));
 
     let graph = match build_task_pipeline_with_limit(
-        provider,
-        fast_provider,
+        runtimes.map_event_sink(make_tui_tool_event_sink(tx.clone())),
         Arc::clone(&registry),
-        model,
-        fast_model,
         skills_prompt,
         max_iterations,
     )
@@ -1153,12 +1493,7 @@ async fn run_tui_task(
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
 
-            let answer = task_record
-                .state
-                .messages
-                .last()
-                .and_then(|m| m.content.clone())
-                .unwrap_or_else(|| "No output generated".to_string());
+            let answer = task_user_answer(&task_record.state.messages);
 
             if review_passed {
                 task_record.status = TaskStatus::Completed;
@@ -1199,6 +1534,22 @@ fn send_graph_event(tx: &mpsc::Sender<TaskUiEvent>, event: GraphEvent) {
                 node, iteration
             )));
         }
+        GraphEvent::StepStart { id, title, agent } => {
+            let _ = tx.send(TaskUiEvent::StepStart { id, title, agent });
+        }
+        GraphEvent::StepComplete {
+            id,
+            title,
+            agent,
+            success,
+        } => {
+            let _ = tx.send(TaskUiEvent::StepComplete {
+                id,
+                title,
+                agent,
+                success,
+            });
+        }
         GraphEvent::NodeComplete { node, .. } => {
             let _ = tx.send(TaskUiEvent::AgentComplete(node.clone()));
             let _ = tx.send(TaskUiEvent::Thinking(format!("{} completed\n", node)));
@@ -1206,6 +1557,38 @@ fn send_graph_event(tx: &mpsc::Sender<TaskUiEvent>, event: GraphEvent) {
         GraphEvent::EdgeTraversed { from, to } => {
             let target = to.unwrap_or_else(|| "END".to_string());
             let _ = tx.send(TaskUiEvent::Thinking(format!("{} -> {}\n", from, target)));
+        }
+        GraphEvent::ToolStart {
+            agent,
+            tool_name,
+            command,
+        } => {
+            let _ = tx.send(TaskUiEvent::ToolStart {
+                agent: agent.clone(),
+                tool_name: tool_name.clone(),
+                command: command.clone(),
+            });
+            let _ = tx.send(TaskUiEvent::Thinking(format!(
+                "{} {}: {}\n",
+                agent, tool_name, command
+            )));
+        }
+        GraphEvent::ToolComplete {
+            agent,
+            tool_name,
+            success,
+        } => {
+            let _ = tx.send(TaskUiEvent::ToolComplete {
+                agent: agent.clone(),
+                tool_name: tool_name.clone(),
+                success,
+            });
+            let _ = tx.send(TaskUiEvent::Thinking(format!(
+                "{} {} {}\n",
+                agent,
+                tool_name,
+                if success { "succeeded" } else { "failed" }
+            )));
         }
         GraphEvent::End { reason, output } => {
             let _ = tx.send(TaskUiEvent::Thinking(format!(
@@ -1230,7 +1613,9 @@ fn execute_version() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use std::future::Future;
+    use zcode_core::config::{AgentModelConfig, LlmConfigOverride, ProviderConfig};
 
     async fn in_temp_dir<F, Fut, T>(f: F) -> T
     where
@@ -1262,6 +1647,138 @@ mod tests {
         let result: Result<()> = execute_version();
         assert!(result.is_ok());
         assert!(matches!(result, Ok(())));
+    }
+
+    #[test]
+    fn test_parse_provider_model() {
+        let (provider, model) = parse_provider_model("openai/gpt-4o").unwrap();
+        assert_eq!(provider, "openai");
+        assert_eq!(model, "gpt-4o");
+        assert!(parse_provider_model("gpt-4o").is_err());
+    }
+
+    #[test]
+    fn test_resolve_agent_config_uses_provider_profile() {
+        let default = LlmConfig {
+            provider: "default".to_string(),
+            model: "default-model".to_string(),
+            base_url: Some("https://default.example/v1".to_string()),
+            api_key_env: Some("DEFAULT_KEY".to_string()),
+            ..Default::default()
+        };
+        let mut providers = HashMap::new();
+        providers.insert(
+            "deepseek".to_string(),
+            ProviderConfig {
+                base_url: Some("https://api.deepseek.com/v1".to_string()),
+                api_key_env: Some("DEEPSEEK_API_KEY".to_string()),
+                temperature: Some(0.2),
+                max_tokens: Some(8192),
+                ..Default::default()
+            },
+        );
+        let mut project_config = ProjectConfig::new("test".to_string());
+        project_config.llm = Some(LlmConfigOverride {
+            providers,
+            ..Default::default()
+        });
+        project_config.agent_models = AgentModelConfig {
+            coder: Some("deepseek/deepseek-coder".to_string()),
+            ..Default::default()
+        };
+
+        let (config, explicit) = resolve_agent_config("coder", &default, &project_config).unwrap();
+
+        assert!(explicit);
+        assert_eq!(config.provider, "deepseek");
+        assert_eq!(config.model, "deepseek-coder");
+        assert_eq!(
+            config.base_url,
+            Some("https://api.deepseek.com/v1".to_string())
+        );
+        assert_eq!(config.api_key_env, Some("DEEPSEEK_API_KEY".to_string()));
+        assert_eq!(config.temperature, 0.2);
+        assert_eq!(config.max_tokens, 8192);
+    }
+
+    #[test]
+    fn test_resolve_agent_config_falls_back_to_default() {
+        let default = LlmConfig {
+            provider: "default".to_string(),
+            model: "default-model".to_string(),
+            ..Default::default()
+        };
+        let project_config = ProjectConfig::new("test".to_string());
+
+        let (config, explicit) =
+            resolve_agent_config("reviewer", &default, &project_config).unwrap();
+
+        assert!(!explicit);
+        assert_eq!(config.provider, "default");
+        assert_eq!(config.model, "default-model");
+    }
+
+    #[test]
+    fn test_seed_task_history_adds_context_without_current_prompt() {
+        let mut record = TaskRecord::new("task-id".to_string(), "today weather");
+        seed_task_history(
+            &mut record,
+            vec![
+                ConversationMessage::user("list files"),
+                ConversationMessage::assistant_text("Cargo.toml\nsrc"),
+            ],
+        );
+
+        assert_eq!(record.state.messages.len(), 3);
+        assert_eq!(record.state.messages[0].role, "system");
+        assert!(record.state.messages[0]
+            .content
+            .as_deref()
+            .unwrap()
+            .contains("Previous conversation is context only"));
+        assert_eq!(record.state.messages[1].role, "user");
+        assert_eq!(
+            record.state.messages[1].content.as_deref(),
+            Some("list files")
+        );
+        assert_eq!(record.state.messages[2].role, "assistant");
+        assert!(!record
+            .state
+            .messages
+            .iter()
+            .any(|message| message.content.as_deref() == Some("today weather")));
+    }
+
+    #[test]
+    fn test_task_user_answer_prefers_task_result_over_reviewer_report() {
+        let messages = vec![
+            ConversationMessage::assistant_text("PLANNER_REPORT:\nPlan the read"),
+            ConversationMessage::assistant_text("CODER_REPORT:\nCargo.toml\nsrc\nREADME.md"),
+            ConversationMessage::assistant_text("REVIEWER_REPORT:\nPASS"),
+        ];
+
+        assert_eq!(task_user_answer(&messages), "Cargo.toml\nsrc\nREADME.md");
+    }
+
+    #[test]
+    fn test_task_user_answer_uses_investigator_when_no_coder_report() {
+        let messages = vec![
+            ConversationMessage::assistant_text("INVESTIGATOR_REPORT:\nCargo.toml\nsrc"),
+            ConversationMessage::assistant_text("REVIEWER_REPORT:\nPASS"),
+        ];
+
+        assert_eq!(task_user_answer(&messages), "Cargo.toml\nsrc");
+    }
+
+    #[test]
+    fn test_task_user_answer_skips_internal_reports_for_plain_answer() {
+        let messages = vec![
+            ConversationMessage::assistant_text("The useful answer"),
+            ConversationMessage::assistant_text("REVIEW_FEEDBACK:\nPASS"),
+            ConversationMessage::assistant_text("SELF_LEARNING:\n# Note"),
+        ];
+
+        assert_eq!(task_user_answer(&messages), "The useful answer");
     }
 
     // ============================================================

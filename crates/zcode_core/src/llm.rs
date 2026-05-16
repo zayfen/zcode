@@ -6,7 +6,9 @@ pub struct LlmConfig {
     pub provider: String,
     pub model: String,
     pub fast_model: Option<String>,
+    pub base_url: Option<String>,
     pub api_key: Option<String>,
+    pub api_key_env: Option<String>,
     pub temperature: f32,
     pub max_tokens: u32,
 }
@@ -17,7 +19,9 @@ impl Default for LlmConfig {
             provider: "openai-compatible".to_string(),
             model: std::env::var("ZCODE_MODEL").unwrap_or_else(|_| "gpt-4o".to_string()),
             fast_model: std::env::var("ZCODE_FAST_MODEL").ok(),
+            base_url: std::env::var("ZCODE_BASE_URL").ok(),
             api_key: None,
+            api_key_env: None,
             temperature: 0.7,
             max_tokens: 4096,
         }

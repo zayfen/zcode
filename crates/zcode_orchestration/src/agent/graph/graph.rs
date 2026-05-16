@@ -91,6 +91,31 @@ pub enum GraphEvent {
     },
     /// An edge was traversed
     EdgeTraversed { from: String, to: Option<String> },
+    /// A supervisor task step started.
+    StepStart {
+        id: String,
+        title: String,
+        agent: String,
+    },
+    /// A supervisor task step completed.
+    StepComplete {
+        id: String,
+        title: String,
+        agent: String,
+        success: bool,
+    },
+    /// A tool started executing inside an agent node.
+    ToolStart {
+        agent: String,
+        tool_name: String,
+        command: String,
+    },
+    /// A tool finished executing inside an agent node.
+    ToolComplete {
+        agent: String,
+        tool_name: String,
+        success: bool,
+    },
     /// Graph execution ended
     End {
         reason: EndReason,
@@ -111,11 +136,134 @@ impl fmt::Display for GraphEvent {
                 Some(t) => write!(f, "[Edge] {} → {}", from, t),
                 None => write!(f, "[Edge] {} → END", from),
             },
+            GraphEvent::StepStart { id, title, agent } => {
+                write!(f, "[StepStart] {} {}: {}", agent, id, title)
+            }
+            GraphEvent::StepComplete {
+                id,
+                title,
+                agent,
+                success,
+            } => {
+                write!(
+                    f,
+                    "[StepComplete] {} {} {}: {}",
+                    agent,
+                    id,
+                    if *success { "succeeded" } else { "failed" },
+                    title
+                )
+            }
+            GraphEvent::ToolStart {
+                agent,
+                tool_name,
+                command,
+            } => {
+                write!(f, "[ToolStart] {} {}: {}", agent, tool_name, command)
+            }
+            GraphEvent::ToolComplete {
+                agent,
+                tool_name,
+                success,
+            } => {
+                write!(
+                    f,
+                    "[ToolComplete] {} {} {}",
+                    agent,
+                    tool_name,
+                    if *success { "succeeded" } else { "failed" }
+                )
+            }
             GraphEvent::End { reason, .. } => {
                 write!(f, "[End] {}", reason)
             }
         }
     }
+}
+
+fn take_custom_events(state: &mut DefaultState, metadata_key: &str) -> Vec<GraphEvent> {
+    let Some(value) = state.metadata.remove(metadata_key) else {
+        return Vec::new();
+    };
+    let Some(events) = value.as_array() else {
+        return Vec::new();
+    };
+
+    events
+        .iter()
+        .filter_map(|event| {
+            let kind = event.get("kind").and_then(|value| value.as_str())?;
+            let agent = event
+                .get("agent")
+                .and_then(|value| value.as_str())
+                .unwrap_or("agent")
+                .to_string();
+            match kind {
+                "tool_start" | "start" => Some(GraphEvent::ToolStart {
+                    agent,
+                    tool_name: event
+                        .get("tool_name")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("tool")
+                        .to_string(),
+                    command: event
+                        .get("command")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                }),
+                "tool_complete" | "complete" => Some(GraphEvent::ToolComplete {
+                    agent,
+                    tool_name: event
+                        .get("tool_name")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("tool")
+                        .to_string(),
+                    success: event
+                        .get("success")
+                        .and_then(|value| value.as_bool())
+                        .unwrap_or(false),
+                }),
+                "step_start" => Some(GraphEvent::StepStart {
+                    id: event
+                        .get("id")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    title: event
+                        .get("title")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    agent,
+                }),
+                "step_complete" => Some(GraphEvent::StepComplete {
+                    id: event
+                        .get("id")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    title: event
+                        .get("title")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    agent,
+                    success: event
+                        .get("success")
+                        .and_then(|value| value.as_bool())
+                        .unwrap_or(false),
+                }),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+fn take_graph_events(state: &mut DefaultState) -> Vec<GraphEvent> {
+    let mut events = take_custom_events(state, "__step_events");
+    events.extend(take_custom_events(state, "__tool_events"));
+    events
 }
 
 // ─── StateGraph builder ──────────────────────────────────────────────────────
@@ -326,12 +474,27 @@ impl CompiledGraph {
                 return Ok(output);
             }
 
+            state.metadata.insert(
+                "__active_graph_node".to_string(),
+                serde_json::Value::String(current.clone()),
+            );
             let result = node.execute(state).await;
+            state.metadata.remove("__active_graph_node");
             match result {
                 Ok(node_output) => {
                     let summary = format!("{:?}", node_output);
                     debug!(graph_id = %self.graph_id, node = %current, "Node output: {}", &summary[..summary.len().min(200)]);
                     state.reduce(node_output);
+                    for event in take_graph_events(state) {
+                        if on_event(event) {
+                            output.end_reason = EndReason::ExplicitEnd;
+                            let _ = on_event(GraphEvent::End {
+                                reason: output.end_reason.clone(),
+                                output: output.clone(),
+                            });
+                            return Ok(output);
+                        }
+                    }
                     state.inc_iteration();
                     output.nodes_executed.push(current.clone());
                     output.total_iterations += 1;

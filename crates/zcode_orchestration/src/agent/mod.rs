@@ -17,40 +17,53 @@
 //!                            └─ EdgeTraversed → next node | END
 //! ```
 
-pub mod graph;
-pub mod types;
-pub mod traits;
 pub mod bus;
+pub mod coder;
+pub mod graph;
+pub mod loop_exec;
 pub mod orchestrator;
 pub mod planner;
-pub mod coder;
-pub mod loop_exec;
 pub mod reviewer;
 pub mod self_learning;
+pub mod traits;
+pub mod types;
 
 // ── LangGraph-style graph orchestration ──────────────────────────────────────
+pub use graph::pipeline::{AgentModelLabels, AgentRuntime, TaskAgentRuntimes};
 pub use graph::{
-    // Graph builder & executor
-    StateGraph, CompiledGraph,
-    // Output & events
-    GraphOutput, GraphEvent, EndReason,
-    // Node types
-    GraphNode, FnNode, AsyncFnNode,
-    // Edge routing
-    Edge, routers,
+    routers,
+    AsyncFnNode,
+    CompiledGraph,
     // State
-    DefaultState, NodeOutput, GraphState,
+    DefaultState,
+    // Edge routing
+    Edge,
+    EndReason,
+    FnNode,
+    GraphEvent,
+    // Node types
+    GraphNode,
+    // Output & events
+    GraphOutput,
+    GraphState,
+    NodeOutput,
+    // Graph builder & executor
+    StateGraph,
 };
 
 // ── Agent types ───────────────────────────────────────────────────────────────
-pub use types::{AgentId, AgentMessage, AgentState, AgentType, Task, TaskPriority, TaskResult};
-pub use traits::AgentTrait;
 pub use bus::{BusDispatcher, BusHandle, MessageBus};
+pub use traits::AgentTrait;
+pub use types::{AgentId, AgentMessage, AgentState, AgentType, Task, TaskPriority, TaskResult};
 
 // ── Concrete agent implementations ───────────────────────────────────────────
+pub use coder::CoderAgent;
+pub use loop_exec::{
+    AgentLoop, ConversationMessage, LlmResponse, LoopConfig, LoopEvent, LoopResult,
+};
 pub use orchestrator::OrchestratorAgent;
 pub use planner::PlannerAgent;
-pub use coder::CoderAgent;
-pub use loop_exec::{AgentLoop, LoopConfig, LoopResult, LlmResponse, ConversationMessage};
-pub use reviewer::{ReviewerAgent, ReviewResult, ReviewIssue, IssueSeverity, ReviewCategory, ReviewConfig};
+pub use reviewer::{
+    IssueSeverity, ReviewCategory, ReviewConfig, ReviewIssue, ReviewResult, ReviewerAgent,
+};
 pub use self_learning::{LearningEntry, SelfLearningAgent};

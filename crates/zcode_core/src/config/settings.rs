@@ -3,11 +3,11 @@
 //! This module defines the Settings struct for user-level configuration
 //! stored in the user's config directory.
 
-use serde::{Deserialize, Serialize};
-use schemars::JsonSchema;
-use directories::UserDirs;
-use std::path::PathBuf;
 use crate::error::{Result, ZcodeError};
+use directories::UserDirs;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// User-level settings for zcode
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
@@ -52,9 +52,17 @@ pub struct LlmSettings {
     #[serde(default = "default_fast_model")]
     pub fast_model: Option<String>,
 
+    /// OpenAI-compatible API base URL or full chat completions endpoint.
+    #[serde(default = "default_base_url")]
+    pub base_url: Option<String>,
+
     /// API key (can also be set via environment variable)
     #[serde(default)]
     pub api_key: Option<String>,
+
+    /// Environment variable name used to load the API key.
+    #[serde(default)]
+    pub api_key_env: Option<String>,
 
     /// Temperature for responses (0.0-2.0)
     #[serde(default = "default_temperature")]
@@ -74,12 +82,15 @@ fn default_provider() -> String {
 }
 
 fn default_model() -> String {
-    std::env::var("ZCODE_MODEL")
-        .unwrap_or_else(|_| "gpt-4o".to_string())
+    std::env::var("ZCODE_MODEL").unwrap_or_else(|_| "gpt-4o".to_string())
 }
 
 fn default_fast_model() -> Option<String> {
     std::env::var("ZCODE_FAST_MODEL").ok()
+}
+
+fn default_base_url() -> Option<String> {
+    std::env::var("ZCODE_BASE_URL").ok()
 }
 
 fn default_temperature() -> f32 {
@@ -100,7 +111,9 @@ impl Default for LlmSettings {
             provider: default_provider(),
             model: default_model(),
             fast_model: default_fast_model(),
+            base_url: default_base_url(),
             api_key: None,
+            api_key_env: None,
             temperature: default_temperature(),
             max_tokens: default_max_tokens(),
             timeout: default_timeout(),
@@ -224,8 +237,8 @@ impl Settings {
             return Ok(Self::default());
         }
 
-        let content = std::fs::read_to_string(&settings_path)
-            .map_err(|_e| ZcodeError::ConfigLoadError {
+        let content =
+            std::fs::read_to_string(&settings_path).map_err(|_e| ZcodeError::ConfigLoadError {
                 path: settings_path.display().to_string(),
             })?;
 
@@ -260,8 +273,14 @@ impl Settings {
         if other.llm.fast_model != default_fast_model() {
             self.llm.fast_model = other.llm.fast_model;
         }
+        if other.llm.base_url != default_base_url() {
+            self.llm.base_url = other.llm.base_url;
+        }
         if other.llm.api_key.is_some() {
             self.llm.api_key = other.llm.api_key;
+        }
+        if other.llm.api_key_env.is_some() {
+            self.llm.api_key_env = other.llm.api_key_env;
         }
         if other.llm.temperature != default_temperature() {
             self.llm.temperature = other.llm.temperature;
@@ -370,7 +389,9 @@ mod tests {
         assert_eq!(llm.temperature, 0.7);
         assert_eq!(llm.max_tokens, 4096);
         assert_eq!(llm.timeout, 120);
+        assert_eq!(llm.base_url, std::env::var("ZCODE_BASE_URL").ok());
         assert!(llm.api_key.is_none());
+        assert!(llm.api_key_env.is_none());
     }
 
     #[test]
@@ -434,7 +455,9 @@ mod tests {
             provider: "openai".to_string(),
             model: "gpt-4-turbo".to_string(),
             fast_model: Some("gpt-4o-mini".to_string()),
+            base_url: Some("https://api.openai.com/v1".to_string()),
             api_key: Some("sk-key".to_string()),
+            api_key_env: Some("OPENAI_API_KEY".to_string()),
             temperature: 0.5,
             max_tokens: 8192,
             timeout: 60,
@@ -446,7 +469,12 @@ mod tests {
         assert_eq!(deserialized.provider, "openai");
         assert_eq!(deserialized.model, "gpt-4-turbo");
         assert_eq!(deserialized.fast_model, Some("gpt-4o-mini".to_string()));
+        assert_eq!(
+            deserialized.base_url,
+            Some("https://api.openai.com/v1".to_string())
+        );
         assert_eq!(deserialized.api_key, Some("sk-key".to_string()));
+        assert_eq!(deserialized.api_key_env, Some("OPENAI_API_KEY".to_string()));
         assert_eq!(deserialized.temperature, 0.5);
         assert_eq!(deserialized.max_tokens, 8192);
         assert_eq!(deserialized.timeout, 60);
@@ -893,7 +921,10 @@ mod tests {
             settings.llm.model,
             std::env::var("ZCODE_MODEL").unwrap_or_else(|_| "gpt-4o".to_string())
         );
-        assert_eq!(settings.llm.fast_model, std::env::var("ZCODE_FAST_MODEL").ok());
+        assert_eq!(
+            settings.llm.fast_model,
+            std::env::var("ZCODE_FAST_MODEL").ok()
+        );
         assert_eq!(settings.llm.temperature, 0.7);
     }
 

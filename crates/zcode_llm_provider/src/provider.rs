@@ -67,17 +67,25 @@ impl RigProvider {
             return Ok(key.clone());
         }
 
-        std::env::var("ZCODE_API_KEY")
-            .map_err(|_| ZcodeError::MissingApiKey("ZCODE_API_KEY".to_string()))
+        let env_name = self
+            .config
+            .api_key_env
+            .as_deref()
+            .unwrap_or("ZCODE_API_KEY");
+        std::env::var(env_name).map_err(|_| ZcodeError::MissingApiKey(env_name.to_string()))
     }
 
     /// Resolve the OpenAI-compatible chat completions endpoint.
     ///
-    /// `ZCODE_BASE_URL` may point at the service root, a `/v1` root, or the
-    /// complete `/chat/completions` endpoint.
-    fn chat_endpoint() -> String {
-        let base = std::env::var("ZCODE_BASE_URL")
-            .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
+    /// The configured base URL may point at the service root, a `/v1` root, or
+    /// the complete `/chat/completions` endpoint.
+    fn chat_endpoint(&self) -> String {
+        let base = self
+            .config
+            .base_url
+            .clone()
+            .or_else(|| std::env::var("ZCODE_BASE_URL").ok())
+            .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
         let base = base.trim_end_matches('/');
 
         if base.ends_with("/chat/completions") {
@@ -269,7 +277,7 @@ impl RigProvider {
         let body = self.build_chat_body(messages, tools);
         let api_key = api_key.to_string();
         let model = self.config.model.clone();
-        let endpoint = Self::chat_endpoint();
+        let endpoint = self.chat_endpoint();
 
         let (status, response_body) = run_http(async move {
             let client = reqwest::Client::builder()
@@ -355,7 +363,7 @@ impl RigProvider {
         body["stream"] = serde_json::Value::Bool(true);
 
         let api_key = api_key.to_string();
-        let endpoint = Self::chat_endpoint();
+        let endpoint = self.chat_endpoint();
 
         let (tx, rx) = futures::channel::mpsc::unbounded::<Result<LlmStreamEvent>>();
 
@@ -1054,20 +1062,23 @@ mod tests {
         let original = std::env::var("ZCODE_BASE_URL").ok();
 
         std::env::set_var("ZCODE_BASE_URL", "https://example.com");
+        let provider = RigProvider::new(LlmConfig::default());
         assert_eq!(
-            RigProvider::chat_endpoint(),
+            provider.chat_endpoint(),
             "https://example.com/v1/chat/completions"
         );
 
         std::env::set_var("ZCODE_BASE_URL", "https://example.com/v1");
+        let provider = RigProvider::new(LlmConfig::default());
         assert_eq!(
-            RigProvider::chat_endpoint(),
+            provider.chat_endpoint(),
             "https://example.com/v1/chat/completions"
         );
 
         std::env::set_var("ZCODE_BASE_URL", "https://example.com/v1/chat/completions");
+        let provider = RigProvider::new(LlmConfig::default());
         assert_eq!(
-            RigProvider::chat_endpoint(),
+            provider.chat_endpoint(),
             "https://example.com/v1/chat/completions"
         );
 
@@ -1076,6 +1087,19 @@ mod tests {
         } else {
             std::env::remove_var("ZCODE_BASE_URL");
         }
+    }
+
+    #[test]
+    fn test_rig_provider_chat_endpoint_from_config() {
+        let config = LlmConfig {
+            base_url: Some("https://provider.example/v1".to_string()),
+            ..Default::default()
+        };
+        let provider = RigProvider::new(config);
+        assert_eq!(
+            provider.chat_endpoint(),
+            "https://provider.example/v1/chat/completions"
+        );
     }
 
     #[test]

@@ -5,13 +5,13 @@
 //! 2. If LLM wants a tool, execute it and loop
 //! 3. If LLM gives a text response, return it
 
-use zcode_core::{Result, ZcodeError};
-use zcode_capabilities::{execute_tool_calls, ToolCallRequest};
-use zcode_capabilities::ToolRegistry;
-pub use zcode_core::agent::ConversationMessage;
 use serde_json::Value;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
+use zcode_capabilities::ToolRegistry;
+use zcode_capabilities::{execute_tool_call, ToolCallRequest};
+pub use zcode_core::agent::ConversationMessage;
+use zcode_core::{Result, ZcodeError};
 
 // ─── LoopConfig ────────────────────────────────────────────────────────────────
 
@@ -76,15 +76,38 @@ impl AgentLoop {
         user_message: &str,
         seed_messages: &[ConversationMessage],
         _tool_schemas: &[Value],
-        mut llm_call: F,
+        llm_call: F,
     ) -> Result<LoopResult>
     where
         F: FnMut(Vec<Value>, Vec<Value>) -> Fut,
         Fut: std::future::Future<Output = Result<LlmResponse>>,
     {
-        let mut history: Vec<ConversationMessage> = vec![
-            ConversationMessage::system(&self.config.system_prompt),
-        ];
+        self.run_with_events(
+            user_message,
+            seed_messages,
+            _tool_schemas,
+            llm_call,
+            |_event| {},
+        )
+        .await
+    }
+
+    /// Run the ReAct loop and emit tool lifecycle events.
+    pub async fn run_with_events<F, Fut, E>(
+        &self,
+        user_message: &str,
+        seed_messages: &[ConversationMessage],
+        _tool_schemas: &[Value],
+        mut llm_call: F,
+        mut on_event: E,
+    ) -> Result<LoopResult>
+    where
+        F: FnMut(Vec<Value>, Vec<Value>) -> Fut,
+        Fut: std::future::Future<Output = Result<LlmResponse>>,
+        E: FnMut(LoopEvent),
+    {
+        let mut history: Vec<ConversationMessage> =
+            vec![ConversationMessage::system(&self.config.system_prompt)];
 
         // Inject shared context bus history from previous nodes (filter old system prompts)
         for msg in seed_messages {
@@ -98,7 +121,10 @@ impl AgentLoop {
         // Build tool schemas from registry once
         let tool_schemas = self.registry.openai_schemas();
 
-        info!("Starting AgentLoop (max_iterations={})", self.config.max_iterations);
+        info!(
+            "Starting AgentLoop (max_iterations={})",
+            self.config.max_iterations
+        );
 
         let mut llm_calls = 0usize;
         let mut tool_calls_executed = 0usize;
@@ -110,7 +136,11 @@ impl AgentLoop {
                 .map(|m| serde_json::to_value(m).unwrap())
                 .collect::<Vec<_>>();
 
-            debug!("Loop iteration {}/{} - Calling LLM", i + 1, self.config.max_iterations);
+            debug!(
+                "Loop iteration {}/{} - Calling LLM",
+                i + 1,
+                self.config.max_iterations
+            );
 
             let response = llm_call(messages, tool_schemas.clone()).await?;
             llm_calls += 1;
@@ -153,14 +183,32 @@ impl AgentLoop {
                     ));
 
                     // Execute all tool calls
-                    let responses = execute_tool_calls(&self.registry, &requests);
+                    let responses = requests
+                        .iter()
+                        .map(|request| {
+                            on_event(LoopEvent::ToolStart {
+                                tool_name: request.name.clone(),
+                                command: tool_command(request),
+                            });
+                            let response = execute_tool_call(&self.registry, request);
+                            on_event(LoopEvent::ToolComplete {
+                                tool_name: request.name.clone(),
+                                success: response.success,
+                            });
+                            response
+                        })
+                        .collect::<Vec<_>>();
                     tool_calls_executed += responses.len();
 
                     // Add tool results to history as OpenAI-compatible tool messages
                     for resp in &responses {
                         let snippet = if resp.content.len() > 1000 {
                             let safe_end = resp.content.floor_char_boundary(1000);
-                            format!("{}... (truncated, total {} chars)", &resp.content[..safe_end], resp.content.len())
+                            format!(
+                                "{}... (truncated, total {} chars)",
+                                &resp.content[..safe_end],
+                                resp.content.len()
+                            )
                         } else {
                             resp.content.clone()
                         };
@@ -181,7 +229,10 @@ impl AgentLoop {
         }
 
         // Hit max iterations — return partial result
-        warn!("Maximum iterations ({}) reached without a final answer.", self.config.max_iterations);
+        warn!(
+            "Maximum iterations ({}) reached without a final answer.",
+            self.config.max_iterations
+        );
         Ok(LoopResult {
             answer: "Maximum iterations reached without a final answer.".to_string(),
             history,
@@ -190,6 +241,32 @@ impl AgentLoop {
             hit_max_iterations: true,
         })
     }
+}
+
+/// Events emitted by an AgentLoop while executing tools.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoopEvent {
+    ToolStart { tool_name: String, command: String },
+    ToolComplete { tool_name: String, success: bool },
+}
+
+fn tool_command(request: &ToolCallRequest) -> String {
+    if request.name == "shell" {
+        if let Some(command) = request
+            .arguments
+            .get("command")
+            .and_then(|value| value.as_str())
+        {
+            return command.to_string();
+        }
+    }
+
+    let mut rendered = serde_json::to_string(&request.arguments).unwrap_or_default();
+    if rendered.chars().count() > 160 {
+        rendered = rendered.chars().take(157).collect::<String>();
+        rendered.push_str("...");
+    }
+    rendered
 }
 
 // ─── LlmResponse ───────────────────────────────────────────────────────────────
@@ -249,7 +326,6 @@ impl LlmResponse {
 
         Ok(LlmResponse::Text(content))
     }
-
 }
 
 // ─── Tests ─────────────────────────────────────────────────────────────────────
@@ -262,8 +338,12 @@ mod tests {
 
     struct AddTool;
     impl Tool for AddTool {
-        fn name(&self) -> &str { "add" }
-        fn description(&self) -> &str { "Add two numbers" }
+        fn name(&self) -> &str {
+            "add"
+        }
+        fn description(&self) -> &str {
+            "Add two numbers"
+        }
         fn execute(&self, input: Value) -> ToolResult<Value> {
             let a = input.get("a").and_then(|v| v.as_f64()).unwrap_or(0.0);
             let b = input.get("b").and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -416,12 +496,17 @@ mod tests {
         let agent_loop = AgentLoop::new(config, registry);
 
         // Mock LLM that always returns a text answer
-        let result = agent_loop.run(
-            "What is 2+2?",
-            &[],
-            &[],
-            |_messages: Vec<serde_json::Value>, _tools: Vec<serde_json::Value>| async { Ok(LlmResponse::Text("The answer is 4.".to_string())) },
-        ).await.unwrap();
+        let result = agent_loop
+            .run(
+                "What is 2+2?",
+                &[],
+                &[],
+                |_messages: Vec<serde_json::Value>, _tools: Vec<serde_json::Value>| async {
+                    Ok(LlmResponse::Text("The answer is 4.".to_string()))
+                },
+            )
+            .await
+            .unwrap();
 
         assert_eq!(result.answer, "The answer is 4.");
         assert_eq!(result.llm_calls, 1);
@@ -439,36 +524,95 @@ mod tests {
         let agent_loop = AgentLoop::new(config, registry);
 
         let call_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let result = agent_loop.run(
-            "Can you add 3 and 4?",
-            &[],
-            &[],
-            |_msgs: Vec<serde_json::Value>, _tools: Vec<serde_json::Value>| {
-                let n = call_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-                async move {
-                    if n == 1 {
-                        Ok(LlmResponse::ToolCalls {
-                            calls: vec![json!({
-                                "id": "call-1",
-                                "type": "function",
-                                "function": {
-                                    "name": "add",
-                                    "arguments": "{\"a\":3,\"b\":4}"
-                                }
-                            })],
-                            content: None,
-                            reasoning_content: None,
-                        })
-                    } else {
-                        Ok(LlmResponse::Text("3 + 4 = 7".to_string()))
+        let result = agent_loop
+            .run(
+                "Can you add 3 and 4?",
+                &[],
+                &[],
+                |_msgs: Vec<serde_json::Value>, _tools: Vec<serde_json::Value>| {
+                    let n = call_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                    async move {
+                        if n == 1 {
+                            Ok(LlmResponse::ToolCalls {
+                                calls: vec![json!({
+                                    "id": "call-1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "add",
+                                        "arguments": "{\"a\":3,\"b\":4}"
+                                    }
+                                })],
+                                content: None,
+                                reasoning_content: None,
+                            })
+                        } else {
+                            Ok(LlmResponse::Text("3 + 4 = 7".to_string()))
+                        }
                     }
-                }
-            },
-        ).await.unwrap();
+                },
+            )
+            .await
+            .unwrap();
 
         assert_eq!(result.llm_calls, 2);
         assert_eq!(result.tool_calls_executed, 1);
         assert_eq!(result.answer, "3 + 4 = 7");
+    }
+
+    #[tokio::test]
+    async fn test_agent_loop_emits_tool_events() {
+        let registry = make_registry();
+        let agent_loop = AgentLoop::new(LoopConfig::default(), registry);
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = std::sync::Arc::clone(&events);
+        let call_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        let result = agent_loop
+            .run_with_events(
+                "Can you add 3 and 4?",
+                &[],
+                &[],
+                |_msgs: Vec<serde_json::Value>, _tools: Vec<serde_json::Value>| {
+                    let n = call_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                    async move {
+                        if n == 1 {
+                            Ok(LlmResponse::ToolCalls {
+                                calls: vec![json!({
+                                    "id": "call-1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "add",
+                                        "arguments": "{\"a\":3,\"b\":4}"
+                                    }
+                                })],
+                                content: None,
+                                reasoning_content: None,
+                            })
+                        } else {
+                            Ok(LlmResponse::Text("done".to_string()))
+                        }
+                    }
+                },
+                move |event| captured.lock().unwrap().push(event),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.tool_calls_executed, 1);
+        let events = events.lock().unwrap();
+        assert_eq!(
+            events.as_slice(),
+            &[
+                LoopEvent::ToolStart {
+                    tool_name: "add".to_string(),
+                    command: "{\"a\":3,\"b\":4}".to_string(),
+                },
+                LoopEvent::ToolComplete {
+                    tool_name: "add".to_string(),
+                    success: true,
+                },
+            ]
+        );
     }
 
     #[tokio::test]
@@ -481,22 +625,25 @@ mod tests {
         let agent_loop = AgentLoop::new(config, registry);
 
         // Mock that always requests tools (never returns text)
-        let result = agent_loop.run(
-            "Loop forever",
-            &[],
-            &[],
-            |_: Vec<serde_json::Value>, _: Vec<serde_json::Value>| async {
-                Ok(LlmResponse::ToolCalls {
-                    calls: vec![json!({
-                        "id": "call-x",
-                        "type": "function",
-                        "function": { "name": "nonexistent", "arguments": "{}" }
-                    })],
-                    content: None,
-                    reasoning_content: None,
-                })
-            },
-        ).await.unwrap();
+        let result = agent_loop
+            .run(
+                "Loop forever",
+                &[],
+                &[],
+                |_: Vec<serde_json::Value>, _: Vec<serde_json::Value>| async {
+                    Ok(LlmResponse::ToolCalls {
+                        calls: vec![json!({
+                            "id": "call-x",
+                            "type": "function",
+                            "function": { "name": "nonexistent", "arguments": "{}" }
+                        })],
+                        content: None,
+                        reasoning_content: None,
+                    })
+                },
+            )
+            .await
+            .unwrap();
 
         assert!(result.hit_max_iterations);
         assert_eq!(result.llm_calls, 2);

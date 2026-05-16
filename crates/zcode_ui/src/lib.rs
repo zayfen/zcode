@@ -3,6 +3,6 @@
 pub mod tui;
 
 pub use tui::{
-    init_terminal, restore_terminal, ChatInterface, TaskExecutor, TaskUiEvent, TuiApp, TuiBackend,
-    TuiTerminal,
+    init_terminal, restore_terminal, ChatInterface, TaskExecutor, TaskRequest, TaskUiEvent, TuiApp,
+    TuiBackend, TuiTerminal,
 };

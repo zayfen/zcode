@@ -79,6 +79,8 @@ pub struct ToolConfigs {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Default)]
 pub struct AgentModelConfig {
     #[serde(default)]
+    pub supervisor: Option<String>,
+    #[serde(default)]
     pub planner: Option<String>,
     #[serde(default)]
     pub coder: Option<String>,
@@ -95,6 +97,7 @@ pub struct AgentModelConfig {
 impl AgentModelConfig {
     pub fn get(&self, agent: &str) -> Option<&str> {
         match agent {
+            "supervisor" => self.supervisor.as_deref(),
             "planner" => self.planner.as_deref(),
             "coder" => self.coder.as_deref(),
             "reviewer" => self.reviewer.as_deref(),
@@ -656,6 +659,7 @@ mod tests {
 name = "test"
 
 [agent_models]
+supervisor = "openai/gpt-4o-mini"
 planner = "openai/gpt-4o"
 coder = "deepseek/deepseek-coder"
 
@@ -670,6 +674,10 @@ api_key_env = "DEEPSEEK_API_KEY"
 
         let config: ProjectConfig = toml::from_str(toml).unwrap();
 
+        assert_eq!(
+            config.agent_models.get("supervisor"),
+            Some("openai/gpt-4o-mini")
+        );
         assert_eq!(config.agent_models.get("planner"), Some("openai/gpt-4o"));
         assert_eq!(
             config.agent_models.get("coder"),

@@ -40,10 +40,12 @@
 pub mod checkpoint;
 pub mod edge;
 pub mod graph;
+mod llm_bridge;
 pub mod node;
 pub mod pipeline;
 pub mod presets;
 pub mod state;
+mod task_supervisor;
 
 pub use checkpoint::*;
 
@@ -54,7 +56,7 @@ pub use graph::{CompiledGraph, EndReason, GraphEvent, GraphOutput, StateGraph};
 pub use node::{AsyncFnNode, FnNode, GraphNode};
 
 // ── Edge types & routers ──────────────────────────────────────────────────────
-pub use edge::{Edge, routers};
+pub use edge::{routers, Edge};
 
 // ── State types ───────────────────────────────────────────────────────────────
 pub use state::{DefaultState, GraphState, NodeOutput};

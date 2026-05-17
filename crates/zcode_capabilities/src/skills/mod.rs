@@ -1,4 +1,5 @@
-//! Skills system — inject `docs/skills/*.md` into the agent system prompt.
+//! Skills system — select relevant `docs/skills/*/SKILL.md` files and inject
+//! them into the agent system prompt.
 //!
 //! Skills are markdown documents that provide specialised instructions to the
 //! AI agent. They are read from `docs/skills/` in the project root and
@@ -18,17 +19,20 @@
 //! # Priority levels
 //! `high` > `medium` (default) > `low`
 //!
-//! Skills are sorted by priority and concatenated in that order.
+//! Relevant skills are sorted by priority and relevance before injection.
 //! The directory is optional — if `docs/skills/` is absent, no skills are loaded.
 
+use std::collections::BTreeSet;
 use std::path::Path;
+
+pub const DEFAULT_MAX_SELECTED_SKILLS: usize = 4;
 
 // ─────────────────────────────────────────────
 // Skill
 // ─────────────────────────────────────────────
 
 /// Priority of a skill (controls insertion order in system prompt).
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SkillPriority {
     Low,
     Medium,
@@ -52,6 +56,8 @@ pub struct Skill {
     pub name: String,
     /// One-line description shown in debug output.
     pub description: String,
+    /// Optional comma-separated trigger phrases from frontmatter.
+    pub triggers: Vec<String>,
     /// Insertion priority.
     pub priority: SkillPriority,
     /// The body of the skill document (everything after the frontmatter).
@@ -115,7 +121,61 @@ impl SkillsLoader {
             .collect()
     }
 
-    /// Build an enhanced system prompt by appending all loaded skills.
+    /// Select the relevant skills for a prompt.
+    ///
+    /// Selection is generic: it compares the current prompt with each skill's
+    /// name, description, triggers, and body. Unrelated skills are omitted
+    /// instead of being injected into every request.
+    pub fn select_relevant(skills: &[Skill], prompt: &str, max_skills: usize) -> Vec<Skill> {
+        if skills.is_empty() || max_skills == 0 {
+            return Vec::new();
+        }
+
+        let query = tokenize_for_selection(prompt);
+        if query.is_empty() {
+            return Vec::new();
+        }
+
+        let mut candidates: Vec<_> = skills
+            .iter()
+            .enumerate()
+            .filter_map(|(index, skill)| {
+                let name_tokens = tokenize_for_selection(&skill.name);
+                let description_tokens = tokenize_for_selection(&skill.description);
+                let trigger_tokens = tokenize_for_selection(&skill.triggers.join(" "));
+                let content_tokens = tokenize_for_selection(&skill.content);
+
+                let name_overlap = overlap_count(&query, &name_tokens);
+                let description_overlap = overlap_count(&query, &description_tokens);
+                let trigger_overlap = overlap_count(&query, &trigger_tokens);
+                let content_overlap = overlap_count(&query, &content_tokens);
+
+                let metadata_overlap = name_overlap + description_overlap + trigger_overlap;
+                if metadata_overlap == 0 && content_overlap < 2 {
+                    return None;
+                }
+
+                let score = (trigger_overlap * 5)
+                    + (name_overlap * 4)
+                    + (description_overlap * 3)
+                    + content_overlap;
+                Some((index, score, skill.priority, skill.clone()))
+            })
+            .collect();
+
+        candidates.sort_by(|a, b| {
+            b.1.cmp(&a.1)
+                .then_with(|| b.2.cmp(&a.2))
+                .then_with(|| a.0.cmp(&b.0))
+        });
+        candidates
+            .into_iter()
+            .take(max_skills)
+            .map(|(_, _, _, skill)| skill)
+            .collect()
+    }
+
+    /// Build an enhanced system prompt by appending selected skills.
     pub fn build_system_prompt(base_prompt: &str, skills: &[Skill]) -> String {
         if skills.is_empty() {
             return base_prompt.to_string();
@@ -138,6 +198,16 @@ impl SkillsLoader {
         parts.join("")
     }
 
+    /// Select relevant skills for `prompt`, then build the system prompt.
+    pub fn build_relevant_system_prompt(
+        base_prompt: &str,
+        skills: &[Skill],
+        prompt: &str,
+    ) -> String {
+        let selected = Self::select_relevant(skills, prompt, DEFAULT_MAX_SELECTED_SKILLS);
+        Self::build_system_prompt(base_prompt, &selected)
+    }
+
     // ── Private helpers ──────────────────────────────────────────
 
     /// Parse a single skill markdown file.
@@ -157,6 +227,9 @@ impl SkillsLoader {
         let name = Self::fm_field(&frontmatter, "name").unwrap_or(stem);
         let description = Self::fm_field(&frontmatter, "description")
             .unwrap_or_else(|| "No description".to_string());
+        let triggers = Self::fm_field(&frontmatter, "triggers")
+            .map(|value| split_triggers(&value))
+            .unwrap_or_default();
         let priority = Self::fm_field(&frontmatter, "priority")
             .map(|s| SkillPriority::from_str(&s))
             .unwrap_or(SkillPriority::Medium);
@@ -164,6 +237,7 @@ impl SkillsLoader {
         Some(Skill {
             name,
             description,
+            triggers,
             priority,
             content: body.trim().to_string(),
         })
@@ -203,6 +277,125 @@ impl SkillsLoader {
         }
         None
     }
+}
+
+fn split_triggers(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn tokenize_for_selection(text: &str) -> BTreeSet<String> {
+    let lower = text.to_lowercase();
+    let mut tokens = BTreeSet::new();
+    let mut ascii = String::new();
+    let mut cjk_run = Vec::new();
+
+    for ch in lower.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+            flush_cjk(&mut cjk_run, &mut tokens);
+            ascii.push(ch);
+            continue;
+        }
+
+        flush_ascii(&mut ascii, &mut tokens);
+        if is_cjk(ch) {
+            cjk_run.push(ch);
+        } else {
+            flush_cjk(&mut cjk_run, &mut tokens);
+        }
+    }
+
+    flush_ascii(&mut ascii, &mut tokens);
+    flush_cjk(&mut cjk_run, &mut tokens);
+    tokens
+}
+
+fn flush_ascii(buffer: &mut String, tokens: &mut BTreeSet<String>) {
+    if buffer.chars().count() >= 2 && !is_stop_token(buffer) {
+        tokens.insert(buffer.clone());
+    }
+    buffer.clear();
+}
+
+fn flush_cjk(buffer: &mut Vec<char>, tokens: &mut BTreeSet<String>) {
+    match buffer.len() {
+        0 => {}
+        1 => {
+            let token = buffer[0].to_string();
+            if !is_stop_token(&token) {
+                tokens.insert(token);
+            }
+        }
+        _ => {
+            for window in buffer.windows(2) {
+                let token: String = window.iter().collect();
+                if !is_stop_token(&token) {
+                    tokens.insert(token);
+                }
+            }
+            for window in buffer.windows(3) {
+                let token: String = window.iter().collect();
+                if !is_stop_token(&token) {
+                    tokens.insert(token);
+                }
+            }
+        }
+    }
+    buffer.clear();
+}
+
+fn overlap_count(left: &BTreeSet<String>, right: &BTreeSet<String>) -> usize {
+    left.iter().filter(|item| right.contains(*item)).count()
+}
+
+fn is_stop_token(token: &str) -> bool {
+    matches!(
+        token,
+        "the"
+            | "and"
+            | "for"
+            | "with"
+            | "this"
+            | "that"
+            | "what"
+            | "which"
+            | "who"
+            | "when"
+            | "where"
+            | "how"
+            | "can"
+            | "you"
+            | "please"
+            | "about"
+            | "task"
+            | "agent"
+            | "current"
+            | "这个"
+            | "一个"
+            | "我们"
+            | "你们"
+            | "请你"
+            | "帮我"
+            | "一下"
+            | "继续"
+            | "刚才"
+    )
+}
+
+fn is_cjk(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x4E00..=0x9FFF
+            | 0x3400..=0x4DBF
+            | 0x20000..=0x2A6DF
+            | 0x2A700..=0x2B73F
+            | 0x2B740..=0x2B81F
+            | 0x2B820..=0x2CEAF
+    )
 }
 
 // ─────────────────────────────────────────────
@@ -258,7 +451,30 @@ mod tests {
         assert_eq!(skills[0].name, "rust-error-handling");
         assert_eq!(skills[0].description, "Error rules");
         assert_eq!(skills[0].priority, SkillPriority::High);
+        assert!(skills[0].triggers.is_empty());
         assert!(skills[0].content.contains("ZcodeError"));
+    }
+
+    #[test]
+    fn test_load_skill_with_triggers() {
+        let dir = TempDir::new().unwrap();
+        let skills_dir = make_skills_dir(dir.path());
+        write_skill(
+            &skills_dir,
+            "vue",
+            "---\nname: vue-best-practices\ndescription: Vue components\npriority: medium\ntriggers: vue, component, composable\n---\n\nUse Vue 3 patterns.\n",
+        );
+
+        let skills = SkillsLoader::load(dir.path(), &[]);
+
+        assert_eq!(
+            skills[0].triggers,
+            vec![
+                "vue".to_string(),
+                "component".to_string(),
+                "composable".to_string()
+            ]
+        );
     }
 
     #[test]
@@ -291,9 +507,21 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let skills_dir = make_skills_dir(dir.path());
 
-        write_skill(&skills_dir, "low", "---\nname: low\npriority: low\n---\nLow skill");
-        write_skill(&skills_dir, "high", "---\nname: high\npriority: high\n---\nHigh skill");
-        write_skill(&skills_dir, "mid", "---\nname: mid\npriority: medium\n---\nMid skill");
+        write_skill(
+            &skills_dir,
+            "low",
+            "---\nname: low\npriority: low\n---\nLow skill",
+        );
+        write_skill(
+            &skills_dir,
+            "high",
+            "---\nname: high\npriority: high\n---\nHigh skill",
+        );
+        write_skill(
+            &skills_dir,
+            "mid",
+            "---\nname: mid\npriority: medium\n---\nMid skill",
+        );
 
         let skills = SkillsLoader::load(dir.path(), &[]);
         assert_eq!(skills.len(), 3);
@@ -315,6 +543,7 @@ mod tests {
         let skill = Skill {
             name: "conventions".into(),
             description: "Project conventions".into(),
+            triggers: Vec::new(),
             priority: SkillPriority::High,
             content: "Always write tests.".into(),
         };
@@ -349,5 +578,86 @@ mod tests {
         let (fm, body) = SkillsLoader::split_frontmatter(text);
         assert!(fm.is_empty());
         assert!(body.contains("Hello"));
+    }
+
+    #[test]
+    fn test_select_relevant_matches_prompt_metadata() {
+        let skills = vec![
+            Skill {
+                name: "rust-conventions".into(),
+                description: "Rust coding conventions".into(),
+                triggers: vec!["rust".into(), "cargo".into()],
+                priority: SkillPriority::High,
+                content: "Use Result and ZcodeError.".into(),
+            },
+            Skill {
+                name: "vue-ui".into(),
+                description: "Vue component rules".into(),
+                triggers: vec!["vue".into(), "component".into()],
+                priority: SkillPriority::High,
+                content: "Use composables.".into(),
+            },
+        ];
+
+        let selected = SkillsLoader::select_relevant(&skills, "fix rust cargo tests", 4);
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].name, "rust-conventions");
+    }
+
+    #[test]
+    fn test_select_relevant_omits_unrelated_high_priority_skill() {
+        let skills = vec![Skill {
+            name: "rust-conventions".into(),
+            description: "Rust coding conventions".into(),
+            triggers: vec!["rust".into()],
+            priority: SkillPriority::High,
+            content: "Use Result and ZcodeError.".into(),
+        }];
+
+        let selected = SkillsLoader::select_relevant(&skills, "深圳今天的天气", 4);
+
+        assert!(selected.is_empty());
+    }
+
+    #[test]
+    fn test_select_relevant_uses_content_overlap_when_metadata_missing() {
+        let skills = vec![Skill {
+            name: "backend".into(),
+            description: "No description".into(),
+            triggers: Vec::new(),
+            priority: SkillPriority::Medium,
+            content: "Always use serde json schema validation for config parsing.".into(),
+        }];
+
+        let selected = SkillsLoader::select_relevant(&skills, "improve serde config validation", 4);
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].name, "backend");
+    }
+
+    #[test]
+    fn test_build_relevant_system_prompt_only_includes_selected_skills() {
+        let skills = vec![
+            Skill {
+                name: "rust".into(),
+                description: "Rust rules".into(),
+                triggers: vec!["rust".into()],
+                priority: SkillPriority::Medium,
+                content: "Rust content.".into(),
+            },
+            Skill {
+                name: "vue".into(),
+                description: "Vue rules".into(),
+                triggers: vec!["vue".into()],
+                priority: SkillPriority::Medium,
+                content: "Vue content.".into(),
+            },
+        ];
+
+        let prompt = SkillsLoader::build_relevant_system_prompt("", &skills, "fix rust module");
+
+        assert!(prompt.contains("Rust content."));
+        assert!(!prompt.contains("Vue content."));
     }
 }

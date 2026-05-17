@@ -2,7 +2,7 @@
 name = "zcode"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.91.0"
 authors = ["zcode contributors"]
 description = "A programming agent CLI tool"
 license = "MIT"

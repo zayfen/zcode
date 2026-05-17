@@ -3,6 +3,7 @@
 //! This module provides a terminal user interface with chat capabilities using ratatui.
 
 pub mod chat;
+mod markdown;
 
 pub use chat::{ChatInterface, PendingAsk};
 
@@ -22,7 +23,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Arc;
 use zcode_core::agent::ConversationMessage;
 use zcode_core::ZcodeError;
-use zcode_session::{Session, SessionManager};
+use zcode_session::{ContextPolicy, Session, SessionManager, SessionTurn};
 
 /// Type alias for the terminal backend
 pub type TuiBackend = CrosstermBackend<Stdout>;
@@ -174,6 +175,8 @@ pub struct TuiApp {
     project_root: PathBuf,
     /// Current session id, if the visible chat came from a saved session.
     current_session_id: Option<String>,
+    /// Current in-flight user prompt, saved with the assistant response when it completes.
+    active_user_prompt: Option<String>,
     /// Receiver for ask-user requests from the agent worker thread.
     ask_rx: Option<std::sync::mpsc::Receiver<zcode_core::AskRequest>>,
 }
@@ -205,6 +208,7 @@ impl TuiApp {
             session_manager: None,
             project_root: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             current_session_id: None,
+            active_user_prompt: None,
             ask_rx: None,
         }
     }
@@ -266,78 +270,78 @@ impl TuiApp {
                     return Ok(());
                 }
                 match (key.modifiers, key.code) {
-                // Quit
-                (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
-                    self.should_quit = true;
-                }
-                (KeyModifiers::NONE, KeyCode::Esc) => {
-                    if self.llm_in_flight {
-                        self.cancel_active_stream();
-                    } else {
+                    // Quit
+                    (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                         self.should_quit = true;
                     }
-                }
-                // --- Newline insertion ---
-                // Shift+Enter (requires keyboard enhancement / kitty protocol)
-                (KeyModifiers::SHIFT, KeyCode::Enter) => {
-                    self.chat.input_newline();
-                }
-                // Alt+Enter — works in most terminals without keyboard enhancement
-                (KeyModifiers::ALT, KeyCode::Enter) => {
-                    self.chat.input_newline();
-                }
-                // Ctrl+J — fallback for terminals that map Ctrl+J to \n
-                (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
-                    self.chat.input_newline();
-                }
-                (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
-                    self.chat.toggle_thinking();
-                }
-                // Ctrl+Enter is sometimes sent as Ctrl+M
-                (KeyModifiers::CONTROL, KeyCode::Enter) => {
-                    self.chat.input_newline();
-                }
-                // Plain Enter: send message
-                (KeyModifiers::NONE, KeyCode::Enter) => {
-                    if let Some(user_text) = self.chat.take_current_input() {
-                        if user_text.trim_start().starts_with('/') {
-                            self.handle_slash_command(&user_text);
-                        } else if self.task_executor.is_some() {
-                            self.pending_prompts.push_back(user_text);
-                            self.chat.pending_count = self.pending_prompts.len();
-                            self.start_next_prompt_if_idle();
+                    (KeyModifiers::NONE, KeyCode::Esc) => {
+                        if self.llm_in_flight {
+                            self.cancel_active_stream();
                         } else {
-                            self.chat.add_message(chat::ChatMessage::user(user_text));
-                            self.chat.add_message(chat::ChatMessage::assistant(
-                                "⚠ No LLM provider configured. \
-                                Set ZCODE_API_KEY environment variable and restart.",
-                            ));
+                            self.should_quit = true;
                         }
                     }
-                }
-                // --- Cursor movement ---
-                (KeyModifiers::NONE, KeyCode::Left) => {
-                    self.chat.cursor_left();
-                }
-                (KeyModifiers::NONE, KeyCode::Right) => {
-                    self.chat.cursor_right();
-                }
-                // --- Typing ---
-                (KeyModifiers::NONE, KeyCode::Char(c))
-                | (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
-                    self.chat.input_char(c);
-                }
-                (KeyModifiers::NONE, KeyCode::Backspace)
-                | (KeyModifiers::SHIFT, KeyCode::Backspace) => {
-                    self.chat.backspace();
-                }
-                (KeyModifiers::NONE, KeyCode::Up) => {
-                    self.chat.scroll_up();
-                }
-                (KeyModifiers::NONE, KeyCode::Down) => {
-                    self.chat.scroll_down();
-                }
-                _ => {}
+                    // --- Newline insertion ---
+                    // Shift+Enter (requires keyboard enhancement / kitty protocol)
+                    (KeyModifiers::SHIFT, KeyCode::Enter) => {
+                        self.chat.input_newline();
+                    }
+                    // Alt+Enter — works in most terminals without keyboard enhancement
+                    (KeyModifiers::ALT, KeyCode::Enter) => {
+                        self.chat.input_newline();
+                    }
+                    // Ctrl+J — fallback for terminals that map Ctrl+J to \n
+                    (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
+                        self.chat.input_newline();
+                    }
+                    (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
+                        self.chat.toggle_thinking();
+                    }
+                    // Ctrl+Enter is sometimes sent as Ctrl+M
+                    (KeyModifiers::CONTROL, KeyCode::Enter) => {
+                        self.chat.input_newline();
+                    }
+                    // Plain Enter: send message
+                    (KeyModifiers::NONE, KeyCode::Enter) => {
+                        if let Some(user_text) = self.chat.take_current_input() {
+                            if user_text.trim_start().starts_with('/') {
+                                self.handle_slash_command(&user_text);
+                            } else if self.task_executor.is_some() {
+                                self.pending_prompts.push_back(user_text);
+                                self.chat.pending_count = self.pending_prompts.len();
+                                self.start_next_prompt_if_idle();
+                            } else {
+                                self.chat.add_message(chat::ChatMessage::user(user_text));
+                                self.chat.add_message(chat::ChatMessage::assistant(
+                                    "⚠ No LLM provider configured. \
+                                Set ZCODE_API_KEY environment variable and restart.",
+                                ));
+                            }
+                        }
+                    }
+                    // --- Cursor movement ---
+                    (KeyModifiers::NONE, KeyCode::Left) => {
+                        self.chat.cursor_left();
+                    }
+                    (KeyModifiers::NONE, KeyCode::Right) => {
+                        self.chat.cursor_right();
+                    }
+                    // --- Typing ---
+                    (KeyModifiers::NONE, KeyCode::Char(c))
+                    | (KeyModifiers::SHIFT, KeyCode::Char(c)) => {
+                        self.chat.input_char(c);
+                    }
+                    (KeyModifiers::NONE, KeyCode::Backspace)
+                    | (KeyModifiers::SHIFT, KeyCode::Backspace) => {
+                        self.chat.backspace();
+                    }
+                    (KeyModifiers::NONE, KeyCode::Up) => {
+                        self.chat.scroll_up();
+                    }
+                    (KeyModifiers::NONE, KeyCode::Down) => {
+                        self.chat.scroll_down();
+                    }
+                    _ => {}
                 }
             }
             Event::Mouse(mouse) => match mouse.kind {
@@ -392,9 +396,11 @@ impl TuiApp {
             return;
         };
 
-        let history = self.visible_conversation_history();
+        self.ensure_current_session_id();
+        let history = self.relevant_conversation_history(&user_text);
         self.chat
             .add_message(chat::ChatMessage::user(user_text.clone()));
+        self.active_user_prompt = Some(user_text.clone());
         self.chat.pending_count = self.pending_prompts.len();
         self.chat.start_loading();
         if let Some(agent) = self.agent_statuses.iter_mut().find(|a| a.0 == "Supervisor") {
@@ -494,8 +500,10 @@ impl TuiApp {
                 }
                 Ok(TaskUiEvent::Done(text)) => {
                     if !text.trim().is_empty() {
-                        self.chat.add_message(chat::ChatMessage::assistant(text));
+                        self.chat
+                            .add_message(chat::ChatMessage::assistant(text.clone()));
                     }
+                    self.save_completed_turn(text);
                     self.finish_stream(false);
                     keep_rx = false;
                     break;
@@ -532,6 +540,9 @@ impl TuiApp {
     fn finish_stream(&mut self, had_error: bool) {
         self.llm_in_flight = false;
         self.cancel_flag = None;
+        if had_error {
+            self.active_user_prompt = None;
+        }
         self.chat.stop_loading();
         self.chat.pending_count = self.pending_prompts.len();
         if let Some(agent) = self.agent_statuses.iter_mut().find(|a| a.0 == "Supervisor") {
@@ -576,6 +587,20 @@ impl TuiApp {
             .collect()
     }
 
+    fn relevant_conversation_history(&self, prompt: &str) -> Vec<ConversationMessage> {
+        if let (Some(manager), Some(session_id)) = (
+            self.session_manager.as_ref(),
+            self.current_session_id.as_ref(),
+        ) {
+            if let Ok(context) = manager.select_related_context(session_id, prompt) {
+                return context.messages;
+            }
+        }
+        ContextPolicy::default()
+            .select(prompt, &self.visible_conversation_history())
+            .messages
+    }
+
     fn cancel_active_stream(&mut self) {
         if let Some(flag) = &self.cancel_flag {
             flag.store(true, Ordering::SeqCst);
@@ -601,10 +626,7 @@ impl TuiApp {
             (KeyModifiers::NONE, KeyCode::Enter) => {
                 if let Some((tx, answer)) = self.chat.ask_confirm() {
                     self.chat
-                        .add_message(chat::ChatMessage::system(format!(
-                            "You chose: {}",
-                            answer
-                        )));
+                        .add_message(chat::ChatMessage::system(format!("You chose: {}", answer)));
                     let _ = tx.send(answer);
                 }
             }
@@ -626,11 +648,10 @@ impl TuiApp {
         match rx.try_recv() {
             Ok(request) => {
                 let question = request.question.clone();
-                self.chat
-                    .add_message(chat::ChatMessage::system(format!(
-                        "Agent asks: {}",
-                        question
-                    )));
+                self.chat.add_message(chat::ChatMessage::system(format!(
+                    "Agent asks: {}",
+                    question
+                )));
                 self.chat.pending_ask = Some(chat::PendingAsk {
                     question: request.question,
                     options: request.options,
@@ -655,6 +676,7 @@ impl TuiApp {
                 if self.chat.undo_last_turn() {
                     self.chat
                         .add_message(chat::ChatMessage::system("Undid the last turn."));
+                    self.save_current_session();
                 } else {
                     self.chat
                         .add_message(chat::ChatMessage::system("Nothing to undo."));
@@ -671,6 +693,20 @@ impl TuiApp {
                 }
                 self.save_current_session();
             }
+            "/clear" => {
+                self.chat.messages.clear();
+                self.chat.thinking_log.clear();
+                self.chat.latest_thinking.clear();
+                self.active_steps.clear();
+                self.pending_prompts.clear();
+                self.active_user_prompt = None;
+                self.chat.pending_count = 0;
+                self.current_session_id = Some(generate_session_id());
+                self.chat.add_message(chat::ChatMessage::system(
+                    "Conversation cleared. New prompts will start with fresh context.",
+                ));
+                self.save_current_session();
+            }
             "/resume" => {
                 let requested = parts.next();
                 match self.resume_session(requested) {
@@ -683,12 +719,12 @@ impl TuiApp {
             }
             "/help" => {
                 self.chat.add_message(chat::ChatMessage::system(
-                    "Commands: `/resume [id]`, `/undo`, `/compact`, `/help`.",
+                    "Commands: `/resume [id]`, `/undo`, `/compact`, `/clear`, `/help`.",
                 ));
             }
             _ => {
                 self.chat.add_message(chat::ChatMessage::system(
-                    "Unknown command. Try `/help`, `/resume`, `/undo`, or `/compact`.",
+                    "Unknown command. Try `/help`, `/resume`, `/undo`, `/compact`, or `/clear`.",
                 ));
             }
         }
@@ -707,7 +743,7 @@ impl TuiApp {
                 .into_iter()
                 .next()
                 .ok_or_else(|| ZcodeError::FileNotFound {
-                    path: ".zcode/sessions/*.json".to_string(),
+                    path: ".zcode/sessions/*.jsonl".to_string(),
                 })?
         };
 
@@ -723,9 +759,7 @@ impl TuiApp {
     }
 
     fn save_current_session(&mut self) {
-        let Some(id) = self.current_session_id.clone() else {
-            return;
-        };
+        let id = self.ensure_current_session_id();
         let project_root = self.project_root.clone();
         if self.session_manager.is_none() {
             let Ok(manager) = SessionManager::new(project_root) else {
@@ -743,6 +777,53 @@ impl TuiApp {
         }
         let _ = manager.save(&mut session);
     }
+
+    fn save_completed_turn(&mut self, assistant_text: String) {
+        let Some(user_text) = self.active_user_prompt.take() else {
+            return;
+        };
+        let id = self.ensure_current_session_id();
+        let project_root = self.project_root.clone();
+        if self.session_manager.is_none() {
+            let Ok(manager) = SessionManager::new(project_root) else {
+                return;
+            };
+            self.session_manager = Some(manager);
+        }
+
+        let Some(manager) = self.session_manager.as_ref() else {
+            return;
+        };
+        let turn = SessionTurn {
+            user: ConversationMessage::user(user_text),
+            assistant: (!assistant_text.trim().is_empty())
+                .then(|| ConversationMessage::assistant_text(assistant_text)),
+        };
+        let _ = manager.append_turn(&id, turn);
+    }
+
+    fn ensure_current_session_id(&mut self) -> String {
+        if let Some(id) = &self.current_session_id {
+            return id.clone();
+        }
+        let id = generate_session_id();
+        self.current_session_id = Some(id.clone());
+        if self.session_manager.is_none() {
+            if let Ok(manager) = SessionManager::new(self.project_root.clone()) {
+                self.session_manager = Some(manager);
+            }
+        }
+        id
+    }
+}
+
+fn generate_session_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    format!("session-{}", millis)
 }
 
 fn display_agent_name(agent: &str) -> String {
@@ -813,659 +894,4 @@ impl Default for TuiApp {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-    use zcode_llm_provider::{LlmProvider, LlmResponse, Message};
-
-    // ============================================================
-    // TuiApp creation tests
-    // ============================================================
-
-    #[test]
-    fn test_tui_app_new() {
-        let app = TuiApp::new();
-        assert!(!app.should_quit);
-        assert_eq!(app.active_skills.len(), 0);
-        assert_eq!(app.active_mcps.len(), 0);
-        assert_eq!(app.agent_statuses.len(), 5);
-        assert_eq!(app.agent_statuses[0].0, "Supervisor");
-        assert_eq!(app.agent_statuses[0].1, "Idle");
-    }
-
-    #[test]
-    fn test_tui_app_default() {
-        let app = TuiApp::default();
-        assert!(!app.should_quit);
-        assert_eq!(app.agent_statuses.len(), 5);
-    }
-
-    // ============================================================
-    // TuiApp should_quit tests
-    // ============================================================
-
-    #[test]
-    fn test_tui_app_should_quit_initially_false() {
-        let app = TuiApp::new();
-        assert!(!app.should_quit);
-    }
-
-    #[test]
-    fn test_tui_app_should_quit_can_be_set() {
-        let mut app = TuiApp::new();
-        app.should_quit = true;
-        assert!(app.should_quit);
-    }
-
-    // ============================================================
-    // TuiApp handle_event tests
-    // ============================================================
-
-    #[test]
-    fn test_tui_app_handle_event_ctrl_c() {
-        let mut app = TuiApp::new();
-        let event = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
-        app.handle_event(event).unwrap();
-        assert!(app.should_quit);
-    }
-
-    #[test]
-    fn test_tui_app_handle_event_escape() {
-        let mut app = TuiApp::new();
-        let event = Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        app.handle_event(event).unwrap();
-        assert!(app.should_quit);
-    }
-
-    #[test]
-    fn test_tui_app_escape_interrupts_in_flight_without_quitting() {
-        let mut app = TuiApp::new();
-        app.llm_in_flight = true;
-        app.cancel_flag = Some(Arc::new(AtomicBool::new(false)));
-
-        let event = Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        app.handle_event(event).unwrap();
-
-        assert!(!app.should_quit);
-        assert!(!app.llm_in_flight);
-        assert!(app
-            .chat
-            .messages
-            .iter()
-            .any(|message| message.content.contains("interrupted")));
-    }
-
-    #[test]
-    fn test_tui_app_handle_event_enter() {
-        let mut app = TuiApp::new();
-        app.chat.input = "Test".to_string();
-
-        let event = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        app.handle_event(event).unwrap();
-
-        assert!(app.chat.input.is_empty());
-        assert!(!app.should_quit);
-    }
-
-    #[test]
-    fn test_tui_app_handle_event_character() {
-        let mut app = TuiApp::new();
-
-        let event = Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
-        app.handle_event(event).unwrap();
-
-        assert_eq!(app.chat.input, "a");
-        assert!(!app.should_quit);
-    }
-
-    #[test]
-    fn test_tui_app_handle_event_backspace() {
-        let mut app = TuiApp::new();
-        app.chat.input = "Hello".to_string();
-        app.chat.cursor_pos = app.chat.input.len(); // cursor at end
-
-        let event = Event::Key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
-        app.handle_event(event).unwrap();
-
-        assert_eq!(app.chat.input, "Hell");
-        assert!(!app.should_quit);
-    }
-
-    #[test]
-    fn test_tui_app_handle_event_other_key() {
-        let mut app = TuiApp::new();
-
-        // Test that other key combinations don't cause issues
-        let event = Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-        app.handle_event(event).unwrap();
-
-        assert!(!app.should_quit);
-    }
-
-    #[test]
-    fn test_tui_app_handle_event_multiple_characters() {
-        let mut app = TuiApp::new();
-
-        for c in "Hello".chars() {
-            let event = Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
-            app.handle_event(event).unwrap();
-        }
-
-        assert_eq!(app.chat.input, "Hello");
-    }
-
-    #[test]
-    fn test_tui_app_handle_event_non_key_event() {
-        let mut app = TuiApp::new();
-
-        // Mouse event should be ignored
-        let event = Event::Mouse(crossterm::event::MouseEvent {
-            kind: crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left),
-            column: 0,
-            row: 0,
-            modifiers: KeyModifiers::NONE,
-        });
-        app.handle_event(event).unwrap();
-
-        assert!(!app.should_quit);
-    }
-
-    #[test]
-    fn test_tui_app_handle_event_scroll() {
-        let mut app = TuiApp::new();
-        app.chat.rendered_message_lines = 20;
-        app.chat.visible_message_height = 5;
-
-        // Scroll down
-        let event = Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
-        app.handle_event(event).unwrap();
-        assert_eq!(app.chat.scroll, 3);
-
-        // Scroll up
-        let event = Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
-        app.handle_event(event).unwrap();
-        assert_eq!(app.chat.scroll, 0);
-    }
-
-    #[test]
-    fn test_tui_app_mouse_scroll() {
-        let mut app = TuiApp::new();
-        app.chat.rendered_message_lines = 20;
-        app.chat.visible_message_height = 5;
-
-        let event = Event::Mouse(crossterm::event::MouseEvent {
-            kind: crossterm::event::MouseEventKind::ScrollDown,
-            column: 0,
-            row: 0,
-            modifiers: KeyModifiers::NONE,
-        });
-        app.handle_event(event).unwrap();
-
-        assert_eq!(app.chat.scroll, 3);
-    }
-
-    // ============================================================
-    // TuiApp chat integration tests
-    // ============================================================
-
-    #[test]
-    fn test_tui_app_chat_initially_empty() {
-        let app = TuiApp::new();
-        assert!(app.chat.input.is_empty());
-        assert!(app.chat.messages.is_empty());
-    }
-
-    #[test]
-    fn test_tui_app_chat_can_add_messages() {
-        let mut app = TuiApp::new();
-        app.chat.add_message(chat::ChatMessage::system("Welcome"));
-        assert_eq!(app.chat.messages.len(), 1);
-    }
-
-    // ============================================================
-    // TuiApp type alias tests
-    // ============================================================
-
-    #[test]
-    fn test_tui_backend_type() {
-        // Verify type alias compiles
-        fn _check_type(_: TuiBackend) {}
-        // This function is just for compile-time checking
-    }
-
-    #[test]
-    fn test_tui_terminal_type() {
-        // Verify type alias compiles
-        fn _check_type(_: TuiTerminal) {}
-        // This function is just for compile-time checking
-    }
-
-    // ============================================================
-    // TuiApp edge cases
-    // ============================================================
-
-    #[test]
-    fn test_tui_app_handle_event_empty_input_enter() {
-        let mut app = TuiApp::new();
-
-        // Enter with empty input should not add messages
-        let event = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        app.handle_event(event).unwrap();
-
-        assert!(app.chat.messages.is_empty());
-    }
-
-    #[test]
-    fn test_tui_app_handle_event_backspace_empty() {
-        let mut app = TuiApp::new();
-
-        // Backspace on empty input should not panic
-        let event = Event::Key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
-        app.handle_event(event).unwrap();
-
-        assert!(app.chat.input.is_empty());
-    }
-
-    #[test]
-    fn test_tui_app_handle_event_unicode_character() {
-        let mut app = TuiApp::new();
-
-        let event = Event::Key(KeyEvent::new(KeyCode::Char('你'), KeyModifiers::NONE));
-        app.handle_event(event).unwrap();
-
-        assert_eq!(app.chat.input, "你");
-    }
-
-    #[test]
-    fn test_tui_app_full_typing_sequence() {
-        let mut app = TuiApp::new();
-
-        // Type "Hi"
-        let event = Event::Key(KeyEvent::new(KeyCode::Char('H'), KeyModifiers::NONE));
-        app.handle_event(event).unwrap();
-        let event = Event::Key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
-        app.handle_event(event).unwrap();
-
-        // Send
-        let event = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        app.handle_event(event).unwrap();
-
-        // Without a provider, the user message is preserved and a warning is shown.
-        assert_eq!(app.chat.messages.len(), 2);
-        assert_eq!(app.chat.messages[0].role, "user");
-        assert_eq!(app.chat.messages[1].role, "assistant");
-    }
-
-    // ============================================================
-    // Event handling edge cases
-    // ============================================================
-
-    #[test]
-    fn test_tui_app_ctrl_other_keys() {
-        let mut app = TuiApp::new();
-
-        // Ctrl+A should not quit
-        let event = Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL));
-        app.handle_event(event).unwrap();
-        assert!(!app.should_quit);
-
-        // Ctrl+D should not quit
-        let event = Event::Key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
-        app.handle_event(event).unwrap();
-        assert!(!app.should_quit);
-    }
-
-    #[test]
-    fn test_tui_app_shift_modifiers() {
-        let mut app = TuiApp::new();
-
-        // Shift+Char should be handled as character
-        let event = Event::Key(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT));
-        app.handle_event(event).unwrap();
-
-        assert_eq!(app.chat.input, "A");
-    }
-
-    #[test]
-    fn test_tui_app_alt_modifiers() {
-        let mut app = TuiApp::new();
-
-        // Alt+Char should be ignored (no handler)
-        let event = Event::Key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::ALT));
-        app.handle_event(event).unwrap();
-
-        assert!(!app.should_quit);
-        assert!(app.chat.input.is_empty());
-    }
-
-    // ============================================================
-    // Mock provider for testing
-    // ============================================================
-
-    struct MockProvider {
-        should_fail: bool,
-    }
-
-    impl LlmProvider for MockProvider {
-        fn complete(&self, _prompt: &str) -> std::result::Result<String, ZcodeError> {
-            Ok("mock response".to_string())
-        }
-
-        fn chat(
-            &self,
-            _messages: &[Message],
-            _tools: &[serde_json::Value],
-        ) -> std::result::Result<LlmResponse, ZcodeError> {
-            if self.should_fail {
-                Err(ZcodeError::InternalError("mock failure".to_string()))
-            } else {
-                Ok(LlmResponse {
-                    content: "mock response".to_string(),
-                    model: "mock-model".to_string(),
-                    usage: None,
-                    raw_response: serde_json::Value::Null,
-                })
-            }
-        }
-
-        fn stream_complete(
-            &self,
-            _prompt: &str,
-        ) -> std::result::Result<zcode_llm_provider::provider::StreamingResponse, ZcodeError>
-        {
-            unimplemented!()
-        }
-
-        fn stream_chat(
-            &self,
-            _messages: &[Message],
-            _tools: &[serde_json::Value],
-        ) -> std::result::Result<zcode_llm_provider::ChatStreamingResponse, ZcodeError> {
-            Ok(Box::pin(futures::stream::iter(vec![Ok(
-                zcode_llm_provider::LlmStreamEvent::Content("mock response".to_string()),
-            )])))
-        }
-    }
-
-    // ============================================================
-    // TuiApp with_provider tests
-    // ============================================================
-
-    #[test]
-    fn test_tui_app_with_provider() {
-        let provider = Arc::new(MockProvider { should_fail: false });
-        let app = TuiApp::with_provider(provider);
-        assert!(!app.should_quit);
-        assert!(app.chat.messages.iter().any(|m| m.role == "system"));
-    }
-
-    #[test]
-    fn test_tui_app_enter_queues_prompt_while_in_flight() {
-        let provider = Arc::new(MockProvider { should_fail: false });
-        let mut app = TuiApp::with_provider(provider);
-        app.llm_in_flight = true;
-        app.chat.input = "queued prompt".to_string();
-        app.chat.cursor_pos = app.chat.input.len();
-
-        let event = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        app.handle_event(event).unwrap();
-
-        assert_eq!(app.pending_prompts.len(), 1);
-        assert_eq!(app.chat.pending_count, 1);
-        assert!(app.chat.input.is_empty());
-        assert!(!app
-            .chat
-            .messages
-            .iter()
-            .any(|m| m.content == "queued prompt"));
-    }
-
-    #[test]
-    fn test_tui_app_done_starts_new_assistant_turn() {
-        let mut app = TuiApp::new();
-        app.llm_in_flight = true;
-        app.task_rx = None;
-        app.chat.add_message(chat::ChatMessage::user("list files"));
-        app.chat
-            .add_message(chat::ChatMessage::assistant("file list"));
-
-        let (tx, rx) = mpsc::channel();
-        tx.send(TaskUiEvent::Done("weather report".to_string()))
-            .unwrap();
-        app.task_rx = Some(rx);
-
-        app.drain_task_events();
-
-        assert_eq!(app.chat.messages.len(), 3);
-        assert_eq!(app.chat.messages[1].content, "file list");
-        assert_eq!(app.chat.messages[2].role, "assistant");
-        assert_eq!(app.chat.messages[2].content, "weather report");
-    }
-
-    #[test]
-    fn test_tui_app_step_events_update_agent_status() {
-        let mut app = TuiApp::new();
-        let (tx, rx) = mpsc::channel();
-        tx.send(TaskUiEvent::StepStart {
-            id: "step-2".to_string(),
-            title: "Apply the changes".to_string(),
-            agent: "coder".to_string(),
-        })
-        .unwrap();
-        tx.send(TaskUiEvent::StepComplete {
-            id: "step-2".to_string(),
-            title: "Apply the changes".to_string(),
-            agent: "coder".to_string(),
-            success: true,
-        })
-        .unwrap();
-        app.task_rx = Some(rx);
-
-        app.drain_task_events();
-
-        let coder = app
-            .agent_statuses
-            .iter()
-            .find(|(name, _)| name == "Coder")
-            .unwrap();
-        assert_eq!(coder.1, "Done");
-        assert!(app
-            .chat
-            .thinking_log
-            .iter()
-            .any(|line| line.contains("Apply the changes")));
-    }
-
-    #[test]
-    fn test_tui_app_internal_graph_nodes_do_not_override_step_status() {
-        let mut app = TuiApp::new();
-        let (tx, rx) = mpsc::channel();
-        tx.send(TaskUiEvent::StepStart {
-            id: "step-2".to_string(),
-            title: "Apply the changes".to_string(),
-            agent: "coder".to_string(),
-        })
-        .unwrap();
-        tx.send(TaskUiEvent::AgentStart("execute_step".to_string()))
-            .unwrap();
-        tx.send(TaskUiEvent::AgentComplete("execute_step".to_string()))
-            .unwrap();
-        tx.send(TaskUiEvent::ToolStart {
-            agent: "coder".to_string(),
-            tool_name: "shell".to_string(),
-            command: "cargo test".to_string(),
-        })
-        .unwrap();
-        tx.send(TaskUiEvent::ToolComplete {
-            agent: "coder".to_string(),
-            tool_name: "shell".to_string(),
-            success: true,
-        })
-        .unwrap();
-        app.task_rx = Some(rx);
-
-        app.drain_task_events();
-
-        let coder = app
-            .agent_statuses
-            .iter()
-            .find(|(name, _)| name == "Coder")
-            .unwrap();
-        assert_eq!(coder.1, "Apply the changes");
-        let supervisor = app
-            .agent_statuses
-            .iter()
-            .find(|(name, _)| name == "Supervisor")
-            .unwrap();
-        assert_eq!(supervisor.1, "Apply the changes");
-        assert!(app
-            .agent_statuses
-            .iter()
-            .all(|(name, _)| name != "Execute_step"));
-    }
-
-    #[test]
-    fn test_tui_app_task_request_includes_previous_visible_history() {
-        let (captured_tx, captured_rx) = mpsc::channel();
-        let executor: TaskExecutor = Arc::new(move |request, _cancel, tx| {
-            captured_tx.send(request).unwrap();
-            let _ = tx.send(TaskUiEvent::Done("ok".to_string()));
-        });
-        let mut app = TuiApp::with_task_executor(executor);
-        app.chat.add_message(chat::ChatMessage::system("status"));
-        app.chat.add_message(chat::ChatMessage::user("list files"));
-        app.chat
-            .add_message(chat::ChatMessage::assistant("file list"));
-        app.chat.input = "today weather".to_string();
-        app.chat.cursor_pos = app.chat.input.len();
-
-        let event = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        app.handle_event(event).unwrap();
-
-        let request = captured_rx
-            .recv_timeout(std::time::Duration::from_secs(1))
-            .unwrap();
-        assert_eq!(request.prompt, "today weather");
-        assert_eq!(request.history.len(), 2);
-        assert_eq!(request.history[0].role, "user");
-        assert_eq!(request.history[0].content.as_deref(), Some("list files"));
-        assert_eq!(request.history[1].role, "assistant");
-        assert_eq!(request.history[1].content.as_deref(), Some("file list"));
-        assert!(!request
-            .history
-            .iter()
-            .any(|message| message.content.as_deref() == Some("today weather")));
-    }
-
-    #[test]
-    fn test_tui_app_slash_undo() {
-        let mut app = TuiApp::new();
-        app.chat.add_message(chat::ChatMessage::user("question"));
-        app.chat.add_message(chat::ChatMessage::assistant("answer"));
-        app.chat.input = "/undo".to_string();
-        app.chat.cursor_pos = app.chat.input.len();
-
-        let event = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        app.handle_event(event).unwrap();
-
-        assert!(!app
-            .chat
-            .messages
-            .iter()
-            .any(|msg| msg.content == "question"));
-        assert!(app
-            .chat
-            .messages
-            .iter()
-            .any(|msg| msg.content.contains("Undid")));
-    }
-
-    #[test]
-    fn test_tui_app_slash_compact() {
-        let mut app = TuiApp::new();
-        for index in 0..24 {
-            app.chat
-                .add_message(chat::ChatMessage::user(format!("message {}", index)));
-        }
-        app.chat.input = "/compact".to_string();
-        app.chat.cursor_pos = app.chat.input.len();
-
-        let event = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        app.handle_event(event).unwrap();
-
-        assert!(app.chat.messages[0]
-            .content
-            .contains("Compacted conversation summary"));
-    }
-
-    #[test]
-    fn test_tui_app_slash_resume_missing_session_reports_error() {
-        let mut app = TuiApp::new();
-        app.project_root =
-            std::env::temp_dir().join(format!("zcode-ui-missing-session-{}", std::process::id()));
-        app.chat.input = "/resume missing".to_string();
-        app.chat.cursor_pos = app.chat.input.len();
-
-        let event = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-        app.handle_event(event).unwrap();
-
-        assert!(app
-            .chat
-            .messages
-            .iter()
-            .any(|msg| msg.content.contains("Resume failed")));
-    }
-
-    // ============================================================
-    // TuiApp multi-line input tests
-    // ============================================================
-
-    #[test]
-    fn test_tui_app_shift_enter_newline() {
-        let mut app = TuiApp::new();
-        let event = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
-        app.handle_event(event).unwrap();
-        assert_eq!(app.chat.input, "\n");
-    }
-
-    #[test]
-    fn test_tui_app_ctrl_j_newline() {
-        let mut app = TuiApp::new();
-        let event = Event::Key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL));
-        app.handle_event(event).unwrap();
-        assert_eq!(app.chat.input, "\n");
-    }
-
-    #[test]
-    fn test_tui_app_ctrl_enter_newline() {
-        let mut app = TuiApp::new();
-        let event = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
-        app.handle_event(event).unwrap();
-        assert_eq!(app.chat.input, "\n");
-    }
-
-    #[test]
-    fn test_tui_app_alt_enter_newline() {
-        let mut app = TuiApp::new();
-        let event = Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
-        app.handle_event(event).unwrap();
-        assert_eq!(app.chat.input, "\n");
-    }
-
-    #[test]
-    fn test_tui_app_cursor_left_right() {
-        let mut app = TuiApp::new();
-        app.chat.input = "Hello".to_string();
-        app.chat.cursor_pos = 5; // end of "Hello"
-
-        // Press left
-        let event = Event::Key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
-        app.handle_event(event).unwrap();
-        assert_eq!(app.chat.cursor_pos, 4);
-
-        // Press right
-        let event = Event::Key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE));
-        app.handle_event(event).unwrap();
-        assert_eq!(app.chat.cursor_pos, 5);
-    }
-}
+mod app_tests;

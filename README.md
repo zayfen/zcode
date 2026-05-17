@@ -12,7 +12,7 @@
 | Models | `ZCODE_MODEL` plus optional `ZCODE_FAST_MODEL` for simple tasks |
 | Capabilities | MCP tools, skills, and global shared context |
 | Requirements | `docs/` scaffold, validation, task parsing, and task persistence |
-| Session | Message history, load/list/delete, and deterministic compression |
+| Session | One JSONL file per session, LanceDB related-history retrieval, load/list/delete, and deterministic compression |
 | TUI | Ratatui chat interface |
 
 ## Build
@@ -21,6 +21,17 @@
 cargo build --workspace
 cargo test --workspace
 ```
+
+For day-to-day startup checks, run the compiled binary directly:
+
+```bash
+cargo build --workspace
+target/debug/zcode chat
+```
+
+`cargo run -- chat` is useful while developing, but it includes Cargo's check,
+compile, link, and run overhead. Do not use it as the measure for zcode's TUI
+startup latency.
 
 ## LLM Configuration
 
@@ -39,23 +50,31 @@ export ZCODE_FAST_MODEL="gpt-4o-mini"
 
 ```bash
 # Start the TUI chat
-cargo run -- chat
+target/debug/zcode chat
 
 # Initialize/validate standardized requirement docs
-cargo run -- docs init
-cargo run -- docs check
+target/debug/zcode docs init
+target/debug/zcode docs check
 
 # Run a task through the agent workflow
-cargo run -- run "Implement the next task from docs"
+target/debug/zcode run "Implement the next task from docs"
 
 # Manage persisted task records
-cargo run -- task list
-cargo run -- task sync
-cargo run -- task run <task-id-or-description>
-cargo run -- task run-all -j 2
+target/debug/zcode task list
+target/debug/zcode task sync
+target/debug/zcode task run <task-id-or-description>
+target/debug/zcode task run-all -j 2
 ```
 
 Use `--skip-docs-check` if you need to run before the `docs/` scaffold is valid.
+
+## Session Context
+
+Interactive chat sessions are stored as JSONL files under `.zcode/sessions/`.
+Before each new prompt, zcode queries a derived LanceDB index in
+`.zcode/session-index/` and injects only related prior turns into the agent
+context. Unrelated prompts start fresh, which avoids mixing answers across
+topics in the same session.
 
 ## Workspace Crates
 
@@ -66,7 +85,7 @@ Use `--skip-docs-check` if you need to run before the `docs/` scaffold is valid.
 | `zcode_orchestration` | Agent graph and ReAct execution |
 | `zcode_llm_provider` | OpenAI-compatible provider |
 | `zcode_capabilities` | Skills, MCP, tool calls, shared context |
-| `zcode_session` | Session messages and compression |
+| `zcode_session` | JSONL sessions, LanceDB related-history retrieval, and compression |
 | `zcode_core` | Shared errors, config, and DTOs |
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) and [USAGE.md](USAGE.md) for details.
+See [ARCHITECTURE.md](ARCHITECTURE.md), [中文架构说明](docs/architecture.zh-CN.md), and [USAGE.md](USAGE.md) for details.

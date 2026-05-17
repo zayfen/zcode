@@ -25,6 +25,33 @@ zcode chat
 zcode --model gpt-4o-mini chat
 ```
 
+Each chat session is persisted as one JSONL file in `.zcode/sessions/`.
+For every new prompt, zcode retrieves related prior turns through the local
+LanceDB session index and passes only those turns as optional background. If the
+new prompt is unrelated to earlier conversation, it is sent as a fresh request.
+
+## Startup Performance
+
+Use the compiled binary when judging startup latency:
+
+```bash
+cargo build --workspace
+target/debug/zcode --skip-docs-check chat
+```
+
+`cargo run -- chat` is a development convenience. Its wall-clock time includes
+Cargo's package graph checks, incremental compilation, linking, and process
+launch overhead, so it can feel slow even when zcode's own chat startup path is
+fast.
+
+The chat first screen is intentionally lightweight. Before entering the TUI
+loop, zcode reads settings, initializes the terminal, loads project config,
+builds agent provider handles, loads skill metadata, and builds the tool
+registry. LanceDB session retrieval does not run until the user submits a
+prompt. The main startup risk is auto-start MCP: each enabled MCP server is
+started synchronously and must complete `initialize` plus `tools/list` before
+all tools are available.
+
 ### `zcode run`
 
 Run a task through the agent workflow.
@@ -87,6 +114,25 @@ export ZCODE_BASE_URL="https://api.openai.com/v1"
 export ZCODE_API_KEY="sk-..."
 export ZCODE_MODEL="gpt-4o"
 export ZCODE_FAST_MODEL="gpt-4o-mini"
+```
+
+## Skills
+
+Project skills live at `docs/skills/<name>/SKILL.md`; global extra skill
+directories are configured with `skill_dirs` in `~/.zcode/zcode.json`.
+At runtime, zcode selects skills per prompt using generic relevance scoring
+over `name`, `description`, optional `triggers`, and body text. Unrelated skills
+are not injected into the LLM context.
+
+```md
+---
+name: rust-conventions
+description: Rust coding conventions for zcode
+priority: high
+triggers: rust, cargo, clippy, test
+---
+
+Use `ZcodeError` for production errors.
 ```
 
 ## MCP Tools

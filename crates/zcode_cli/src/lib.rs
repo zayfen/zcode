@@ -19,7 +19,10 @@
 //! ```
 
 pub mod args;
+mod cli_events;
 pub mod commands;
+mod llm_runtime;
+mod tui_task;
 
 pub use args::{Args, Command};
 pub use commands::{execute_command, execute_default};

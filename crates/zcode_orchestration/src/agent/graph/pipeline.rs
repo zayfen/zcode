@@ -3,11 +3,11 @@
 //! Two pipelines are provided:
 //!
 //! - `build_task_pipeline()`: per-task graph
-//!   (`orchestrator → planner → coder(ReAct) → reviewer`).
-//!   The root orchestrator schedules the planner/coder/reviewer nodes. After
-//!   the reviewer the graph either ends (PASS or retries exhausted) or loops
-//!   back to the coder (FAIL, retries remaining). Maximum 3 coder retries per
-//!   task.
+//!   (`supervisor → execute_step → supervisor ...`).
+//!   The supervisor asks the LLM which agent should handle the next step, then
+//!   starts exactly one investigator/planner/coder/reviewer step. Guardrails
+//!   reject unsafe decisions such as reviewing before code exists and fall back
+//!   to a conservative default when the supervisor response is invalid.
 //!
 //! - `build_reviewer_pipeline()`: global review graph run **once** after all
 //!   tasks have completed.  The reviewer receives a combined report of all
@@ -15,17 +15,21 @@
 
 use crate::agent::graph::edge::routers;
 use crate::agent::graph::graph::{GraphEvent, StateGraph};
+use crate::agent::graph::llm_bridge::call_llm;
 use crate::agent::graph::node::AsyncFnNode;
 use crate::agent::graph::state::NodeOutput;
-use crate::agent::loop_exec::{AgentLoop, ConversationMessage, LlmResponse, LoopConfig, LoopEvent};
+use crate::agent::graph::task_supervisor::{
+    complete_current_step, completed_step_summaries, decide_supervisor_next, load_task_plan,
+    next_agent_output, sanitize_step_title, supervisor_calls, supervisor_calls_output,
+    task_plan_output, StepAgent, StepStatus, SupervisorAction, TaskPlan, TaskStep,
+};
+use crate::agent::loop_exec::{AgentLoop, ConversationMessage, LoopConfig, LoopEvent};
 use crate::agent::self_learning::SelfLearningAgent;
 use crate::agent::types::AgentState;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use zcode_capabilities::ToolRegistry;
 use zcode_core::Result;
 use zcode_llm_provider::provider::LlmProvider;
-use zcode_llm_provider::Message;
 
 #[derive(Clone)]
 pub struct AgentRuntime {
@@ -53,6 +57,7 @@ impl AgentRuntime {
 
 #[derive(Clone)]
 pub struct TaskAgentRuntimes {
+    pub supervisor: AgentRuntime,
     pub investigator: AgentRuntime,
     pub planner: AgentRuntime,
     pub coder: AgentRuntime,
@@ -62,6 +67,7 @@ pub struct TaskAgentRuntimes {
 
 impl TaskAgentRuntimes {
     pub fn map_event_sink(mut self, event_sink: Arc<dyn Fn(GraphEvent) + Send + Sync>) -> Self {
+        self.supervisor = self.supervisor.with_event_sink(Arc::clone(&event_sink));
         self.investigator = self.investigator.with_event_sink(Arc::clone(&event_sink));
         self.planner = self.planner.with_event_sink(Arc::clone(&event_sink));
         self.coder = self.coder.with_event_sink(Arc::clone(&event_sink));
@@ -72,6 +78,7 @@ impl TaskAgentRuntimes {
 
 #[derive(Debug, Clone)]
 pub struct AgentModelLabels {
+    pub supervisor: String,
     pub investigator: String,
     pub planner: String,
     pub coder: String,
@@ -79,149 +86,10 @@ pub struct AgentModelLabels {
     pub fast: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-struct TaskPlan {
-    objective: String,
-    steps: Vec<TaskStep>,
-    current_index: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-struct TaskStep {
-    id: String,
-    title: String,
-    agent: StepAgent,
-    status: StepStatus,
-    summary: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-enum StepAgent {
-    Investigator,
-    Planner,
-    Coder,
-    Reviewer,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-enum StepStatus {
-    Pending,
-    Running,
-    Completed,
-    Failed,
-}
-
-impl StepAgent {
-    fn as_str(self) -> &'static str {
-        match self {
-            StepAgent::Investigator => "investigator",
-            StepAgent::Planner => "planner",
-            StepAgent::Coder => "coder",
-            StepAgent::Reviewer => "reviewer",
-        }
-    }
-}
-
-impl TaskPlan {
-    fn for_task(task: String) -> Self {
-        let needs_investigation = needs_investigation(&task);
-        let mut steps = Vec::new();
-        if needs_investigation {
-            steps.push(TaskStep::new(
-                "step-1",
-                "Inspect existing context",
-                StepAgent::Investigator,
-            ));
-        }
-        let planner_id = format!("step-{}", steps.len() + 1);
-        steps.push(TaskStep::new(
-            planner_id,
-            "Plan the implementation",
-            StepAgent::Planner,
-        ));
-        let coder_id = format!("step-{}", steps.len() + 1);
-        steps.push(TaskStep::new(
-            coder_id,
-            "Apply the changes",
-            StepAgent::Coder,
-        ));
-        let reviewer_id = format!("step-{}", steps.len() + 1);
-        steps.push(TaskStep::new(
-            reviewer_id,
-            "Verify the result",
-            StepAgent::Reviewer,
-        ));
-
-        Self {
-            objective: task,
-            steps,
-            current_index: 0,
-        }
-    }
-
-    fn current_step(&self) -> Option<&TaskStep> {
-        self.steps.get(self.current_index)
-    }
-
-    fn current_step_mut(&mut self) -> Option<&mut TaskStep> {
-        self.steps.get_mut(self.current_index)
-    }
-}
-
-impl TaskStep {
-    fn new(id: impl Into<String>, title: impl Into<String>, agent: StepAgent) -> Self {
-        Self {
-            id: id.into(),
-            title: title.into(),
-            agent,
-            status: StepStatus::Pending,
-            summary: None,
-        }
-    }
-}
-
-fn needs_investigation(task: &str) -> bool {
-    let lower = task.to_lowercase();
-    [
-        "read",
-        "find",
-        "search",
-        "analyze",
-        "inspect",
-        "understand",
-        "调查",
-        "分析",
-        "查找",
-        "读取",
-        "看看",
-    ]
-    .iter()
-    .any(|needle| lower.contains(needle))
-}
-
-fn load_task_plan(state: &zcode_core::agent::DefaultState) -> Option<TaskPlan> {
-    state
-        .metadata
-        .get("task_plan")
-        .and_then(|value| serde_json::from_value(value.clone()).ok())
-}
-
-fn task_plan_output(plan: &TaskPlan) -> NodeOutput {
-    NodeOutput::Custom(
-        "task_plan".to_string(),
-        serde_json::to_value(plan).unwrap_or_else(|_| serde_json::Value::Null),
-    )
-}
-
-fn next_agent_output(plan: &TaskPlan) -> NodeOutput {
-    NodeOutput::Custom(
-        "next_node".to_string(),
-        plan.current_step()
-            .map(|_| serde_json::json!("execute_step"))
-            .unwrap_or(serde_json::Value::Null),
-    )
+fn current_task(task: &Option<zcode_core::agent::Task>) -> String {
+    task.clone()
+        .map(|task| task.description)
+        .unwrap_or_default()
 }
 
 fn step_events_output(events: Vec<serde_json::Value>) -> Option<NodeOutput> {
@@ -252,41 +120,6 @@ fn step_complete_event(step: &TaskStep, success: bool) -> serde_json::Value {
         "agent": step.agent.as_str(),
         "success": success
     })
-}
-
-fn completed_step_summaries(plan: &TaskPlan) -> String {
-    let summaries = plan
-        .steps
-        .iter()
-        .filter_map(|step| {
-            let summary = step.summary.as_ref()?;
-            Some(format!(
-                "- {} [{}]: {}",
-                step.title,
-                step.agent.as_str(),
-                summary
-            ))
-        })
-        .collect::<Vec<_>>();
-    if summaries.is_empty() {
-        "No completed steps yet.".to_string()
-    } else {
-        summaries.join("\n")
-    }
-}
-
-fn complete_current_step(plan: &mut TaskPlan, _step: &TaskStep, summary: String, success: bool) {
-    if let Some(current) = plan.current_step_mut() {
-        current.status = if success {
-            StepStatus::Completed
-        } else {
-            StepStatus::Failed
-        };
-        current.summary = Some(summary);
-    }
-    if success {
-        plan.current_index += 1;
-    }
 }
 
 fn state_agent_output(
@@ -329,20 +162,7 @@ fn state_agent_output_with_review_retry(
     let summary = result.answer.clone();
     if allow_retry {
         complete_current_step(plan, step, summary, false);
-        if let Some(reviewer) = plan.current_step_mut() {
-            reviewer.status = StepStatus::Pending;
-        }
-        if let Some(coder_index) = plan
-            .steps
-            .iter()
-            .position(|candidate| candidate.agent == StepAgent::Coder)
-        {
-            plan.current_index = coder_index;
-            if let Some(coder) = plan.steps.get_mut(coder_index) {
-                coder.status = StepStatus::Pending;
-                coder.title = "Fix review findings".to_string();
-            }
-        }
+        plan.current_index = plan.steps.len();
     } else {
         complete_current_step(plan, step, summary, success);
         if !success {
@@ -622,10 +442,9 @@ fn tool_events_output(events: Vec<serde_json::Value>) -> Option<NodeOutput> {
 /// Build the per-task agentic workflow:
 ///
 /// ```text
-/// orchestrator → planner → coder(ReAct) → reviewer
-///                                      ├─ PASS ──────────────────────────→ END
-///                                      └─ FAIL + retries < 3 ── → coder (with failure context)
-///                                      └─ FAIL + retries >= 3 ─→ END (force-stop)
+/// supervisor → execute_step → supervisor
+///     ├─ LLM decision: investigator/planner/coder/reviewer
+///     └─ finish → END
 /// ```
 pub fn build_task_pipeline(
     provider: Arc<dyn LlmProvider>,
@@ -636,6 +455,7 @@ pub fn build_task_pipeline(
     skills_prompt: String,
 ) -> StateGraph {
     let runtimes = TaskAgentRuntimes {
+        supervisor: AgentRuntime::new(Arc::clone(&provider), model.clone(), false),
         investigator: AgentRuntime::new(Arc::clone(&provider), model.clone(), false),
         planner: AgentRuntime::new(Arc::clone(&provider), model.clone(), false),
         coder: AgentRuntime::new(Arc::clone(&provider), model.clone(), false),
@@ -654,20 +474,53 @@ pub fn build_task_pipeline_with_limit(
 ) -> StateGraph {
     let mut g = StateGraph::new("supervisor");
 
+    let supervisor_runtime = runtimes.supervisor.clone();
+    let supervisor_skills_prompt = skills_prompt.clone();
     g.add_node(AsyncFnNode::new("supervisor", move |state| {
-        let task = state
-            .task
-            .clone()
-            .map(|t| t.description)
-            .unwrap_or_default();
-        let mut plan = load_task_plan(state).unwrap_or_else(|| TaskPlan::for_task(task.clone()));
+        let runtime = supervisor_runtime.clone();
+        let skills_prompt = supervisor_skills_prompt.clone();
+        let task = current_task(&state.task);
+        let mut plan = load_task_plan(state).unwrap_or_else(|| TaskPlan::new(task.clone()));
+        let state_msgs = state.messages.clone();
+        let retries = state
+            .metadata
+            .get("coder_retries")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let calls = supervisor_calls(state).saturating_add(1);
         state.agent_state = AgentState::Planning;
 
         async move {
             let mut outputs = vec![
                 NodeOutput::Custom("root_agent".into(), serde_json::json!("supervisor")),
-                task_plan_output(&plan),
+                supervisor_calls_output(calls),
             ];
+
+            if plan.current_step().is_none() {
+                let decision = decide_supervisor_next(
+                    runtime,
+                    task,
+                    plan.clone(),
+                    state_msgs,
+                    skills_prompt,
+                    retries,
+                )
+                .await;
+                match decision.action {
+                    SupervisorAction::ContinueTask => {
+                        if let Some(agent) = decision.next_agent {
+                            plan.append_step(
+                                sanitize_step_title(decision.step_title, agent),
+                                agent,
+                            );
+                        }
+                    }
+                    SupervisorAction::Finish => {
+                        plan.current_index = plan.steps.len();
+                    }
+                }
+            }
+
             let mut step_event = None;
             if let Some(step) = plan.current_step_mut() {
                 if step.status == StepStatus::Pending {
@@ -706,7 +559,7 @@ pub fn build_task_pipeline_with_limit(
                 .clone()
                 .map(|t| t.description)
                 .unwrap_or_default();
-            TaskPlan::for_task(task)
+            TaskPlan::new(task)
         });
         let step = plan.current_step().cloned();
         let task = state
@@ -967,308 +820,5 @@ pub fn build_reviewer_pipeline_with_runtime(
     g
 }
 
-// ─── Internal LLM helper ──────────────────────────────────────────────────────
-
-async fn call_llm(
-    p: Arc<dyn LlmProvider>,
-    msgs: Vec<serde_json::Value>,
-    tools: Vec<serde_json::Value>,
-) -> Result<LlmResponse> {
-    let llm_messages: Vec<Message> = msgs
-        .iter()
-        .filter_map(|v| {
-            let role = v.get("role")?.as_str()?;
-            match role {
-                "system" => {
-                    let content = v
-                        .get("content")
-                        .and_then(|c| c.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    Some(Message::system(content))
-                }
-                "assistant" => {
-                    if let Some(tool_calls) = v.get("tool_calls").and_then(|tc| tc.as_array()) {
-                        if !tool_calls.is_empty() {
-                            let content = v
-                                .get("content")
-                                .and_then(|c| c.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let reasoning_content = v
-                                .get("reasoning_content")
-                                .and_then(|c| c.as_str())
-                                .map(|s| s.to_string());
-                            Some(Message::assistant_with_tool_calls_and_reasoning(
-                                content,
-                                tool_calls.clone(),
-                                reasoning_content,
-                            ))
-                        } else {
-                            let content = v
-                                .get("content")
-                                .and_then(|c| c.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            Some(Message::assistant(content))
-                        }
-                    } else {
-                        let content = v
-                            .get("content")
-                            .and_then(|c| c.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        Some(Message::assistant(content))
-                    }
-                }
-                "tool" => {
-                    let tool_call_id = v
-                        .get("tool_call_id")
-                        .and_then(|id| id.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let name = v
-                        .get("name")
-                        .and_then(|n| n.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let content = v
-                        .get("content")
-                        .and_then(|c| c.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    Some(Message::tool_result(tool_call_id, name, content))
-                }
-                _ => {
-                    // "user" and anything else
-                    let content = v
-                        .get("content")
-                        .and_then(|c| c.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    Some(Message::user(content))
-                }
-            }
-        })
-        .collect();
-
-    match p.chat(&llm_messages, &tools) {
-        Ok(resp) => {
-            if let Ok(agent_resp) = LlmResponse::from_openai_response(&resp.raw_response) {
-                Ok(agent_resp)
-            } else {
-                Ok(LlmResponse::Text(resp.content))
-            }
-        }
-        Err(zcode_core::ZcodeError::MissingApiKey(provider)) => Ok(LlmResponse::Text(format!(
-            "Task acknowledged. No API key found for '{}'. \
-                 Set ZCODE_API_KEY to enable LLM responses.",
-            provider
-        ))),
-        Err(e) => Err(e),
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::agent::graph::graph::GraphEvent;
-    use std::collections::VecDeque;
-    use std::sync::Mutex;
-    use zcode_core::agent::{DefaultState, Task};
-    use zcode_core::llm::{LlmResponse as ProviderLlmResponse, UsageStats};
-
-    struct ScriptedProvider {
-        responses: Mutex<VecDeque<String>>,
-    }
-
-    impl ScriptedProvider {
-        fn new(responses: impl IntoIterator<Item = &'static str>) -> Self {
-            Self {
-                responses: Mutex::new(responses.into_iter().map(String::from).collect()),
-            }
-        }
-    }
-
-    impl LlmProvider for ScriptedProvider {
-        fn complete(&self, _prompt: &str) -> Result<String> {
-            Ok(self
-                .responses
-                .lock()
-                .unwrap()
-                .pop_front()
-                .unwrap_or_else(|| "PASS".to_string()))
-        }
-
-        fn chat(
-            &self,
-            _messages: &[Message],
-            _tools: &[serde_json::Value],
-        ) -> Result<ProviderLlmResponse> {
-            let content = self
-                .responses
-                .lock()
-                .unwrap()
-                .pop_front()
-                .unwrap_or_else(|| "PASS".to_string());
-            Ok(ProviderLlmResponse {
-                content: content.clone(),
-                model: "scripted".to_string(),
-                usage: Some(UsageStats {
-                    input_tokens: 1,
-                    output_tokens: 1,
-                }),
-                raw_response: serde_json::json!({ "content": content }),
-            })
-        }
-
-        fn stream_complete(&self, _prompt: &str) -> Result<zcode_llm_provider::StreamingResponse> {
-            Err(zcode_core::ZcodeError::InternalError(
-                "streaming is not used by pipeline tests".to_string(),
-            ))
-        }
-    }
-
-    fn empty_registry() -> Arc<ToolRegistry> {
-        Arc::new(ToolRegistry::new())
-    }
-
-    fn test_runtimes(provider: Arc<dyn LlmProvider>) -> TaskAgentRuntimes {
-        TaskAgentRuntimes {
-            investigator: AgentRuntime::new(Arc::clone(&provider), "model".to_string(), false),
-            planner: AgentRuntime::new(Arc::clone(&provider), "model".to_string(), false),
-            coder: AgentRuntime::new(Arc::clone(&provider), "model".to_string(), false),
-            reviewer: AgentRuntime::new(Arc::clone(&provider), "model".to_string(), false),
-            fast: AgentRuntime::new(Arc::clone(&provider), "fast-model".to_string(), false),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_task_pipeline_starts_with_orchestrator_and_reviewer_gate() {
-        let provider: Arc<dyn LlmProvider> = Arc::new(ScriptedProvider::new([
-            "PLAN: do it",
-            "CODER: done",
-            "PASS",
-        ]));
-        let graph = build_task_pipeline_with_limit(
-            test_runtimes(provider),
-            empty_registry(),
-            String::new(),
-            20,
-        )
-        .compile()
-        .unwrap();
-
-        let mut state = DefaultState::new(Task::new("implement task"));
-        let output = graph.execute(&mut state).await.unwrap();
-
-        assert_eq!(
-            output.nodes_executed,
-            vec![
-                "supervisor",
-                "execute_step",
-                "supervisor",
-                "execute_step",
-                "supervisor",
-                "execute_step",
-                "supervisor"
-            ]
-        );
-        assert_eq!(
-            state.metadata.get("root_agent").and_then(|v| v.as_str()),
-            Some("supervisor")
-        );
-        assert_eq!(
-            state
-                .metadata
-                .get("review_passed")
-                .and_then(|v| v.as_bool()),
-            Some(true)
-        );
-    }
-
-    #[tokio::test]
-    async fn test_task_pipeline_retries_coder_after_reviewer_failure() {
-        let provider: Arc<dyn LlmProvider> = Arc::new(ScriptedProvider::new([
-            "PLAN: do it",
-            "CODER: first attempt",
-            "FAIL: missing behavior",
-            "CODER: fixed",
-            "PASS",
-        ]));
-        let graph = build_task_pipeline_with_limit(
-            test_runtimes(provider),
-            empty_registry(),
-            String::new(),
-            20,
-        )
-        .compile()
-        .unwrap();
-
-        let mut state = DefaultState::new(Task::new("implement task"));
-        let output = graph.execute(&mut state).await.unwrap();
-
-        assert_eq!(
-            output.nodes_executed,
-            vec![
-                "supervisor",
-                "execute_step",
-                "supervisor",
-                "execute_step",
-                "supervisor",
-                "execute_step",
-                "supervisor",
-                "execute_step",
-                "supervisor",
-                "execute_step",
-                "supervisor"
-            ]
-        );
-        assert_eq!(
-            state.metadata.get("coder_retries").and_then(|v| v.as_u64()),
-            Some(2)
-        );
-        assert_eq!(
-            state
-                .metadata
-                .get("review_passed")
-                .and_then(|v| v.as_bool()),
-            Some(true)
-        );
-    }
-
-    #[tokio::test]
-    async fn test_task_pipeline_emits_step_events() {
-        let provider: Arc<dyn LlmProvider> = Arc::new(ScriptedProvider::new([
-            "PLAN: do it",
-            "CODER: done",
-            "PASS",
-        ]));
-        let graph = build_task_pipeline_with_limit(
-            test_runtimes(provider),
-            empty_registry(),
-            String::new(),
-            20,
-        )
-        .compile()
-        .unwrap();
-
-        let mut state = DefaultState::new(Task::new("implement task"));
-        let mut events = Vec::new();
-        graph
-            .execute_with_events(&mut state, |event| events.push(event))
-            .await
-            .unwrap();
-
-        assert!(events.iter().any(|event| matches!(
-            event,
-            GraphEvent::StepStart { agent, title, .. }
-                if agent == "planner" && title == "Plan the implementation"
-        )));
-        assert!(events.iter().any(|event| matches!(
-            event,
-            GraphEvent::StepComplete { agent, title, success, .. }
-                if agent == "reviewer" && title == "Verify the result" && *success
-        )));
-    }
-}
+mod pipeline_tests;

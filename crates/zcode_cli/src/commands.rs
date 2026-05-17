@@ -3,27 +3,27 @@
 //! This module implements the handlers for each CLI command.
 
 use crate::args::{Args, Command, DocsAction, TaskAction};
-use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
-use tracing::info;
-use zcode_capabilities::{register_workspace_tools, AskUserTool, McpClient, SkillsLoader, ToolRegistry};
-use zcode_core::{AskUserSender, LlmConfig, ProjectConfig, Result, Settings, ZcodeError};
+use crate::cli_events::{print_cli_graph_event, print_loop_event, print_task_models};
+use crate::llm_runtime::{build_agent_providers, feed_call_llm};
 #[cfg(test)]
-use zcode_llm_provider::MockLlmProvider;
-#[cfg(not(test))]
-use zcode_llm_provider::RigProvider;
-use zcode_llm_provider::{LlmProvider, Message};
+use crate::llm_runtime::{parse_provider_model, resolve_agent_config};
+use crate::tui_task::{build_tui_task_executor, task_user_answer};
+use std::path::Path;
+use std::sync::Arc;
+use tracing::info;
+use zcode_capabilities::{
+    register_workspace_tools, AskUserTool, McpClient, Skill, SkillsLoader, ToolRegistry,
+};
+use zcode_core::{AskUserSender, ProjectConfig, Result, Settings, ZcodeError};
 use zcode_orchestration::{
     build_reviewer_pipeline_with_runtime, build_task_pipeline_with_limit, AgentLoop,
-    AgentModelLabels, AgentRuntime, ConversationMessage, DefaultState, GraphEvent,
-    LlmResponse as AgentLlmResponse, LoopConfig, LoopEvent, TaskAgentRuntimes, TaskResult,
+    ConversationMessage, DefaultState, LoopConfig, TaskResult,
 };
 use zcode_requirements::docs::parser::parse_all_tasks;
 use zcode_requirements::{
     generate_docs_scaffold, DocsValidator, TaskRecord, TaskStatus, TaskStore,
 };
-use zcode_ui::{init_terminal, restore_terminal, TaskExecutor, TaskRequest, TaskUiEvent, TuiApp};
+use zcode_ui::{init_terminal, restore_terminal, TuiApp};
 
 /// Execute a CLI command
 pub async fn execute_command(command: &Command, args: &Args) -> Result<()> {
@@ -82,346 +82,6 @@ fn run_docs_validation(project_dir: &Path) -> Result<()> {
     Err(ZcodeError::ConfigError(
         "docs/ validation failed. Fix the issues above before running zcode.".to_string(),
     ))
-}
-
-fn llm_config_from_settings(settings: &Settings) -> LlmConfig {
-    LlmConfig {
-        provider: settings.llm.provider.clone(),
-        model: settings.llm.model.clone(),
-        fast_model: settings.llm.fast_model.clone(),
-        base_url: settings.llm.base_url.clone(),
-        api_key: settings.llm.api_key.clone(),
-        api_key_env: settings.llm.api_key_env.clone(),
-        temperature: settings.llm.temperature,
-        max_tokens: settings.llm.max_tokens,
-    }
-}
-
-fn fast_llm_config(config: &LlmConfig) -> LlmConfig {
-    let mut fast = config.clone();
-    fast.model = config
-        .fast_model
-        .clone()
-        .unwrap_or_else(|| config.model.clone());
-    fast
-}
-
-#[derive(Clone)]
-struct AgentLlm {
-    provider: Arc<dyn LlmProvider>,
-    config: LlmConfig,
-    explicit_model: bool,
-}
-
-#[derive(Clone)]
-struct AgentProviders {
-    fast: AgentLlm,
-    planner: AgentLlm,
-    coder: AgentLlm,
-    reviewer: AgentLlm,
-    investigator: AgentLlm,
-    docs: AgentLlm,
-}
-
-impl AgentProviders {
-    fn task_models(&self) -> AgentModelLabels {
-        AgentModelLabels {
-            investigator: self.investigator.config.model.clone(),
-            planner: self.planner.config.model.clone(),
-            coder: self.coder.config.model.clone(),
-            reviewer: self.reviewer.config.model.clone(),
-            fast: self.fast.config.model.clone(),
-        }
-    }
-
-    fn task_runtimes(
-        &self,
-        event_sink: Option<Arc<dyn Fn(GraphEvent) + Send + Sync>>,
-    ) -> TaskAgentRuntimes {
-        let attach_sink = |runtime: AgentRuntime| {
-            if let Some(event_sink) = &event_sink {
-                runtime.with_event_sink(Arc::clone(event_sink))
-            } else {
-                runtime
-            }
-        };
-
-        TaskAgentRuntimes {
-            investigator: attach_sink(AgentRuntime::new(
-                Arc::clone(&self.investigator.provider),
-                self.investigator.config.model.clone(),
-                self.investigator.explicit_model,
-            )),
-            planner: attach_sink(AgentRuntime::new(
-                Arc::clone(&self.planner.provider),
-                self.planner.config.model.clone(),
-                self.planner.explicit_model,
-            )),
-            coder: attach_sink(AgentRuntime::new(
-                Arc::clone(&self.coder.provider),
-                self.coder.config.model.clone(),
-                self.coder.explicit_model,
-            )),
-            reviewer: attach_sink(AgentRuntime::new(
-                Arc::clone(&self.reviewer.provider),
-                self.reviewer.config.model.clone(),
-                self.reviewer.explicit_model,
-            )),
-            fast: AgentRuntime::new(
-                Arc::clone(&self.fast.provider),
-                self.fast.config.model.clone(),
-                self.fast.explicit_model,
-            ),
-        }
-    }
-
-    fn reviewer_runtime(
-        &self,
-        event_sink: Option<Arc<dyn Fn(GraphEvent) + Send + Sync>>,
-    ) -> AgentRuntime {
-        let runtime = AgentRuntime::new(
-            Arc::clone(&self.reviewer.provider),
-            self.reviewer.config.model.clone(),
-            self.reviewer.explicit_model,
-        );
-        if let Some(event_sink) = event_sink {
-            runtime.with_event_sink(event_sink)
-        } else {
-            runtime
-        }
-    }
-}
-
-fn apply_project_llm_overrides(config: &mut LlmConfig, project_config: &ProjectConfig) {
-    if let Some(llm) = &project_config.llm {
-        if let Some(provider) = &llm.provider {
-            config.provider = provider.clone();
-        }
-        if let Some(model) = &llm.model {
-            config.model = model.clone();
-        }
-        if let Some(fast_model) = &llm.fast_model {
-            config.fast_model = Some(fast_model.clone());
-        }
-        if let Some(base_url) = &llm.base_url {
-            config.base_url = Some(base_url.clone());
-        }
-        if let Some(api_key) = &llm.api_key {
-            config.api_key = Some(api_key.clone());
-        }
-        if let Some(api_key_env) = &llm.api_key_env {
-            config.api_key_env = Some(api_key_env.clone());
-        }
-        if let Some(temperature) = llm.temperature {
-            config.temperature = temperature;
-        }
-        if let Some(max_tokens) = llm.max_tokens {
-            config.max_tokens = max_tokens;
-        }
-    }
-}
-
-fn parse_provider_model(value: &str) -> Result<(&str, &str)> {
-    let (provider, model) = value.split_once('/').ok_or_else(|| {
-        ZcodeError::ConfigError(format!(
-            "agent model `{}` must use `provider/model` format",
-            value
-        ))
-    })?;
-    if provider.trim().is_empty() || model.trim().is_empty() {
-        return Err(ZcodeError::ConfigError(format!(
-            "agent model `{}` must include both provider and model",
-            value
-        )));
-    }
-    Ok((provider.trim(), model.trim()))
-}
-
-fn resolve_agent_config(
-    agent: &str,
-    default_config: &LlmConfig,
-    project_config: &ProjectConfig,
-) -> Result<(LlmConfig, bool)> {
-    let Some(value) = project_config.agent_models.get(agent) else {
-        return Ok((default_config.clone(), false));
-    };
-    let (provider_id, model) = parse_provider_model(value)?;
-    let provider = project_config
-        .llm
-        .as_ref()
-        .and_then(|llm| llm.providers.get(provider_id))
-        .ok_or_else(|| {
-            ZcodeError::ConfigError(format!(
-                "agent model `{}` references unknown provider `{}`",
-                value, provider_id
-            ))
-        })?;
-
-    let mut config = default_config.clone();
-    config.provider = provider_id.to_string();
-    config.model = model.to_string();
-    config.fast_model = None;
-    if let Some(base_url) = &provider.base_url {
-        config.base_url = Some(base_url.clone());
-    }
-    if let Some(api_key) = &provider.api_key {
-        config.api_key = Some(api_key.clone());
-    } else {
-        config.api_key = None;
-    }
-    if let Some(api_key_env) = &provider.api_key_env {
-        config.api_key_env = Some(api_key_env.clone());
-    } else {
-        config.api_key_env = None;
-    }
-    if let Some(temperature) = provider.temperature {
-        config.temperature = temperature;
-    }
-    if let Some(max_tokens) = provider.max_tokens {
-        config.max_tokens = max_tokens;
-    }
-
-    Ok((config, true))
-}
-
-fn build_agent_providers(
-    settings: &Settings,
-    project_config: &ProjectConfig,
-) -> Result<AgentProviders> {
-    let mut default_config = llm_config_from_settings(settings);
-    apply_project_llm_overrides(&mut default_config, project_config);
-    let fast_config = fast_llm_config(&default_config);
-
-    let fast = AgentLlm {
-        provider: make_llm_provider(&fast_config),
-        config: fast_config,
-        explicit_model: false,
-    };
-
-    let make_agent = |agent: &str| -> Result<AgentLlm> {
-        let (config, explicit_model) =
-            resolve_agent_config(agent, &default_config, project_config)?;
-        Ok(AgentLlm {
-            provider: make_llm_provider(&config),
-            config,
-            explicit_model,
-        })
-    };
-
-    Ok(AgentProviders {
-        fast,
-        planner: make_agent("planner")?,
-        coder: make_agent("coder")?,
-        reviewer: make_agent("reviewer")?,
-        investigator: make_agent("investigator")?,
-        docs: make_agent("docs")?,
-    })
-}
-
-fn print_loop_event(agent: &str, event: LoopEvent) {
-    match event {
-        LoopEvent::ToolStart { tool_name, command } => {
-            println!("🔧 {} {}: {}", agent, tool_name, command);
-        }
-        LoopEvent::ToolComplete { tool_name, success } => {
-            println!(
-                "{} {} {}",
-                if success { "✅" } else { "❌" },
-                agent,
-                tool_name
-            );
-        }
-    }
-}
-
-fn print_task_models(models: &AgentModelLabels) {
-    println!("🔎 Investigator model: {}", models.investigator);
-    println!("🧠 Planner model: {}", models.planner);
-    println!("🛠 Coder model: {}", models.coder);
-    println!("🔍 Reviewer model: {}", models.reviewer);
-    println!("⚡ Fast model: {}", models.fast);
-}
-
-fn print_cli_graph_event(prefix: &str, event: GraphEvent) {
-    match event {
-        GraphEvent::ToolStart {
-            agent,
-            tool_name,
-            command,
-        } => {
-            println!("🔧 {} {}: {}", agent, tool_name, command);
-        }
-        GraphEvent::StepStart { id, title, agent } => {
-            println!("▶ {} {}: {}", agent, id, title);
-        }
-        GraphEvent::StepComplete {
-            id,
-            title,
-            agent,
-            success,
-        } => {
-            println!(
-                "{} {} {}: {}",
-                if success { "✅" } else { "❌" },
-                agent,
-                id,
-                title
-            );
-        }
-        GraphEvent::ToolComplete {
-            agent,
-            tool_name,
-            success,
-        } => {
-            println!(
-                "{} {} {}",
-                if success { "✅" } else { "❌" },
-                agent,
-                tool_name
-            );
-        }
-        other => println!("{} {}", prefix, other),
-    }
-}
-
-fn make_tui_tool_event_sink(
-    tx: mpsc::Sender<TaskUiEvent>,
-) -> Arc<dyn Fn(GraphEvent) + Send + Sync> {
-    Arc::new(move |event| match event {
-        GraphEvent::ToolStart {
-            agent,
-            tool_name,
-            command,
-        } => {
-            let _ = tx.send(TaskUiEvent::ToolStart {
-                agent,
-                tool_name,
-                command,
-            });
-        }
-        GraphEvent::ToolComplete {
-            agent,
-            tool_name,
-            success,
-        } => {
-            let _ = tx.send(TaskUiEvent::ToolComplete {
-                agent,
-                tool_name,
-                success,
-            });
-        }
-        _ => {}
-    })
-}
-
-#[cfg(not(test))]
-fn make_llm_provider(config: &LlmConfig) -> Arc<dyn LlmProvider> {
-    Arc::new(RigProvider::new(config.clone()))
-}
-
-#[cfg(test)]
-fn make_llm_provider(_config: &LlmConfig) -> Arc<dyn LlmProvider> {
-    Arc::new(MockLlmProvider::new("PASS"))
 }
 
 fn project_config_for(cwd: &Path) -> ProjectConfig {
@@ -486,6 +146,20 @@ fn build_tool_registry(cwd: &Path, settings: &Settings, args: &Args) -> Result<A
     }
 
     Ok(Arc::new(registry))
+}
+
+fn print_selected_skills(skills: &[Skill], prompt: &str) {
+    let selected = SkillsLoader::select_relevant(
+        skills,
+        prompt,
+        zcode_capabilities::skills::DEFAULT_MAX_SELECTED_SKILLS,
+    );
+    if selected.is_empty() {
+        println!("📚 Selected skills: none");
+        return;
+    }
+    let names: Vec<&str> = selected.iter().map(|skill| skill.name.as_str()).collect();
+    println!("📚 Selected skill(s): {}", names.join(", "));
 }
 
 /// Handle `zcode docs {init|check}` commands.
@@ -699,7 +373,9 @@ async fn execute_task(action: &TaskAction, args: &Args) -> Result<()> {
             let registry = build_tool_registry(&cwd, &settings, args)?;
 
             let skills = SkillsLoader::load(&cwd, &settings.skill_dirs);
-            let skills_prompt = SkillsLoader::build_system_prompt("", &skills);
+            let review_task = format!("review completed task reports\n{}", combined_report);
+            let skills_prompt =
+                SkillsLoader::build_relevant_system_prompt("", &skills, &review_task);
 
             let reviewer_graph = build_reviewer_pipeline_with_runtime(
                 agent_providers.reviewer_runtime(Some(Arc::new(|event| {
@@ -903,101 +579,6 @@ async fn execute_feed(
     Ok(())
 }
 
-/// Lightweight LLM call helper for `execute_feed` (shared by investigator and docs generation).
-async fn feed_call_llm(
-    p: Arc<dyn LlmProvider>,
-    msgs: Vec<serde_json::Value>,
-    tools: Vec<serde_json::Value>,
-) -> Result<AgentLlmResponse> {
-    let llm_messages: Vec<Message> = msgs
-        .iter()
-        .filter_map(|v| {
-            let role_str = v.get("role")?.as_str()?;
-            match role_str {
-                "system" => {
-                    let content = v
-                        .get("content")
-                        .and_then(|c| c.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    Some(Message::system(content))
-                }
-                "assistant" => {
-                    if let Some(tool_calls) = v.get("tool_calls").and_then(|tc| tc.as_array()) {
-                        if !tool_calls.is_empty() {
-                            let content = v
-                                .get("content")
-                                .and_then(|c| c.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let reasoning_content = v
-                                .get("reasoning_content")
-                                .and_then(|c| c.as_str())
-                                .map(|s| s.to_string());
-                            Some(Message::assistant_with_tool_calls_and_reasoning(
-                                content,
-                                tool_calls.clone(),
-                                reasoning_content,
-                            ))
-                        } else {
-                            let content = v
-                                .get("content")
-                                .and_then(|c| c.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            Some(Message::assistant(content))
-                        }
-                    } else {
-                        let content = v
-                            .get("content")
-                            .and_then(|c| c.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        Some(Message::assistant(content))
-                    }
-                }
-                "tool" => {
-                    let tool_call_id = v
-                        .get("tool_call_id")
-                        .and_then(|id| id.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let name = v
-                        .get("name")
-                        .and_then(|n| n.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let content = v
-                        .get("content")
-                        .and_then(|c| c.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    Some(Message::tool_result(tool_call_id, name, content))
-                }
-                _ => {
-                    let content = v
-                        .get("content")
-                        .and_then(|c| c.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    Some(Message::user(content))
-                }
-            }
-        })
-        .collect();
-
-    match p.chat(&llm_messages, &tools) {
-        Ok(resp) => {
-            if let Ok(agent_resp) = AgentLlmResponse::from_openai_response(&resp.raw_response) {
-                Ok(agent_resp)
-            } else {
-                Ok(AgentLlmResponse::Text(resp.content))
-            }
-        }
-        Err(e) => Err(e),
-    }
-}
-
 /// Run a single task in non-interactive mode using AgentLoop + LLM
 async fn execute_run(
     task: &str,
@@ -1047,7 +628,7 @@ async fn execute_run(
     // ── Capability registry (workspace tools + MCP) ───────────────────
     let registry = build_tool_registry(&cwd, &settings, args)?;
 
-    let skills_prompt = SkillsLoader::build_system_prompt("", &skills);
+    let skills_prompt = SkillsLoader::build_relevant_system_prompt("", &skills, task);
 
     // ── Graph Engine (orchestrator → planner → coder(ReAct) → reviewer) ──
     let graph = build_task_pipeline_with_limit(
@@ -1060,6 +641,7 @@ async fn execute_run(
 
     println!("🤖 zcode Task Agent starting...");
     println!("📋 Task: {} [id={}]", task, task_record.id);
+    print_selected_skills(&skills, task);
     print_task_models(&task_models);
     println!("💾 Progress saved to .zcode/tasks/{}.json", task_record.id);
     println!();
@@ -1119,12 +701,18 @@ async fn execute_run(
 
     // ── Global Reviewer (runs once after this single task completes) ──────────
     println!("\n🔍 Starting global code review...");
+    let review_task = format!(
+        "review completed task report\nTask: {}\n{}",
+        task, final_answer
+    );
+    let review_skills_prompt =
+        SkillsLoader::build_relevant_system_prompt("", &skills, &review_task);
     let reviewer_graph = build_reviewer_pipeline_with_runtime(
         agent_providers.reviewer_runtime(Some(Arc::new(|event| {
             print_cli_graph_event("reviewer", event)
         }))),
         registry,
-        skills_prompt,
+        review_skills_prompt,
     )
     .compile()?;
 
@@ -1197,7 +785,7 @@ async fn execute_run_task_only(
     let agent_providers = build_agent_providers(&settings, &project_config)?;
 
     let registry = build_tool_registry(&cwd, &settings, args)?;
-    let skills_prompt = SkillsLoader::build_system_prompt("", &skills);
+    let skills_prompt = SkillsLoader::build_relevant_system_prompt("", &skills, task);
 
     let graph = build_task_pipeline_with_limit(
         agent_providers.task_runtimes(Some(Arc::new(|event| print_cli_graph_event("task", event)))),
@@ -1294,7 +882,6 @@ async fn execute_chat(args: &Args) -> Result<()> {
     // Read Skills active
     let skills = SkillsLoader::load(&cwd, &settings.skill_dirs);
     let active_skills: Vec<String> = skills.iter().map(|s| s.name.clone()).collect();
-    let skills_prompt = SkillsLoader::build_system_prompt("", &skills);
 
     let registry_arc = build_tool_registry(&cwd, &settings, args)?;
 
@@ -1317,7 +904,7 @@ async fn execute_chat(args: &Args) -> Result<()> {
         cwd,
         agent_providers.task_runtimes(None),
         registry,
-        skills_prompt,
+        skills,
         50,
     );
 
@@ -1329,8 +916,12 @@ async fn execute_chat(args: &Args) -> Result<()> {
 
     app.chat
         .add_message(zcode_ui::tui::chat::ChatMessage::system(format!(
-            "Planner: {} | Coder: {} | Reviewer: {} | Fast: {} | Press Esc or Ctrl+C to quit",
-            task_models.planner, task_models.coder, task_models.reviewer, task_models.fast
+            "Supervisor: {} | Planner: {} | Coder: {} | Reviewer: {} | Fast: {} | Press Esc or Ctrl+C to quit",
+            task_models.supervisor,
+            task_models.planner,
+            task_models.coder,
+            task_models.reviewer,
+            task_models.fast
         )));
 
     // Run the event loop
@@ -1340,280 +931,6 @@ async fn execute_chat(args: &Args) -> Result<()> {
     restore_terminal(&mut terminal)?;
 
     result
-}
-
-fn build_tui_task_executor(
-    cwd: std::path::PathBuf,
-    runtimes: TaskAgentRuntimes,
-    registry: Arc<ToolRegistry>,
-    skills_prompt: String,
-    max_iterations: usize,
-) -> TaskExecutor {
-    Arc::new(
-        move |request: TaskRequest, cancel: Arc<AtomicBool>, tx: mpsc::Sender<TaskUiEvent>| {
-            let cwd = cwd.clone();
-            let runtimes = runtimes.clone();
-            let registry = Arc::clone(&registry);
-            let skills_prompt = skills_prompt.clone();
-
-            let runtime = match tokio::runtime::Runtime::new() {
-                Ok(runtime) => runtime,
-                Err(error) => {
-                    let _ = tx.send(TaskUiEvent::Error(format!(
-                        "Failed to create task runtime: {}",
-                        error
-                    )));
-                    return;
-                }
-            };
-
-            runtime.block_on(async move {
-                run_tui_task(
-                    request,
-                    cwd,
-                    runtimes,
-                    registry,
-                    skills_prompt,
-                    max_iterations,
-                    cancel,
-                    tx,
-                )
-                .await;
-            });
-        },
-    )
-}
-
-fn seed_task_history(task_record: &mut TaskRecord, history: Vec<ConversationMessage>) {
-    if history.is_empty() {
-        return;
-    }
-    task_record.state.messages.push(ConversationMessage::system(
-        "Previous conversation is context only. Use it only when it helps answer the current user task. Do not repeat unrelated prior results unless the current user task asks for them.",
-    ));
-    task_record.state.messages.extend(history);
-}
-
-fn task_user_answer(messages: &[ConversationMessage]) -> String {
-    find_report(messages, "CODER_REPORT")
-        .or_else(|| find_report(messages, "INVESTIGATOR_REPORT"))
-        .or_else(|| {
-            messages
-                .iter()
-                .rev()
-                .filter(|message| message.role == "assistant")
-                .filter_map(|message| message.content.as_deref())
-                .find(|content| !is_internal_report(content))
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| "No output generated".to_string())
-}
-
-fn find_report(messages: &[ConversationMessage], prefix: &str) -> Option<String> {
-    messages
-        .iter()
-        .rev()
-        .filter(|message| message.role == "assistant")
-        .filter_map(|message| message.content.as_deref())
-        .find_map(|content| strip_report_prefix(content, prefix).map(str::to_string))
-}
-
-fn strip_report_prefix<'a>(content: &'a str, prefix: &str) -> Option<&'a str> {
-    let rest = content.strip_prefix(prefix)?;
-    let rest = rest.strip_prefix(':')?;
-    Some(rest.strip_prefix('\n').unwrap_or(rest).trim())
-}
-
-fn is_internal_report(content: &str) -> bool {
-    [
-        "INVESTIGATOR_REPORT:",
-        "PLANNER_REPORT:",
-        "CODER_REPORT:",
-        "REVIEWER_REPORT:",
-        "REVIEW_FEEDBACK:",
-        "SELF_LEARNING:",
-    ]
-    .iter()
-    .any(|prefix| content.starts_with(prefix))
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn run_tui_task(
-    request: TaskRequest,
-    cwd: std::path::PathBuf,
-    runtimes: TaskAgentRuntimes,
-    registry: Arc<ToolRegistry>,
-    skills_prompt: String,
-    max_iterations: usize,
-    cancel: Arc<AtomicBool>,
-    tx: mpsc::Sender<TaskUiEvent>,
-) {
-    if cancel.load(Ordering::SeqCst) {
-        let _ = tx.send(TaskUiEvent::Cancelled);
-        return;
-    }
-
-    let task = request.prompt;
-    let history = request.history;
-    let store = match TaskStore::new(&cwd) {
-        Ok(store) => store,
-        Err(error) => {
-            let _ = tx.send(TaskUiEvent::Error(error.to_string()));
-            return;
-        }
-    };
-    let mut task_record = store.create(task.clone());
-    seed_task_history(&mut task_record, history);
-    let _ = store.save(&mut task_record);
-    let _ = tx.send(TaskUiEvent::Thinking(format!(
-        "Task `{}` saved to .zcode/tasks/{}.json\n",
-        task, task_record.id
-    )));
-
-    let graph = match build_task_pipeline_with_limit(
-        runtimes.map_event_sink(make_tui_tool_event_sink(tx.clone())),
-        Arc::clone(&registry),
-        skills_prompt,
-        max_iterations,
-    )
-    .compile()
-    {
-        Ok(graph) => graph,
-        Err(error) => {
-            let _ = tx.send(TaskUiEvent::Error(error.to_string()));
-            return;
-        }
-    };
-
-    let graph_result = graph
-        .execute_with_events_and_cancel(&mut task_record.state, |event| {
-            send_graph_event(&tx, event);
-            cancel.load(Ordering::SeqCst)
-        })
-        .await;
-
-    if cancel.load(Ordering::SeqCst) {
-        task_record.status = TaskStatus::Interrupted;
-        task_record.error = Some("Interrupted by user".to_string());
-        let _ = store.save(&mut task_record);
-        let _ = tx.send(TaskUiEvent::Cancelled);
-        return;
-    }
-
-    match graph_result {
-        Ok(graph_out) => {
-            let review_passed = task_record
-                .state
-                .metadata
-                .get("review_passed")
-                .or_else(|| task_record.state.metadata.get("test_passed"))
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
-
-            let answer = task_user_answer(&task_record.state.messages);
-
-            if review_passed {
-                task_record.status = TaskStatus::Completed;
-                task_record.state.result =
-                    Some(TaskResult::success(task_record.id.clone(), answer.clone()));
-            } else {
-                task_record.status = TaskStatus::Failed;
-                task_record.error = Some("Review/tests failed after max retries".to_string());
-                task_record.state.result = Some(TaskResult::failure(
-                    task_record.id.clone(),
-                    "Review/tests failed after max retries",
-                ));
-            }
-            let _ = store.save(&mut task_record);
-
-            let status = if review_passed { "completed" } else { "failed" };
-            let final_answer = format!(
-                "{}\n\nTask `{}` {} after {} graph iteration(s).",
-                answer, task_record.id, status, graph_out.total_iterations
-            );
-            let _ = tx.send(TaskUiEvent::Done(final_answer));
-        }
-        Err(error) => {
-            task_record.status = TaskStatus::Failed;
-            task_record.error = Some(error.to_string());
-            let _ = store.save(&mut task_record);
-            let _ = tx.send(TaskUiEvent::Error(error.to_string()));
-        }
-    }
-}
-
-fn send_graph_event(tx: &mpsc::Sender<TaskUiEvent>, event: GraphEvent) {
-    match event {
-        GraphEvent::NodeStart { node, iteration } => {
-            let _ = tx.send(TaskUiEvent::AgentStart(node.clone()));
-            let _ = tx.send(TaskUiEvent::Thinking(format!(
-                "{} started (iteration {})\n",
-                node, iteration
-            )));
-        }
-        GraphEvent::StepStart { id, title, agent } => {
-            let _ = tx.send(TaskUiEvent::StepStart { id, title, agent });
-        }
-        GraphEvent::StepComplete {
-            id,
-            title,
-            agent,
-            success,
-        } => {
-            let _ = tx.send(TaskUiEvent::StepComplete {
-                id,
-                title,
-                agent,
-                success,
-            });
-        }
-        GraphEvent::NodeComplete { node, .. } => {
-            let _ = tx.send(TaskUiEvent::AgentComplete(node.clone()));
-            let _ = tx.send(TaskUiEvent::Thinking(format!("{} completed\n", node)));
-        }
-        GraphEvent::EdgeTraversed { from, to } => {
-            let target = to.unwrap_or_else(|| "END".to_string());
-            let _ = tx.send(TaskUiEvent::Thinking(format!("{} -> {}\n", from, target)));
-        }
-        GraphEvent::ToolStart {
-            agent,
-            tool_name,
-            command,
-        } => {
-            let _ = tx.send(TaskUiEvent::ToolStart {
-                agent: agent.clone(),
-                tool_name: tool_name.clone(),
-                command: command.clone(),
-            });
-            let _ = tx.send(TaskUiEvent::Thinking(format!(
-                "{} {}: {}\n",
-                agent, tool_name, command
-            )));
-        }
-        GraphEvent::ToolComplete {
-            agent,
-            tool_name,
-            success,
-        } => {
-            let _ = tx.send(TaskUiEvent::ToolComplete {
-                agent: agent.clone(),
-                tool_name: tool_name.clone(),
-                success,
-            });
-            let _ = tx.send(TaskUiEvent::Thinking(format!(
-                "{} {} {}\n",
-                agent,
-                tool_name,
-                if success { "succeeded" } else { "failed" }
-            )));
-        }
-        GraphEvent::End { reason, output } => {
-            let _ = tx.send(TaskUiEvent::Thinking(format!(
-                "graph ended: {} ({} iteration(s))\n",
-                reason, output.total_iterations
-            )));
-        }
-    }
 }
 
 /// Show version information
@@ -1628,621 +945,4 @@ fn execute_version() -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::HashMap;
-    use std::future::Future;
-    use zcode_core::config::{AgentModelConfig, LlmConfigOverride, ProviderConfig};
-
-    async fn in_temp_dir<F, Fut, T>(f: F) -> T
-    where
-        F: FnOnce() -> Fut,
-        Fut: Future<Output = T>,
-    {
-        static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-        let _guard = LOCK.lock().await;
-        let original = std::env::current_dir().expect("current dir");
-        let temp = tempfile::tempdir().expect("temp dir");
-        std::env::set_current_dir(temp.path()).expect("set temp cwd");
-        let output = f().await;
-        std::env::set_current_dir(original).expect("restore cwd");
-        output
-    }
-
-    // ============================================================
-    // execute_version tests
-    // ============================================================
-
-    #[test]
-    fn test_execute_version_success() {
-        let result = execute_version();
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_execute_version_returns_unit() {
-        let result: Result<()> = execute_version();
-        assert!(result.is_ok());
-        assert!(matches!(result, Ok(())));
-    }
-
-    #[test]
-    fn test_parse_provider_model() {
-        let (provider, model) = parse_provider_model("openai/gpt-4o").unwrap();
-        assert_eq!(provider, "openai");
-        assert_eq!(model, "gpt-4o");
-        assert!(parse_provider_model("gpt-4o").is_err());
-    }
-
-    #[test]
-    fn test_resolve_agent_config_uses_provider_profile() {
-        let default = LlmConfig {
-            provider: "default".to_string(),
-            model: "default-model".to_string(),
-            base_url: Some("https://default.example/v1".to_string()),
-            api_key_env: Some("DEFAULT_KEY".to_string()),
-            ..Default::default()
-        };
-        let mut providers = HashMap::new();
-        providers.insert(
-            "deepseek".to_string(),
-            ProviderConfig {
-                base_url: Some("https://api.deepseek.com/v1".to_string()),
-                api_key_env: Some("DEEPSEEK_API_KEY".to_string()),
-                temperature: Some(0.2),
-                max_tokens: Some(8192),
-                ..Default::default()
-            },
-        );
-        let mut project_config = ProjectConfig::new("test".to_string());
-        project_config.llm = Some(LlmConfigOverride {
-            providers,
-            ..Default::default()
-        });
-        project_config.agent_models = AgentModelConfig {
-            coder: Some("deepseek/deepseek-coder".to_string()),
-            ..Default::default()
-        };
-
-        let (config, explicit) = resolve_agent_config("coder", &default, &project_config).unwrap();
-
-        assert!(explicit);
-        assert_eq!(config.provider, "deepseek");
-        assert_eq!(config.model, "deepseek-coder");
-        assert_eq!(
-            config.base_url,
-            Some("https://api.deepseek.com/v1".to_string())
-        );
-        assert_eq!(config.api_key_env, Some("DEEPSEEK_API_KEY".to_string()));
-        assert_eq!(config.temperature, 0.2);
-        assert_eq!(config.max_tokens, 8192);
-    }
-
-    #[test]
-    fn test_resolve_agent_config_falls_back_to_default() {
-        let default = LlmConfig {
-            provider: "default".to_string(),
-            model: "default-model".to_string(),
-            ..Default::default()
-        };
-        let project_config = ProjectConfig::new("test".to_string());
-
-        let (config, explicit) =
-            resolve_agent_config("reviewer", &default, &project_config).unwrap();
-
-        assert!(!explicit);
-        assert_eq!(config.provider, "default");
-        assert_eq!(config.model, "default-model");
-    }
-
-    #[test]
-    fn test_seed_task_history_adds_context_without_current_prompt() {
-        let mut record = TaskRecord::new("task-id".to_string(), "today weather");
-        seed_task_history(
-            &mut record,
-            vec![
-                ConversationMessage::user("list files"),
-                ConversationMessage::assistant_text("Cargo.toml\nsrc"),
-            ],
-        );
-
-        assert_eq!(record.state.messages.len(), 3);
-        assert_eq!(record.state.messages[0].role, "system");
-        assert!(record.state.messages[0]
-            .content
-            .as_deref()
-            .unwrap()
-            .contains("Previous conversation is context only"));
-        assert_eq!(record.state.messages[1].role, "user");
-        assert_eq!(
-            record.state.messages[1].content.as_deref(),
-            Some("list files")
-        );
-        assert_eq!(record.state.messages[2].role, "assistant");
-        assert!(!record
-            .state
-            .messages
-            .iter()
-            .any(|message| message.content.as_deref() == Some("today weather")));
-    }
-
-    #[test]
-    fn test_task_user_answer_prefers_task_result_over_reviewer_report() {
-        let messages = vec![
-            ConversationMessage::assistant_text("PLANNER_REPORT:\nPlan the read"),
-            ConversationMessage::assistant_text("CODER_REPORT:\nCargo.toml\nsrc\nREADME.md"),
-            ConversationMessage::assistant_text("REVIEWER_REPORT:\nPASS"),
-        ];
-
-        assert_eq!(task_user_answer(&messages), "Cargo.toml\nsrc\nREADME.md");
-    }
-
-    #[test]
-    fn test_task_user_answer_uses_investigator_when_no_coder_report() {
-        let messages = vec![
-            ConversationMessage::assistant_text("INVESTIGATOR_REPORT:\nCargo.toml\nsrc"),
-            ConversationMessage::assistant_text("REVIEWER_REPORT:\nPASS"),
-        ];
-
-        assert_eq!(task_user_answer(&messages), "Cargo.toml\nsrc");
-    }
-
-    #[test]
-    fn test_task_user_answer_skips_internal_reports_for_plain_answer() {
-        let messages = vec![
-            ConversationMessage::assistant_text("The useful answer"),
-            ConversationMessage::assistant_text("REVIEW_FEEDBACK:\nPASS"),
-            ConversationMessage::assistant_text("SELF_LEARNING:\n# Note"),
-        ];
-
-        assert_eq!(task_user_answer(&messages), "The useful answer");
-    }
-
-    // ============================================================
-    // execute_run tests
-    // ============================================================
-
-    #[tokio::test]
-    async fn test_execute_run_basic() {
-        let args = Args {
-            command: Some(Command::Run {
-                task: "test task".to_string(),
-                resume: None,
-                max_iterations: 50,
-            }),
-            model: None,
-            mcp: vec![],
-            verbose: false,
-            skip_docs_check: false,
-        };
-
-        if let Some(Command::Run {
-            task, resume: None, ..
-        }) = &args.command
-        {
-            let result = in_temp_dir(|| execute_run(task, None, 50, &args)).await;
-            assert!(result.is_ok());
-        } else {
-            panic!("Expected Run command");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_execute_run_with_model() {
-        let args = Args {
-            command: Some(Command::Run {
-                task: "test task".to_string(),
-                resume: None,
-                max_iterations: 50,
-            }),
-            model: Some(std::env::var("ZCODE_MODEL").unwrap_or_else(|_| "gpt-4o".to_string())),
-            mcp: vec![],
-            verbose: false,
-            skip_docs_check: false,
-        };
-
-        if let Some(Command::Run {
-            task, resume: None, ..
-        }) = &args.command
-        {
-            let result = in_temp_dir(|| execute_run(task, None, 50, &args)).await;
-            assert!(result.is_ok());
-        } else {
-            panic!("Expected Run command");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_execute_run_empty_task() {
-        let args = Args {
-            command: Some(Command::Run {
-                task: "".to_string(),
-                resume: None,
-                max_iterations: 50,
-            }),
-            model: None,
-            mcp: vec![],
-            verbose: false,
-            skip_docs_check: false,
-        };
-
-        if let Some(Command::Run {
-            task, resume: None, ..
-        }) = &args.command
-        {
-            let result = in_temp_dir(|| execute_run(task, None, 50, &args)).await;
-            assert!(result.is_ok());
-        } else {
-            panic!("Expected Run command");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_execute_run_long_task() {
-        let long_task = "x".repeat(1000);
-        let args = Args {
-            command: Some(Command::Run {
-                task: long_task.clone(),
-                resume: None,
-                max_iterations: 50,
-            }),
-            model: None,
-            mcp: vec![],
-            verbose: false,
-            skip_docs_check: false,
-        };
-
-        if let Some(Command::Run {
-            task, resume: None, ..
-        }) = &args.command
-        {
-            let result = in_temp_dir(|| execute_run(task, None, 50, &args)).await;
-            assert!(result.is_ok());
-        } else {
-            panic!("Expected Run command");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_execute_run_with_mcp_servers() {
-        let args = Args {
-            command: Some(Command::Run {
-                task: "test".to_string(),
-                resume: None,
-                max_iterations: 50,
-            }),
-            model: None,
-            mcp: vec!["server1".to_string(), "server2".to_string()],
-            verbose: false,
-            skip_docs_check: false,
-        };
-
-        if let Some(Command::Run {
-            task, resume: None, ..
-        }) = &args.command
-        {
-            let result = in_temp_dir(|| execute_run(task, None, 50, &args)).await;
-            // Should fail because server1 and server2 don't exist
-            assert!(result.is_err());
-        } else {
-            panic!("Expected Run command");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_execute_run_verbose() {
-        let args = Args {
-            command: Some(Command::Run {
-                task: "test".to_string(),
-                resume: None,
-                max_iterations: 50,
-            }),
-            model: None,
-            mcp: vec![],
-            verbose: true,
-            skip_docs_check: false,
-        };
-
-        if let Some(Command::Run {
-            task, resume: None, ..
-        }) = &args.command
-        {
-            let result = in_temp_dir(|| execute_run(task, None, 50, &args)).await;
-            assert!(result.is_ok());
-        } else {
-            panic!("Expected Run command");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_execute_run_special_characters() {
-        let args = Args {
-            command: Some(Command::Run {
-                task: "Fix \"bug\" #123 @user".to_string(),
-                resume: None,
-                max_iterations: 50,
-            }),
-            model: None,
-            mcp: vec![],
-            verbose: false,
-            skip_docs_check: false,
-        };
-
-        if let Some(Command::Run {
-            task, resume: None, ..
-        }) = &args.command
-        {
-            let result = in_temp_dir(|| execute_run(task, None, 50, &args)).await;
-            assert!(result.is_ok());
-        } else {
-            panic!("Expected Run command");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_execute_run_unicode() {
-        let args = Args {
-            command: Some(Command::Run {
-                task: "你好世界 🎉".to_string(),
-                resume: None,
-                max_iterations: 50,
-            }),
-            model: None,
-            mcp: vec![],
-            verbose: false,
-            skip_docs_check: false,
-        };
-
-        if let Some(Command::Run {
-            task, resume: None, ..
-        }) = &args.command
-        {
-            let result = in_temp_dir(|| execute_run(task, None, 50, &args)).await;
-            assert!(result.is_ok());
-        } else {
-            panic!("Expected Run command");
-        }
-    }
-
-    // ============================================================
-    // execute_command tests
-    // ============================================================
-
-    #[tokio::test]
-    async fn test_execute_command_run() {
-        let args = Args {
-            command: Some(Command::Run {
-                task: "test".to_string(),
-                resume: None,
-                max_iterations: 50,
-            }),
-            model: None,
-            mcp: vec![],
-            verbose: false,
-            skip_docs_check: true, // no docs/ in test env
-        };
-
-        if let Some(ref cmd) = args.command {
-            let result = in_temp_dir(|| execute_command(cmd, &args)).await;
-            assert!(result.is_ok());
-        }
-    }
-
-    #[tokio::test]
-    async fn test_execute_command_version() {
-        let args = Args {
-            command: Some(Command::Version),
-            model: None,
-            mcp: vec![],
-            verbose: false,
-            skip_docs_check: false,
-        };
-
-        if let Some(ref cmd) = args.command {
-            let result = execute_command(cmd, &args).await;
-            assert!(result.is_ok());
-        }
-    }
-
-    #[tokio::test]
-    async fn test_execute_command_feed() {
-        let args = Args {
-            command: Some(Command::Feed {
-                path: "nonexistent".to_string(),
-                max_iterations: 0,
-                investigate: false,
-            }),
-            model: None,
-            mcp: vec![],
-            verbose: false,
-            skip_docs_check: false,
-        };
-
-        // Note: With max_iterations=0, it will return immediately without side effects,
-        // or just fail gently depending on LLM config. Here we just ensure route dispatch works
-        // without panicking. Mocks aren't fully intercepting `execute_run` so we have to be careful.
-        // Let's just check the command itself parses and routes.
-        if let Some(ref cmd) = args.command {
-            // It might return an error due to no API key during tests, so we just expect it to run
-            let _ = in_temp_dir(|| execute_command(cmd, &args)).await;
-        }
-    }
-
-    // ============================================================
-    // execute_default tests
-    // ============================================================
-
-    #[test]
-    fn test_execute_default_exists() {
-        // Verify the function exists - we can't test execution without TUI
-        // Just check that the function is accessible by referencing it
-        let _ = || execute_default;
-    }
-
-    // ============================================================
-    // Command enum tests
-    // ============================================================
-
-    #[test]
-    fn test_command_run_clone() {
-        let cmd = Command::Run {
-            task: "test".to_string(),
-            resume: None,
-            max_iterations: 50,
-        };
-        let cloned = cmd.clone();
-        if let Command::Run {
-            task, resume: None, ..
-        } = cloned
-        {
-            assert_eq!(task, "test");
-        } else {
-            panic!("Expected Run command");
-        }
-    }
-
-    #[test]
-    fn test_command_chat_clone() {
-        let cmd = Command::Chat;
-        let cloned = cmd.clone();
-        assert!(matches!(cloned, Command::Chat));
-    }
-
-    #[test]
-    fn test_command_version_clone() {
-        let cmd = Command::Version;
-        let cloned = cmd.clone();
-        assert!(matches!(cloned, Command::Version));
-    }
-
-    #[test]
-    fn test_command_debug() {
-        let cmd = Command::Chat;
-        let debug_str = format!("{:?}", cmd);
-        assert!(debug_str.contains("Chat"));
-    }
-
-    // ============================================================
-    // Args struct tests
-    // ============================================================
-
-    #[test]
-    fn test_args_construction() {
-        let args = Args {
-            command: Some(Command::Version),
-            model: Some("gpt-4".to_string()),
-            mcp: vec!["server1".to_string()],
-            verbose: true,
-            skip_docs_check: false,
-        };
-
-        assert!(matches!(args.command, Some(Command::Version)));
-        assert_eq!(args.model, Some("gpt-4".to_string()));
-        assert_eq!(args.mcp, vec!["server1"]);
-        assert!(args.verbose);
-    }
-
-    #[test]
-    fn test_args_clone() {
-        let args = Args {
-            command: Some(Command::Chat),
-            model: Some("claude".to_string()),
-            mcp: vec![],
-            verbose: false,
-            skip_docs_check: false,
-        };
-        let cloned = args.clone();
-        assert!(matches!(cloned.command, Some(Command::Chat)));
-        assert_eq!(cloned.model, Some("claude".to_string()));
-    }
-
-    #[test]
-    fn test_args_debug() {
-        let args = Args {
-            command: Some(Command::Version),
-            model: None,
-            mcp: vec![],
-            verbose: false,
-            skip_docs_check: false,
-        };
-        let debug_str = format!("{:?}", args);
-        assert!(debug_str.contains("Args"));
-        assert!(debug_str.contains("Version"));
-    }
-
-    // ============================================================
-    // Edge cases
-    // ============================================================
-
-    #[tokio::test]
-    async fn test_execute_run_multiple_mcp_servers() {
-        let args = Args {
-            command: Some(Command::Run {
-                task: "test".to_string(),
-                resume: None,
-                max_iterations: 50,
-            }),
-            model: None,
-            mcp: vec![
-                "server1".to_string(),
-                "server2".to_string(),
-                "server3".to_string(),
-            ],
-            verbose: false,
-            skip_docs_check: false,
-        };
-
-        if let Some(Command::Run {
-            task, resume: None, ..
-        }) = &args.command
-        {
-            let result = in_temp_dir(|| execute_run(task, None, 50, &args)).await;
-            // Expect failure because servers are not valid commands
-            assert!(result.is_err());
-        } else {
-            panic!("Expected Run command");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_execute_run_all_options() {
-        let args = Args {
-            command: Some(Command::Run {
-                task: "complex task".to_string(),
-                resume: None,
-                max_iterations: 50,
-            }),
-            model: Some(std::env::var("ZCODE_MODEL").unwrap_or_else(|_| "gpt-4o".to_string())),
-            mcp: vec!["mcp-server".to_string()],
-            verbose: true,
-            skip_docs_check: false,
-        };
-
-        if let Some(Command::Run {
-            task, resume: None, ..
-        }) = &args.command
-        {
-            let result = in_temp_dir(|| execute_run(task, None, 50, &args)).await;
-            // Expect failure because mcp-server does not exist
-            assert!(result.is_err());
-        } else {
-            panic!("Expected Run command");
-        }
-    }
-
-    // ============================================================
-    // Result type tests
-    // ============================================================
-
-    #[test]
-    fn test_result_ok() {
-        let result: Result<()> = Ok(());
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_result_err() {
-        let result: Result<()> = Err(ZcodeError::Cancelled);
-        assert!(result.is_err());
-    }
-}
+mod commands_tests;

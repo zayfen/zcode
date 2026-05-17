@@ -26,7 +26,7 @@ A modular AI coding agent CLI tool built in Rust. Zcode is now a Cargo workspace
 | `crates/zcode_orchestration` | Agent graph workflows. Root orchestration coordinates planner, ReAct coder, reviewer, and self-learning behavior |
 | `crates/zcode_llm_provider` | OpenAI-compatible chat completions provider using `ZCODE_BASE_URL`, `ZCODE_API_KEY`, `ZCODE_MODEL`, and `ZCODE_FAST_MODEL` |
 | `crates/zcode_capabilities` | Skills, MCP, global shared context, and OpenAI-compatible tool-call abstractions |
-| `crates/zcode_session` | Session message storage, history loading/deletion, and deterministic compression |
+| `crates/zcode_session` | JSONL session storage, LanceDB related-history retrieval, history loading/deletion, and deterministic compression |
 | `crates/zcode_core` | Shared config, errors, LLM DTOs, and agent/session DTOs |
 
 ## Other Directories
@@ -51,7 +51,7 @@ A modular AI coding agent CLI tool built in Rust. Zcode is now a Cargo workspace
 ### Testing Requirements
 - Run `cargo test --workspace` before committing broad changes when feasible.
 - Integration tests live in `tests/`; unit tests are inline in each crate/module.
-- MSRV is 1.75; avoid features requiring newer Rust.
+- MSRV is 1.91.0 because LanceDB requires Rust 1.91+.
 
 ### Common Patterns
 - All async traits use `async_trait`.
@@ -60,6 +60,7 @@ A modular AI coding agent CLI tool built in Rust. Zcode is now a Cargo workspace
 - LLM requests use OpenAI-compatible chat completions. Configure with `ZCODE_BASE_URL`, `ZCODE_API_KEY`, `ZCODE_MODEL`, and optional `ZCODE_FAST_MODEL`.
 - Simple tasks may use the fast model through `ZCODE_FAST_MODEL` / `fast_model`.
 - Configuration is shared through `Settings` and `ProjectConfig`.
+- Chat sessions use one JSONL file per session under `.zcode/sessions/`; `.zcode/session-index/` is a derived LanceDB index and can be rebuilt from JSONL.
 
 ## Dependencies
 
@@ -70,5 +71,6 @@ A modular AI coding agent CLI tool built in Rust. Zcode is now a Cargo workspace
 - **reqwest** — HTTP client for OpenAI-compatible LLM APIs
 - **ratatui + crossterm** — TUI framework
 - **rusqlite** — SQLite for session snapshots
+- **lancedb** — local vector database for related session history retrieval
 
 <!-- MANUAL: Custom project notes can be added below -->

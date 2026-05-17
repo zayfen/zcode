@@ -109,11 +109,9 @@ impl AgentLoop {
         let mut history: Vec<ConversationMessage> =
             vec![ConversationMessage::system(&self.config.system_prompt)];
 
-        // Inject shared context bus history from previous nodes (filter old system prompts)
+        // Inject shared context bus history from previous nodes.
         for msg in seed_messages {
-            if msg.role != "system" {
-                history.push(msg.clone());
-            }
+            history.push(msg.clone());
         }
 
         history.push(ConversationMessage::user(user_message));
@@ -512,6 +510,49 @@ mod tests {
         assert_eq!(result.llm_calls, 1);
         assert_eq!(result.tool_calls_executed, 0);
         assert!(!result.hit_max_iterations);
+    }
+
+    #[tokio::test]
+    async fn test_agent_loop_preserves_seed_system_messages() {
+        let registry = make_registry();
+        let agent_loop = AgentLoop::new(LoopConfig::default(), registry);
+        let seen_messages = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = std::sync::Arc::clone(&seen_messages);
+
+        let result = agent_loop
+            .run(
+                "What is the weather?",
+                &[
+                    ConversationMessage::system(
+                        "Previous conversation is optional background only.",
+                    ),
+                    ConversationMessage::user("list files"),
+                    ConversationMessage::assistant_text("Cargo.toml\nsrc"),
+                ],
+                &[],
+                move |messages: Vec<serde_json::Value>, _tools: Vec<serde_json::Value>| {
+                    *captured.lock().unwrap() = messages;
+                    async { Ok(LlmResponse::Text("weather".to_string())) }
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.answer, "weather");
+        let messages = seen_messages.lock().unwrap();
+        assert_eq!(
+            messages
+                .iter()
+                .filter(
+                    |message| message.get("role").and_then(|role| role.as_str()) == Some("system")
+                )
+                .count(),
+            2
+        );
+        assert!(messages.iter().any(|message| message
+            .get("content")
+            .and_then(|content| content.as_str())
+            .is_some_and(|content| content.contains("optional background only"))));
     }
 
     #[tokio::test]

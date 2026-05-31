@@ -1,0 +1,31 @@
+{
+  "name": "zcode Dev Environment",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+
+  "features": {
+    "ghcr.io/devcontainers/features/rust:latest": {
+      "version": "1.91",
+      "profile": "minimal"
+    },
+    "ghcr.io/devcontainers/features/node:latest": {
+      "version": "22"
+    },
+    "ghcr.io/devcontainers/features/git:latest": {},
+    "ghcr.io/devcontainers/features/github-cli:latest": {}
+  },
+
+  "postCreateCommand": "bash ~/.devcontainer/setup-codex.sh",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml",
+        "serayuzgur.crates",
+        "github.vscode-github-actions"
+      ]
+    }
+  },
+
+  "remoteUser": "codespace"
+}
